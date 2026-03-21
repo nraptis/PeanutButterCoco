@@ -1,0 +1,27 @@
+Bundle / Unbundle / Repair / Folder Compare instability notes
+
+1. Folder Compare is not fully defined yet.
+The top segment now exposes "Folder Compare", but its actual flow, required inputs, engine request type, and result presentation are still unresolved. The current active-box behavior is only a placeholder reuse of the unbundle-style panel.
+
+2. Read Manifest behavior is not defined yet.
+The Unbundle/Repair side now has a "Read Manifest" action surface, but the exact contract is still open: whether it reads preview manifests only, whether it requires decryption, where it writes output, whether it is view-only, and how it should behave when no manifest exists.
+
+3. Repair mode policy is partly split at the engine level, but the UI contract is still in transition.
+The engine now distinguishes fail-fast Unbundle from salvage-forward Repair behavior. The UI still mirrors that with a shared panel plus a Recover/Repair checkbox, which means the final source of truth for mode selection should be clarified.
+
+4. Unbundle source semantics are not fully nailed down.
+It is still ambiguous whether the source should be:
+- one archive file,
+- a folder containing a full archive family,
+- a folder containing partial families,
+- or something manifest-driven.
+The resolver and UI should eventually agree on exactly what the happy path expects.
+
+5. Sparse-padding continuation is now format-sensitive and needs version policy.
+Section headers now carry a sparse-padding continuation flag, and the section checksum was shrunk to make room for flags/reserved bytes. The backward/forward compatibility story for older archives and future section-header changes is not fully written down yet.
+
+6. Manifest / preview / repair-sector interactions are still under-specified.
+Bundle already has controls for repair sectors and include-preview behavior, but the exact unbundle/repair behavior around missing preview data, missing repair data, or partially readable families is still not fully specified.
+
+7. Action coverage is uneven across modes.
+Bundle has a more fully wired request path than Unbundle/Repair. Unbundle/Repair UI now exists, but the corresponding AppShell request submission, logging polish, and end-to-end engine wiring are not yet defined to the same degree.
