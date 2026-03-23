@@ -5,9 +5,13 @@
 namespace peanutbutter {
 
 DecodeStageContextV2::DecodeStageContextV2(const DecodeRequestV2& pRequest,
-                                           DecodeRuntimeV2* pRuntime)
+                                           DecodeRuntimeV2* pRuntime,
+                                           FileSystemV2* pFileSystem,
+                                           const memory_layout::ArchiveLayoutConfigV2* pLayout)
     : mRequest(pRequest),
-      mRuntime(pRuntime) {}
+      mRuntime(pRuntime),
+      mFileSystem(pFileSystem != nullptr ? pFileSystem : &mLocalFileSystem),
+      mLayout(pLayout != nullptr ? pLayout : &memory_layout::DefaultArchiveLayoutConfigV2()) {}
 
 const DecodeRequestV2& DecodeStageContextV2::Request() const {
   return mRequest;
@@ -22,11 +26,15 @@ const DecodeWorkStateV2& DecodeStageContextV2::State() const {
 }
 
 FileSystemV2& DecodeStageContextV2::FileSystem() {
-  return mFileSystem;
+  return *mFileSystem;
 }
 
 const FileSystemV2& DecodeStageContextV2::FileSystem() const {
-  return mFileSystem;
+  return *mFileSystem;
+}
+
+const memory_layout::ArchiveLayoutConfigV2& DecodeStageContextV2::Layout() const {
+  return *mLayout;
 }
 
 bool DecodeStageContextV2::IsCancelRequested() const {

@@ -7,8 +7,7 @@ namespace peanutbutter {
 
 bool BundleArchiveManifestV2::Run(BundleStageContextV2& pContext) {
   BundleManifestStateV2& aManifest = pContext.State().mManifest;
-  if (aManifest.mPreviewManifestBlockCount == 0u ||
-      aManifest.mPreviewManifestPayload.empty()) {
+  if (aManifest.mPreviewManifestBlockCount == 0u) {
     pContext.EmitLog(LogLevelV2::kInfo, LogBundleArchiveManifestNoneV2());
     pContext.EmitPhaseProgress(1.0, "Archive manifest complete");
     return !pContext.IsCancelRequested();

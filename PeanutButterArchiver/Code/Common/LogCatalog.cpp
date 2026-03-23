@@ -1,5 +1,6 @@
 #include "LogCatalog.hpp"
 
+#include <cstdlib>
 #include <filesystem>
 #include <sstream>
 
@@ -14,6 +15,16 @@ std::string FormatCount(std::uint64_t pCompleted,
   }
   return std::to_string(pCompleted) + " of " + std::to_string(pTotal) + " " +
          pLabel;
+}
+
+std::string PathString(const std::filesystem::path& pPath) {
+  return pPath.lexically_normal().generic_string();
+}
+
+bool IsRootNameCompatible(const std::filesystem::path& pFirst,
+                          const std::filesystem::path& pSecond) {
+  return pFirst.root_name() == pSecond.root_name() &&
+         pFirst.root_directory() == pSecond.root_directory();
 }
 
 }  // namespace
@@ -39,6 +50,7 @@ std::string ProgressStageLabelV2(ProgressStageV2 pStage) {
     case ProgressStageV2::kPreflight: return "Preflight";
     case ProgressStageV2::kHeaderBootstrap: return "Header Bootstrap";
     case ProgressStageV2::kDiscovery: return "Discovery";
+    case ProgressStageV2::kInspection: return "Inspection";
     case ProgressStageV2::kMemoryPlanning: return "Memory Planning";
     case ProgressStageV2::kDeriveCipherMaterial: return "Derive Cipher Material";
     case ProgressStageV2::kAssembleCipherStack: return "Assemble Cipher Stack";
@@ -51,6 +63,7 @@ std::string ProgressStageLabelV2(ProgressStageV2 pStage) {
     case ProgressStageV2::kFinalizingHeaders: return "Finalizing Headers";
     case ProgressStageV2::kFinalize: return "Finalize";
     case ProgressStageV2::kCompare: return "Compare";
+    case ProgressStageV2::kRepairApply: return "Repair Apply";
     default: return "Idle";
   }
 }
@@ -74,6 +87,73 @@ std::string FormatHumanBytesV2(std::uint64_t pBytes) {
   return aOut.str();
 }
 
+std::string GetWorkingDirectoryV2(void) {
+  std::error_code aError;
+  const std::filesystem::path aCurrentPath = std::filesystem::current_path(aError);
+  if (aError) {
+    return ".";
+  }
+  return aCurrentPath.lexically_normal().generic_string();
+}
+
+std::string FormatPathForLogV2(const std::string& pPath) {
+  if (pPath.empty()) {
+    return {};
+  }
+
+  const std::filesystem::path aPath =
+      std::filesystem::path(pPath).lexically_normal();
+  if (!aPath.is_absolute()) {
+    return aPath.generic_string();
+  }
+
+  const char* aHomeValue = std::getenv("HOME");
+  if (aHomeValue != nullptr && *aHomeValue != '\0') {
+    const std::filesystem::path aHome =
+        std::filesystem::path(aHomeValue).lexically_normal();
+    std::error_code aError;
+    std::filesystem::path aRelative = std::filesystem::relative(aPath, aHome, aError);
+    if (aError) {
+      aRelative = aPath.lexically_relative(aHome);
+    }
+
+    const std::string aRelativeString = aRelative.generic_string();
+    if (!aRelativeString.empty() && aRelativeString != "." &&
+        aRelativeString != ".." && aRelativeString.rfind("../", 0u) != 0u) {
+      return "~/" + aRelativeString;
+    }
+  }
+
+  return aPath.generic_string();
+}
+
+std::string FindSharedLogRootV2(const std::string& pFirstPath,
+                                const std::string& pSecondPath) {
+  if (pFirstPath.empty() || pSecondPath.empty()) {
+    return {};
+  }
+
+  const std::filesystem::path aFirst =
+      std::filesystem::path(pFirstPath).lexically_normal();
+  const std::filesystem::path aSecond =
+      std::filesystem::path(pSecondPath).lexically_normal();
+  if (!aFirst.is_absolute() || !aSecond.is_absolute() ||
+      !IsRootNameCompatible(aFirst, aSecond)) {
+    return {};
+  }
+
+  std::filesystem::path aShared;
+  auto aFirstIt = aFirst.begin();
+  auto aSecondIt = aSecond.begin();
+  while (aFirstIt != aFirst.end() && aSecondIt != aSecond.end() &&
+         *aFirstIt == *aSecondIt) {
+    aShared /= *aFirstIt;
+    ++aFirstIt;
+    ++aSecondIt;
+  }
+  return PathString(aShared);
+}
+
 std::string FormatPathRelativeToRootV2(const std::string& pRootPath,
                                        const std::string& pPath) {
   if (pPath.empty()) {
@@ -81,7 +161,7 @@ std::string FormatPathRelativeToRootV2(const std::string& pRootPath,
   }
 
   if (pRootPath.empty()) {
-    return pPath;
+    return FormatPathForLogV2(pPath);
   }
 
   const std::filesystem::path aRoot =
@@ -95,14 +175,12 @@ std::string FormatPathRelativeToRootV2(const std::string& pRootPath,
   }
 
   const std::string aRelativeString = aRelative.generic_string();
-  if (!aRelativeString.empty() && aRelativeString != ".") {
-    if (aRelativeString == ".." || aRelativeString.rfind("../", 0u) == 0u) {
-      return aRelativeString;
-    }
-    return "../" + aRelativeString;
+  if (!aRelativeString.empty() && aRelativeString != "." &&
+      aRelativeString != ".." && aRelativeString.rfind("../", 0u) != 0u) {
+    return aRelativeString;
   }
 
-  return aPath.generic_string();
+  return FormatPathForLogV2(aPath.generic_string());
 }
 
 std::string BuildStatSummaryV2(const LoggingStatV2& pStat) {
@@ -151,9 +229,16 @@ std::string LogActionCanceledV2(LogActionV2 pAction) {
 std::string LogActionStartDetailV2(LogActionV2 pAction,
                                    const std::string& pSourcePath,
                                    const std::string& pDestinationPath) {
+  const std::string aWorkingDirectory = GetWorkingDirectoryV2();
+  const std::string aSourceDisplay =
+      FormatPathRelativeToRootV2(aWorkingDirectory, pSourcePath);
+  const std::string aDestinationDisplay =
+      FormatPathRelativeToRootV2(aWorkingDirectory, pDestinationPath);
   std::ostringstream aOut;
-  aOut << "[" << LogActionLabelV2(pAction) << "] START: source='"
-       << pSourcePath << "', destination='" << pDestinationPath << "'.";
+  aOut << "[" << LogActionLabelV2(pAction) << "] START."
+       << "\n[" << LogActionLabelV2(pAction) << "]   source: " << aSourceDisplay
+       << "\n[" << LogActionLabelV2(pAction) << "]   destination: "
+       << aDestinationDisplay;
   return aOut.str();
 }
 
@@ -161,10 +246,16 @@ std::string LogActionEndDetailV2(LogActionV2 pAction,
                                  const std::string& pOutcome,
                                  const std::string& pSourcePath,
                                  const std::string& pDestinationPath) {
+  const std::string aWorkingDirectory = GetWorkingDirectoryV2();
+  const std::string aSourceDisplay =
+      FormatPathRelativeToRootV2(aWorkingDirectory, pSourcePath);
+  const std::string aDestinationDisplay =
+      FormatPathRelativeToRootV2(aWorkingDirectory, pDestinationPath);
   std::ostringstream aOut;
-  aOut << "[" << LogActionLabelV2(pAction) << "] END (" << pOutcome
-       << "): source='" << pSourcePath << "', destination='"
-       << pDestinationPath << "'.";
+  aOut << "[" << LogActionLabelV2(pAction) << "] END (" << pOutcome << ")."
+       << "\n[" << LogActionLabelV2(pAction) << "]   source: " << aSourceDisplay
+       << "\n[" << LogActionLabelV2(pAction) << "]   destination: "
+       << aDestinationDisplay;
   return aOut.str();
 }
 
@@ -271,7 +362,7 @@ std::string LogBundleArchiveManifestNoneV2(void) {
 std::string LogBundleArchiveManifestSummaryV2(std::uint64_t pByteCount,
                                               std::uint64_t pBlockCount) {
   return "[Bundle][Archive Manifest] Planned " + std::to_string(pByteCount) +
-         " plaintext preview bytes across " + std::to_string(pBlockCount) +
+         " preview-manifest bytes across " + std::to_string(pBlockCount) +
          " preview blocks.";
 }
 
@@ -288,28 +379,36 @@ std::string LogBundleCipherAssembledV2(void) {
   return "[Bundle][Assemble Cipher Stack] Cipher stack assembled.";
 }
 
-std::string LogDecodeBootstrapSummaryV2(std::uint64_t pFamilyId,
+std::string LogDecodeBootstrapSummaryV2(LogActionV2 pAction,
+                                        std::uint64_t pFamilyId,
+                                        const std::string& pDisplayRoot,
                                         const std::string& pArchivePath) {
-  return "[Decode][Header Bootstrap] Read family " + std::to_string(pFamilyId) +
-         " from " + pArchivePath + ".";
+  return "[" + LogActionLabelV2(pAction) + "][Header Bootstrap] Read family " +
+         std::to_string(pFamilyId) +
+         " from " + FormatPathRelativeToRootV2(pDisplayRoot, pArchivePath) + ".";
 }
 
-std::string LogDecodeDiscoverySummaryV2(std::uint64_t pArchiveCount,
+std::string LogDecodeDiscoverySummaryV2(LogActionV2 pAction,
+                                        std::uint64_t pArchiveCount,
                                         std::uint64_t pReadableBlockCount) {
-  return "[Decode][Discovery] Found " + std::to_string(pArchiveCount) +
+  return "[" + LogActionLabelV2(pAction) + "][Discovery] Found " +
+         std::to_string(pArchiveCount) +
          " archives and " + std::to_string(pReadableBlockCount) +
          " readable blocks.";
 }
 
-std::string LogDecodeManifestSummaryV2(std::uint64_t pPreviewBlockCount,
+std::string LogDecodeManifestSummaryV2(LogActionV2 pAction,
+                                       std::uint64_t pPreviewBlockCount,
                                        std::uint64_t pRepairBlockCount) {
-  return "[Decode][Manifest Discovery] Header plan expects " +
+  return "[" + LogActionLabelV2(pAction) + "][Manifest Discovery] Header plan expects " +
          std::to_string(pPreviewBlockCount) + " preview blocks and " +
          std::to_string(pRepairBlockCount) + " repair blocks.";
 }
 
-std::string LogDecodeFinalizeSummaryV2(std::uint64_t pBytesWritten) {
-  return "[Decode][Finalize] Wrote " + std::to_string(pBytesWritten) + " bytes.";
+std::string LogDecodeFinalizeSummaryV2(LogActionV2 pAction,
+                                       std::uint64_t pBytesWritten) {
+  return "[" + LogActionLabelV2(pAction) + "][Finalize] Wrote " +
+         std::to_string(pBytesWritten) + " bytes.";
 }
 
 std::string LogPessimisticSwitchV2(LogActionV2 pAction,

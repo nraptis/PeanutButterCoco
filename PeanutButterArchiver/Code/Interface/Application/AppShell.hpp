@@ -15,6 +15,7 @@
                             encryptionEnabled:(BOOL)encryptionEnabled
                           includePreviewEnabled:(BOOL)includePreviewEnabled
                                        password:(NSString *)password
+                                 repairSizeTitle:(NSString *)repairSizeTitle
                                  blockCountTitle:(NSString *)blockCountTitle
                         encryptionStrengthTitle:(NSString *)encryptionStrengthTitle
                               tableStrengthTitle:(NSString *)tableStrengthTitle;

@@ -53,12 +53,18 @@ bool BundleFinalizingHeadersV2::Run(BundleStageContextV2& pContext) {
   using namespace memory_layout;
 
   std::array<unsigned char, kArchiveHeaderBytesV2> aHeaderBytes{};
-  for (const PlannedArchiveFileV2& aArchive : pContext.State().mMemoryPlan.mArchives) {
+  const std::uint8_t aDirtyState = static_cast<std::uint8_t>(
+      pContext.State().mCancel.mShouldFinalizeAfterCancel
+          ? ArchiveDirtyStateV2::kFinishedWithCancel
+          : ArchiveDirtyStateV2::kFinished);
+  const std::size_t aArchiveCountToFinalize = pContext.State().mPacking.mArchivePaths.size();
+  for (std::size_t aIndex = 0u; aIndex < aArchiveCountToFinalize; ++aIndex) {
+    const PlannedArchiveFileV2& aArchive = pContext.State().mMemoryPlan.mArchives[aIndex];
     ArchiveHeaderV2 aHeader;
     if (!BuildArchiveHeader(
             pContext,
             aArchive.mArchiveIndex,
-            static_cast<std::uint8_t>(ArchiveDirtyStateV2::kFinished),
+            aDirtyState,
             aHeader)) {
       pContext.EmitLog(LogLevelV2::kError,
                        LogPhaseFailedV2(LogActionV2::kBundle, ProgressStageV2::kFinalizingHeaders,
@@ -84,7 +90,7 @@ bool BundleFinalizingHeadersV2::Run(BundleStageContextV2& pContext) {
   pContext.EmitLog(LogLevelV2::kInfo,
                    LogPhaseCompletedV2(LogActionV2::kBundle, ProgressStageV2::kFinalizingHeaders));
   pContext.EmitPhaseProgress(1.0, "Headers finalized");
-  return !pContext.IsCancelRequested();
+  return true;
 }
 
 }  // namespace peanutbutter

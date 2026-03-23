@@ -488,7 +488,7 @@ static CGFloat RequiredUnbundlePanelHeight(void) {
     ToolBarCheckBoxChunkView *includePreviewChunk =
         [[ToolBarCheckBoxChunkView alloc] initWithTitle:@"Include Preview" state:YES];
     ToolBarComboBoxChunkView *repairSizeChunk =
-        [[ToolBarComboBoxChunkView alloc] initWithItems:@[@"Repair record: 32 B", @"Repair record: 64 B", @"Repair record: 128 B"]];
+        [[ToolBarComboBoxChunkView alloc] initWithItems:@[@"25%", @"50%", @"75%", @"100%"]];
 
     _bundleRepairCheckbox = repairChunk.checkBox;
     _bundleSafeCheckbox = safeChunk.checkBox;

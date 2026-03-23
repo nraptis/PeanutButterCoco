@@ -19,9 +19,11 @@ struct BundleRequestV2 {
   StrengthPresetV2 mEncryptionStrength = StrengthPresetV2::kHigh;
   StrengthPresetV2 mTableStrength = StrengthPresetV2::kHigh;
   bool mRepairEnabled = true;
+  std::uint8_t mRepairPercent = 25u;
   bool mIncludePreviewManifest = true;
   bool mSafeModeEnabled = true;
   std::uint32_t mBlockCount = 4u;
+  std::uint64_t mCancelFinishBlocks = 8u;
   std::string mFilePrefix = "archive";
   std::string mPassword;
 };

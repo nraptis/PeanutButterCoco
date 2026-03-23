@@ -130,6 +130,20 @@ static NSString *PBResolvedDestinationFallbackPath(NSURL *candidateURL, NSURL *r
     return parentPath;
 }
 
+static std::uint8_t PBRepairPercentFromTitle(NSString *title) {
+    NSString *safeTitle = PBTrimmedString(title);
+    if ([safeTitle isEqualToString:@"50%"]) {
+        return 50u;
+    }
+    if ([safeTitle isEqualToString:@"75%"]) {
+        return 75u;
+    }
+    if ([safeTitle isEqualToString:@"100%"]) {
+        return 100u;
+    }
+    return 25u;
+}
+
 static NSString *PBResolvePathString(NSString *value, PBResolvedPathMode mode) {
     NSString *safeValue = PBTrimmedString(value);
     if (safeValue.length == 0) {
@@ -319,6 +333,7 @@ static NSAlertStyle PBAlertStyleFromDialogKind(peanutbutter::UiDialogKindV2 kind
                               encryptionEnabled:(BOOL)encryptionEnabled
                            includePreviewEnabled:(BOOL)includePreviewEnabled
                                        password:(NSString *)password
+                                 repairSizeTitle:(NSString *)repairSizeTitle
                                  blockCountTitle:(NSString *)blockCountTitle
                         encryptionStrengthTitle:(NSString *)encryptionStrengthTitle
                               tableStrengthTitle:(NSString *)tableStrengthTitle {
@@ -331,6 +346,7 @@ static NSAlertStyle PBAlertStyleFromDialogKind(peanutbutter::UiDialogKindV2 kind
     request.mDestinationDirectory = PBStdStringFromNSString(normalizedDestinationDirectory);
     request.mFilePrefix = PBStdStringFromNSString(normalizedFilePrefix.length > 0 ? normalizedFilePrefix : @"archive");
     request.mRepairEnabled = repairEnabled;
+    request.mRepairPercent = PBRepairPercentFromTitle(repairSizeTitle);
     request.mSafeModeEnabled = safeEnabled;
     request.mEncryptionEnabled = encryptionEnabled;
     request.mIncludePreviewManifest = includePreviewEnabled;

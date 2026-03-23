@@ -184,6 +184,7 @@
                                              encryptionEnabled:(activeView.bundleEncryptCheckbox.state == NSControlStateValueOn)
                                            includePreviewEnabled:(activeView.bundleIncludePreviewCheckbox.state == NSControlStateValueOn)
                                                       password:activeView.bundlePasswordTextField.stringValue
+                                                repairSizeTitle:activeView.bundleRepairSizeCombo.titleOfSelectedItem
                                                 blockCountTitle:activeView.bundleBlockCountCombo.titleOfSelectedItem
                                        encryptionStrengthTitle:activeView.bundleEncryptionStrengthCombo.titleOfSelectedItem
                                              tableStrengthTitle:activeView.bundleTableStrengthCombo.titleOfSelectedItem];
@@ -357,7 +358,11 @@
     [activeView.bundleBlockCountCombo selectItemWithTitle:(self.bundleBlockCountDefault.length > 0 ? self.bundleBlockCountDefault : @"4 blocks")];
     [activeView.bundleEncryptionStrengthCombo selectItemWithTitle:(self.bundleEncryptionStrengthDefault.length > 0 ? self.bundleEncryptionStrengthDefault : @"Encryption: High")];
     [activeView.bundleTableStrengthCombo selectItemWithTitle:(self.bundleTableStrengthDefault.length > 0 ? self.bundleTableStrengthDefault : @"Tables: High")];
-    [activeView.bundleRepairSizeCombo selectItemWithTitle:(self.bundleRepairSizeDefault.length > 0 ? self.bundleRepairSizeDefault : @"Repair record: 64 B")];
+    NSString *repairPercentTitle =
+        (self.bundleRepairSizeDefault.length > 0 && [self.bundleRepairSizeDefault containsString:@"%"])
+            ? self.bundleRepairSizeDefault
+            : @"25%";
+    [activeView.bundleRepairSizeCombo selectItemWithTitle:repairPercentTitle];
 
     NSInteger safeHomeTab = self.homeTabDefault;
     if (safeHomeTab < 0 || safeHomeTab >= self.homeContainerViewController.homeToolViewTop.modeToggle.segmentCount) {

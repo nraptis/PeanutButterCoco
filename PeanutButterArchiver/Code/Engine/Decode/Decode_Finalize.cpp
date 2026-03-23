@@ -7,9 +7,10 @@ namespace peanutbutter {
 bool DecodeFinalizeV2::Run(DecodeStageContextV2& pContext) {
   pContext.EmitLog(
       LogLevelV2::kInfo,
-      LogDecodeFinalizeSummaryV2(pContext.State().mOutput.mBytesWritten));
+      LogDecodeFinalizeSummaryV2(LogActionFromDecodeIntentV2(pContext.Request().mIntent),
+                                 pContext.State().mOutput.mBytesWritten));
   pContext.EmitPhaseProgress(1.0, "Finalize complete");
-  return !pContext.IsCancelRequested();
+  return true;
 }
 
 }  // namespace peanutbutter

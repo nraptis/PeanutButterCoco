@@ -20,6 +20,10 @@ enum class LogActionV2 {
 std::string LogActionLabelV2(LogActionV2 pAction);
 std::string ProgressStageLabelV2(ProgressStageV2 pStage);
 std::string FormatHumanBytesV2(std::uint64_t pBytes);
+std::string GetWorkingDirectoryV2(void);
+std::string FormatPathForLogV2(const std::string& pPath);
+std::string FindSharedLogRootV2(const std::string& pFirstPath,
+                                const std::string& pSecondPath);
 std::string FormatPathRelativeToRootV2(const std::string& pRootPath,
                                        const std::string& pPath);
 std::string BuildStatSummaryV2(const LoggingStatV2& pStat);
@@ -70,13 +74,18 @@ std::string LogBundleArchiveManifestSummaryV2(std::uint64_t pByteCount,
 std::string LogBundleFolderPackingSummaryV2(std::uint64_t pByteCount);
 std::string LogBundleCipherDeriveDetailV2(void);
 std::string LogBundleCipherAssembledV2(void);
-std::string LogDecodeBootstrapSummaryV2(std::uint64_t pFamilyId,
+std::string LogDecodeBootstrapSummaryV2(LogActionV2 pAction,
+                                        std::uint64_t pFamilyId,
+                                        const std::string& pDisplayRoot,
                                         const std::string& pArchivePath);
-std::string LogDecodeDiscoverySummaryV2(std::uint64_t pArchiveCount,
+std::string LogDecodeDiscoverySummaryV2(LogActionV2 pAction,
+                                        std::uint64_t pArchiveCount,
                                         std::uint64_t pReadableBlockCount);
-std::string LogDecodeManifestSummaryV2(std::uint64_t pPreviewBlockCount,
+std::string LogDecodeManifestSummaryV2(LogActionV2 pAction,
+                                       std::uint64_t pPreviewBlockCount,
                                        std::uint64_t pRepairBlockCount);
-std::string LogDecodeFinalizeSummaryV2(std::uint64_t pBytesWritten);
+std::string LogDecodeFinalizeSummaryV2(LogActionV2 pAction,
+                                       std::uint64_t pBytesWritten);
 std::string LogPessimisticSwitchV2(LogActionV2 pAction,
                                    const std::string& pReason);
 LogActionV2 LogActionFromDecodeIntentV2(DecodeIntentV2 pIntent);

@@ -5,6 +5,16 @@
 namespace peanutbutter {
 
 bool DecodePreflightV2::Run(DecodeStageContextV2& pContext) {
+  std::string aLayoutError;
+  if (!pContext.Layout().IsValid(&aLayoutError)) {
+    pContext.EmitLog(
+        LogLevelV2::kError,
+        LogPhaseFailedV2(LogActionFromDecodeIntentV2(pContext.Request().mIntent),
+                         ProgressStageV2::kPreflight,
+                         "archive layout is invalid: " + aLayoutError));
+    return false;
+  }
+
   pContext.EmitLog(LogLevelV2::kInfo,
                    LogPhaseStartedV2(LogActionFromDecodeIntentV2(pContext.Request().mIntent),
                                      ProgressStageV2::kPreflight));

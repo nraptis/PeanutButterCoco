@@ -10,8 +10,10 @@ namespace peanutbutter {
 
 class BundleDirector final {
  public:
-  BundleDirector(const BundleRequestV2& pRequest,
-                 BundleRuntimeV2* pRuntime);
+    BundleDirector(const BundleRequestV2& pRequest,
+                 BundleRuntimeV2* pRuntime,
+                 FileSystemV2* pFileSystem = nullptr,
+                 const memory_layout::ArchiveLayoutConfigV2* pLayout = nullptr);
 
   bool Step();
   bool IsFinished() const;
@@ -29,6 +31,8 @@ class BundleDirector final {
 
   void BuildPhaseList();
   bool RunCurrentPhase();
+  bool ShouldDeferCancelForCurrentPhase() const;
+  std::size_t FindPhaseIndex(ProgressStageV2 pStage) const;
 
  private:
   BundleStageContextV2 mContext;

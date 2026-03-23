@@ -13,6 +13,17 @@ std::string BoolLabel(bool value) {
 }
 
 bool BundlePreflightV2::Run(BundleStageContextV2& pContext) {
+  std::string aLayoutError;
+  if (!pContext.Layout().IsValid(&aLayoutError)) {
+    pContext.EmitLog(
+        LogLevelV2::kError,
+        LogPhaseFailedV2(LogActionV2::kBundle,
+                         ProgressStageV2::kPreflight,
+                         "archive layout is invalid: " + aLayoutError));
+    return false;
+  }
+
+  const std::string aWorkingDirectory = GetWorkingDirectoryV2();
   pContext.EmitLog(LogLevelV2::kInfo,
                    LogPhaseStartedV2(LogActionV2::kBundle, ProgressStageV2::kPreflight));
 
@@ -30,12 +41,34 @@ bool BundlePreflightV2::Run(BundleStageContextV2& pContext) {
     return false;
   }
 
+  if (pContext.Request().mBlockCount == 0u) {
+    pContext.EmitLog(
+        LogLevelV2::kError,
+        LogPhaseFailedV2(LogActionV2::kBundle,
+                         ProgressStageV2::kPreflight,
+                         "block count must be at least 1"));
+    return false;
+  }
+
+  if (pContext.Request().mBlockCount > pContext.Layout().mMaxBlocksPerArchive) {
+    pContext.EmitLog(
+        LogLevelV2::kError,
+        LogPhaseFailedV2(
+            LogActionV2::kBundle,
+            ProgressStageV2::kPreflight,
+            "block count exceeds configured maximum of " +
+                std::to_string(pContext.Layout().mMaxBlocksPerArchive)));
+    return false;
+  }
+
   const bool aSourceExists = pContext.FileSystem().Exists(pContext.Request().mSourceDirectory);
   const bool aSourceIsDirectory = pContext.FileSystem().IsDirectory(pContext.Request().mSourceDirectory);
   const bool aSourceIsFile = pContext.FileSystem().IsFile(pContext.Request().mSourceDirectory);
   pContext.EmitLog(LogLevelV2::kInfo,
                    "[Bundle][Preflight] Source probe: path='" +
-                       pContext.Request().mSourceDirectory + "', exists=" +
+                       FormatPathRelativeToRootV2(aWorkingDirectory,
+                                                  pContext.Request().mSourceDirectory) +
+                       "', exists=" +
                        BoolLabel(aSourceExists) + ", is_directory=" +
                        BoolLabel(aSourceIsDirectory) + ", is_file=" +
                        BoolLabel(aSourceIsFile) + ".");
@@ -46,7 +79,9 @@ bool BundlePreflightV2::Run(BundleStageContextV2& pContext) {
     pContext.EmitLog(LogLevelV2::kError,
                      LogPhaseFailedV2(LogActionV2::kBundle, ProgressStageV2::kPreflight,
                                       "source path is not a readable file or folder: '" +
-                                          pContext.Request().mSourceDirectory + "'"));
+                                          FormatPathRelativeToRootV2(aWorkingDirectory,
+                                                                     pContext.Request().mSourceDirectory) +
+                                          "'"));
     return false;
   }
 
@@ -56,7 +91,9 @@ bool BundlePreflightV2::Run(BundleStageContextV2& pContext) {
       pContext.FileSystem().IsDirectory(pContext.Request().mDestinationDirectory);
   pContext.EmitLog(LogLevelV2::kInfo,
                    "[Bundle][Preflight] Destination probe: path='" +
-                       pContext.Request().mDestinationDirectory + "', exists=" +
+                       FormatPathRelativeToRootV2(aWorkingDirectory,
+                                                  pContext.Request().mDestinationDirectory) +
+                       "', exists=" +
                        BoolLabel(aDestinationExists) + ", is_directory=" +
                        BoolLabel(aDestinationIsDirectory) + ".");
 

@@ -24,7 +24,7 @@ struct AppConfigStateV2 {
   std::string mBundleBlockCount = "4 blocks";
   std::string mBundleEncryptionStrength = "Encryption: High";
   std::string mBundleTableStrength = "Tables: High";
-  std::string mBundleRepairSize = "Repair record: 64 B";
+  std::string mBundleRepairSize = "25%";
   std::string mBundlePassword;
 
   std::string mUnbundleDirectorySource;

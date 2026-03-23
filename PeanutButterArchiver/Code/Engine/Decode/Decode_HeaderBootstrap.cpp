@@ -109,7 +109,9 @@ bool DecodeHeaderBootstrapV2::Run(DecodeStageContextV2& pContext) {
 
   pContext.EmitLog(
       LogLevelV2::kInfo,
-      LogDecodeBootstrapSummaryV2(aBootstrap.mFirstHeader.mArchiveFamilyId,
+      LogDecodeBootstrapSummaryV2(LogActionFromDecodeIntentV2(pContext.Request().mIntent),
+                                  aBootstrap.mFirstHeader.mArchiveFamilyId,
+                                  aBootstrap.mSourceDirectory,
                                   aBootstrapPath));
   pContext.EmitPhaseProgress(1.0, "Header bootstrap complete");
   (void)aFileLength;

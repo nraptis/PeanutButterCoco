@@ -17,6 +17,42 @@ bool HasArchiveSuffix(const std::string& pName) {
   return pName.compare(pName.size() - aSuffix.size(), aSuffix.size(), aSuffix) == 0;
 }
 
+bool MatchesBootstrapTemplate(const std::string& pBootstrapPath,
+                              FileSystemV2& pFileSystem,
+                              const std::string& pCandidatePath,
+                              std::uint32_t& pOutFilenameIndex) {
+  pOutFilenameIndex = 0u;
+
+  std::string aBootstrapPrefix;
+  std::string aBootstrapSuffix;
+  std::size_t aBootstrapDigits = 0u;
+  std::uint32_t aBootstrapIndex = 0u;
+  if (!memory_layout::ParseArchiveFileTemplateV2(
+          pFileSystem.FileName(pBootstrapPath),
+          aBootstrapPrefix,
+          aBootstrapIndex,
+          aBootstrapSuffix,
+          aBootstrapDigits)) {
+    return false;
+  }
+
+  std::string aCandidatePrefix;
+  std::string aCandidateSuffix;
+  std::size_t aCandidateDigits = 0u;
+  if (!memory_layout::ParseArchiveFileTemplateV2(
+          pFileSystem.FileName(pCandidatePath),
+          aCandidatePrefix,
+          pOutFilenameIndex,
+          aCandidateSuffix,
+          aCandidateDigits)) {
+    return false;
+  }
+
+  return aBootstrapPrefix == aCandidatePrefix &&
+         aBootstrapSuffix == aCandidateSuffix &&
+         aBootstrapDigits == aCandidateDigits;
+}
+
 bool ReadArchiveHeaderFromPath(FileSystemV2& pFileSystem,
                                const std::string& pPath,
                                memory_layout::ArchiveHeaderV2& pOutHeader,
@@ -44,23 +80,13 @@ bool ReadArchiveHeaderFromPath(FileSystemV2& pFileSystem,
   return true;
 }
 
-void SwitchToPessimistic(DecodeStageContextV2& pContext,
-                         const std::string& pReason) {
-  if (pContext.State().mDiscovery.mMode == DecodeModeV2::kPessimistic) {
-    return;
-  }
-  pContext.State().mDiscovery.mMode = DecodeModeV2::kPessimistic;
-  pContext.EmitLog(LogLevelV2::kWarning,
-                   LogPessimisticSwitchV2(
-                       LogActionFromDecodeIntentV2(pContext.Request().mIntent),
-                       pReason));
-}
-
 }  // namespace
 
 bool DecodeDiscoveryV2::Run(DecodeStageContextV2& pContext) {
   DecodeDiscoveryStateV2& aDiscovery = pContext.State().mDiscovery;
   aDiscovery = DecodeDiscoveryStateV2{};
+  const std::uint64_t aArchiveBlockBytes =
+      static_cast<std::uint64_t>(pContext.Layout().mArchiveBlockBytes);
 
   const std::vector<DirectoryEntryV2> aFiles =
       pContext.FileSystem().ListFiles(pContext.State().mBootstrap.mSourceDirectory);
@@ -70,14 +96,24 @@ bool DecodeDiscoveryV2::Run(DecodeStageContextV2& pContext) {
       continue;
     }
 
+    std::uint32_t aFilenameIndex = 0u;
+    const bool aMatchesTemplate = MatchesBootstrapTemplate(
+        pContext.State().mBootstrap.mBootstrapArchivePath,
+        pContext.FileSystem(),
+        aFile.mPath,
+        aFilenameIndex);
+
     memory_layout::ArchiveHeaderV2 aHeader;
     std::uint64_t aFileLength = 0u;
-    if (!ReadArchiveHeaderFromPath(pContext.FileSystem(), aFile.mPath, aHeader, aFileLength)) {
+    const bool aHeaderReadable =
+        ReadArchiveHeaderFromPath(pContext.FileSystem(), aFile.mPath, aHeader, aFileLength);
+    if (!aHeaderReadable && !aMatchesTemplate) {
       ++aProcessedFiles;
       continue;
     }
-    if (aHeader.mArchiveFamilyId !=
-        pContext.State().mBootstrap.mFirstHeader.mArchiveFamilyId) {
+    if (aHeaderReadable &&
+        aHeader.mArchiveFamilyId !=
+            pContext.State().mBootstrap.mFirstHeader.mArchiveFamilyId) {
       ++aProcessedFiles;
       continue;
     }
@@ -85,12 +121,20 @@ bool DecodeDiscoveryV2::Run(DecodeStageContextV2& pContext) {
     DiscoveredArchiveFileV2 aDiscovered;
     aDiscovered.mPath = aFile.mPath;
     aDiscovered.mFileLength = aFileLength;
+    aDiscovered.mFilenameIndex = static_cast<std::uint64_t>(aFilenameIndex);
+    aDiscovered.mHasReadableHeader = aHeaderReadable;
     aDiscovered.mHeader = aHeader;
-    if (aFileLength >= memory_layout::kArchiveHeaderBytesV2) {
+    if (aHeaderReadable && aFileLength >= memory_layout::kArchiveHeaderBytesV2) {
       aDiscovered.mReadableBlockCount =
           (aFileLength - memory_layout::kArchiveHeaderBytesV2) /
-          memory_layout::kArchiveBlockBytesV2;
+          aArchiveBlockBytes;
+      aDiscovered.mHeaderIndex =
+          memory_layout::PackedUint48ToUInt64(aHeader.mArchiveIndex);
     }
+    aDiscovered.mArchiveIndex =
+        aMatchesTemplate ? static_cast<std::uint64_t>(aFilenameIndex)
+                         : aDiscovered.mHeaderIndex;
+    aDiscovered.mArchiveBlockCount = aDiscovered.mReadableBlockCount;
 
     aDiscovery.mArchives.push_back(std::move(aDiscovered));
     ++aProcessedFiles;
@@ -117,58 +161,20 @@ bool DecodeDiscoveryV2::Run(DecodeStageContextV2& pContext) {
             aDiscovery.mArchives.end(),
             [](const DiscoveredArchiveFileV2& pLeft,
                const DiscoveredArchiveFileV2& pRight) {
-              const std::uint64_t aLeftIndex =
-                  memory_layout::PackedUint48ToUInt64(pLeft.mHeader.mArchiveIndex);
-              const std::uint64_t aRightIndex =
-                  memory_layout::PackedUint48ToUInt64(pRight.mHeader.mArchiveIndex);
-              if (aLeftIndex != aRightIndex) {
-                return aLeftIndex < aRightIndex;
+              if (pLeft.mArchiveIndex != pRight.mArchiveIndex) {
+                return pLeft.mArchiveIndex < pRight.mArchiveIndex;
               }
               return pLeft.mPath < pRight.mPath;
             });
 
-  const memory_layout::ArchiveHeaderV2& aFirstHeader =
-      pContext.State().mBootstrap.mFirstHeader;
-  std::uint64_t aExpectedIndex = 0u;
-  std::uint64_t aLastSeenIndex = static_cast<std::uint64_t>(-1);
   for (const DiscoveredArchiveFileV2& aArchive : aDiscovery.mArchives) {
     aDiscovery.mTotalReadableBlocks += aArchive.mReadableBlockCount;
-
-    if (memory_layout::PackedUint48ToUInt64(aArchive.mHeader.mArchiveCount) !=
-            pContext.State().mBootstrap.mExpectedArchiveCount ||
-        memory_layout::PackedUint48ToUInt64(aArchive.mHeader.mEmptyFolderBlockCount) !=
-            pContext.State().mBootstrap.mExpectedEmptyFolderBlockCount ||
-        memory_layout::PackedUint48ToUInt64(aArchive.mHeader.mPreviewManifestBlockCount) !=
-            pContext.State().mBootstrap.mExpectedPreviewManifestBlockCount ||
-        memory_layout::PackedUint48ToUInt64(aArchive.mHeader.mArchiveDataBlockCount) !=
-            pContext.State().mBootstrap.mExpectedArchiveDataBlockCount ||
-        memory_layout::PackedUint48ToUInt64(aArchive.mHeader.mRepairSectorBlockCount) !=
-            pContext.State().mBootstrap.mExpectedRepairBlockCount ||
-        aArchive.mHeader.mIsEncrypted != aFirstHeader.mIsEncrypted) {
-      SwitchToPessimistic(pContext, "a later archive header disagreed with the bootstrap counts.");
-    }
-
-    const std::uint64_t aArchiveIndex =
-        memory_layout::PackedUint48ToUInt64(aArchive.mHeader.mArchiveIndex);
-    if (aArchiveIndex == aLastSeenIndex) {
-      SwitchToPessimistic(pContext, "duplicate archive indexes were discovered.");
-    }
-    if (aArchiveIndex != aExpectedIndex) {
-      SwitchToPessimistic(pContext, "archive indexes were not contiguous.");
-      aExpectedIndex = aArchiveIndex;
-    }
-    aLastSeenIndex = aArchiveIndex;
-    ++aExpectedIndex;
-  }
-
-  if (aDiscovery.mArchives.size() !=
-      static_cast<std::size_t>(pContext.State().mBootstrap.mExpectedArchiveCount)) {
-    SwitchToPessimistic(pContext, "observed archive count did not match the header.");
   }
 
   pContext.EmitLog(
       LogLevelV2::kInfo,
-      LogDecodeDiscoverySummaryV2(aDiscovery.mArchives.size(),
+      LogDecodeDiscoverySummaryV2(LogActionFromDecodeIntentV2(pContext.Request().mIntent),
+                                  aDiscovery.mArchives.size(),
                                   aDiscovery.mTotalReadableBlocks));
   pContext.EmitPhaseProgress(1.0, "Discovery complete");
   return !pContext.IsCancelRequested();

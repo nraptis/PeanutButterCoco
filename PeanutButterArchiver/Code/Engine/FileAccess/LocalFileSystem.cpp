@@ -467,6 +467,26 @@ bool LocalFileSystemV2::OverwriteFileRegion(const std::string& pPath,
   return aSucceeded && aCloseSucceeded;
 }
 
+bool LocalFileSystemV2::RenamePath(const std::string& pOldPath,
+                                   const std::string& pNewPath) {
+  const std::string aParent = ParentLocalPath(pNewPath);
+  if (!aParent.empty() && !EnsureDirectory(aParent)) {
+    return false;
+  }
+
+  std::error_code aError;
+  std::filesystem::rename(std::filesystem::path(pOldPath),
+                          std::filesystem::path(pNewPath),
+                          aError);
+  return !aError;
+}
+
+bool LocalFileSystemV2::RemovePath(const std::string& pPath) {
+  std::error_code aError;
+  std::filesystem::remove_all(std::filesystem::path(pPath), aError);
+  return !aError;
+}
+
 std::string LocalFileSystemV2::JoinPath(const std::string& pLeft,
                                         const std::string& pRight) const {
   return JoinLocalPath(pLeft, pRight);

@@ -15,8 +15,10 @@
 namespace peanutbutter {
 
 BundleDirector::BundleDirector(const BundleRequestV2& pRequest,
-                               BundleRuntimeV2* pRuntime)
-    : mContext(pRequest, pRuntime) {
+                               BundleRuntimeV2* pRuntime,
+                               FileSystemV2* pFileSystem,
+                               const memory_layout::ArchiveLayoutConfigV2* pLayout)
+    : mContext(pRequest, pRuntime, pFileSystem, pLayout) {
   BuildPhaseList();
 }
 
@@ -25,7 +27,7 @@ bool BundleDirector::Step() {
     return false;
   }
 
-  if (mContext.IsCancelRequested()) {
+  if (mContext.IsCancelRequested() && !ShouldDeferCancelForCurrentPhase()) {
     mWasCanceled = true;
     mIsFinished = true;
     return false;
@@ -33,12 +35,24 @@ bool BundleDirector::Step() {
 
   const bool aSucceeded = RunCurrentPhase();
   if (!aSucceeded) {
-    if (mContext.IsCancelRequested()) {
+    if (mContext.IsCancelRequested() && !ShouldDeferCancelForCurrentPhase()) {
       mWasCanceled = true;
       mIsFinished = true;
       return false;
     }
     mHasFailed = true;
+    return false;
+  }
+
+  if (mContext.IsCancelRequested()) {
+    const ProgressStageV2 aStage = mPhases[mCurrentPhaseIndex].mStage;
+    if (mContext.State().mCancel.mShouldFinalizeAfterCancel &&
+        aStage != ProgressStageV2::kFinalizingHeaders) {
+      mCurrentPhaseIndex = FindPhaseIndex(ProgressStageV2::kFinalizingHeaders);
+      return true;
+    }
+    mWasCanceled = true;
+    mIsFinished = true;
     return false;
   }
 
@@ -107,6 +121,27 @@ bool BundleDirector::RunCurrentPhase() {
                                       "phase returned false without explicit failure detail"));
   }
   return aSucceeded;
+}
+
+bool BundleDirector::ShouldDeferCancelForCurrentPhase() const {
+  if (mCurrentPhaseIndex >= mPhases.size()) {
+    return false;
+  }
+
+  const ProgressStageV2 aStage = mPhases[mCurrentPhaseIndex].mStage;
+  if (mContext.State().mCancel.mShouldFinalizeAfterCancel) {
+    return aStage == ProgressStageV2::kFinalizingHeaders;
+  }
+  return aStage == ProgressStageV2::kArchivePacking;
+}
+
+std::size_t BundleDirector::FindPhaseIndex(ProgressStageV2 pStage) const {
+  for (std::size_t aIndex = 0u; aIndex < mPhases.size(); ++aIndex) {
+    if (mPhases[aIndex].mStage == pStage) {
+      return aIndex;
+    }
+  }
+  return mPhases.size();
 }
 
 }  // namespace peanutbutter

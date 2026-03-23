@@ -10,6 +10,7 @@ namespace peanutbutter {
 bool BundleDiscoveryV2::Run(BundleStageContextV2& pContext) {
   BundleDiscoveryStateV2& aDiscovery = pContext.State().mDiscovery;
   aDiscovery = BundleDiscoveryStateV2{};
+  const std::size_t aMaxPathLength = pContext.Layout().mMaxPathLength;
   const std::string& aSourcePath = pContext.Request().mSourceDirectory;
   const bool aSourceExists = pContext.FileSystem().Exists(aSourcePath);
   const bool aSourceIsDirectory = pContext.FileSystem().IsDirectory(aSourcePath);
@@ -34,7 +35,7 @@ bool BundleDiscoveryV2::Run(BundleStageContextV2& pContext) {
   if (aSourceIsFile) {
     const std::string aRelativePath = pContext.FileSystem().FileName(aSourcePath);
     if (aRelativePath.empty() ||
-        aRelativePath.size() > memory_layout::kMaxPathLengthV2) {
+        aRelativePath.size() > aMaxPathLength) {
       pContext.EmitLog(LogLevelV2::kError,
                        "Bundle discovery failed: source file path exceeds supported length.");
       return false;
@@ -56,7 +57,7 @@ bool BundleDiscoveryV2::Run(BundleStageContextV2& pContext) {
 
   for (const DirectoryEntryV2& aFile : aFiles) {
     if (aFile.mRelativePath.empty() ||
-        aFile.mRelativePath.size() > memory_layout::kMaxPathLengthV2) {
+        aFile.mRelativePath.size() > aMaxPathLength) {
       pContext.EmitLog(LogLevelV2::kError,
                        "Bundle discovery failed: source file path exceeds supported length.");
       return false;
@@ -92,7 +93,7 @@ bool BundleDiscoveryV2::Run(BundleStageContextV2& pContext) {
 
   for (const DirectoryEntryV2& aDirectory : aDirectories) {
     if (aDirectory.mRelativePath.empty() ||
-        aDirectory.mRelativePath.size() > memory_layout::kMaxPathLengthV2) {
+        aDirectory.mRelativePath.size() > aMaxPathLength) {
       pContext.EmitLog(LogLevelV2::kError,
                        "Bundle discovery failed: source folder path exceeds supported length.");
       return false;

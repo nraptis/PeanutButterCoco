@@ -9,6 +9,7 @@
 #include "../../Common/Progress.hpp"
 #include "../Crypto/RotationMaskCipher.hpp"
 #include "../FileAccess/LocalFileSystem.hpp"
+#include "../MemoryLayout/ArchiveLayoutConfig.hpp"
 
 namespace peanutbutter {
 
@@ -42,10 +43,13 @@ struct BundleMemoryPlanV2 {
   std::uint64_t mArchiveDataBlockCount = 0u;
   std::uint64_t mEmptyFolderBlockCount = 0u;
   std::uint64_t mPreviewManifestBlockCount = 0u;
+  std::uint64_t mNonRepairFamilyBlockCount = 0u;
   std::uint64_t mRepairSectorBlockCount = 0u;
   std::uint64_t mTotalFamilyBlockCount = 0u;
   std::uint64_t mArchiveCount = 0u;
   std::uint64_t mArchiveFamilyId = 0u;
+  std::vector<std::uint32_t> mSourceArchiveBlockCounts;
+  std::vector<std::uint32_t> mRepairCopyBlockCounts;
   std::vector<PlannedArchiveFileV2> mArchives;
 };
 
@@ -69,6 +73,14 @@ struct BundlePackingStateV2 {
   std::uint64_t mRepairPackedBlockCount = 0u;
 };
 
+struct BundleCancelStateV2 {
+  bool mObserved = false;
+  bool mShouldFinalizeAfterCancel = false;
+  bool mBudgetExceeded = false;
+  std::uint64_t mCancelBlocksWritten = 0u;
+  std::string mCancelFileReference;
+};
+
 struct BundleFinalizeStateV2 {
   bool mHeadersFinalized = false;
 };
@@ -79,6 +91,7 @@ struct BundleWorkStateV2 {
   BundleManifestStateV2 mManifest{};
   BundleCipherStateV2 mCipher{};
   BundlePackingStateV2 mPacking{};
+  BundleCancelStateV2 mCancel{};
   BundleFinalizeStateV2 mFinalize{};
 };
 
@@ -96,13 +109,16 @@ class BundleRuntimeV2 {
 class BundleStageContextV2 {
  public:
   BundleStageContextV2(const BundleRequestV2& pRequest,
-                       BundleRuntimeV2* pRuntime);
+                       BundleRuntimeV2* pRuntime,
+                       FileSystemV2* pFileSystem = nullptr,
+                       const memory_layout::ArchiveLayoutConfigV2* pLayout = nullptr);
 
   const BundleRequestV2& Request() const;
   BundleWorkStateV2& State();
   const BundleWorkStateV2& State() const;
   FileSystemV2& FileSystem();
   const FileSystemV2& FileSystem() const;
+  const memory_layout::ArchiveLayoutConfigV2& Layout() const;
 
   bool IsCancelRequested() const;
   void EmitLog(LogLevelV2 pLevel, const std::string& pMessage) const;
@@ -111,7 +127,7 @@ class BundleStageContextV2 {
                       std::size_t pPhaseCount);
   void EmitPhaseProgress(double pLocalFraction,
                          const std::string& pLabel) const;
- void EmitProgress(ProgressStageV2 pStage,
+  void EmitProgress(ProgressStageV2 pStage,
                     double pLocalFraction,
                     double pOverallFraction,
                     const std::string& pLabel) const;
@@ -121,7 +137,9 @@ class BundleStageContextV2 {
  private:
   BundleRequestV2 mRequest;
   BundleRuntimeV2* mRuntime = nullptr;
-  LocalFileSystemV2 mFileSystem{};
+  LocalFileSystemV2 mLocalFileSystem{};
+  FileSystemV2* mFileSystem = nullptr;
+  const memory_layout::ArchiveLayoutConfigV2* mLayout = nullptr;
   BundleWorkStateV2 mState{};
   ProgressStageV2 mActiveStage = ProgressStageV2::kIdle;
   std::size_t mActivePhaseIndex = 0u;

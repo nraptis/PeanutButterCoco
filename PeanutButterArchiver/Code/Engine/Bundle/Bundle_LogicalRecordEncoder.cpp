@@ -9,9 +9,13 @@ namespace peanutbutter {
 
 BundleLogicalRecordEncoderV2::BundleLogicalRecordEncoderV2(
     const std::vector<BundleRecordEntryV2>& pRecords,
-    FileSystemV2& pFileSystem)
+    FileSystemV2& pFileSystem,
+    memory_layout::TypedRecordTypeV2 pFileType,
+    memory_layout::TypedRecordTypeV2 pFolderType)
     : mRecords(pRecords),
-      mFileSystem(pFileSystem) {
+      mFileSystem(pFileSystem),
+      mFileType(static_cast<std::uint8_t>(pFileType)),
+      mFolderType(static_cast<std::uint8_t>(pFolderType)) {
   StartNextRecord();
 }
 
@@ -41,16 +45,16 @@ bool BundleLogicalRecordEncoderV2::Fill(unsigned char* pDestination,
     const std::size_t aWritable = pCapacity - pOutBytesWritten;
     switch (mStage) {
       case Stage::kPathLength: {
+        if (mPathLengthBytesUsed == 0u && aWritable < sizeof(mPathLengthLe)) {
+          pOutPausedAtBoundary = true;
+          return true;
+        }
         while (mPathLengthBytesUsed < 2u && pOutBytesWritten < pCapacity) {
           pDestination[pOutBytesWritten++] = mPathLengthLe[mPathLengthBytesUsed++];
           ++pOutLogicalBytesWritten;
         }
         if (mPathLengthBytesUsed == 2u) {
-          if (mCurrentPathLength == 0u) {
-            mDone = true;
-          } else {
-            mStage = Stage::kPathBytes;
-          }
+          mStage = Stage::kPathBytes;
         }
         break;
       }
@@ -59,7 +63,7 @@ bool BundleLogicalRecordEncoderV2::Fill(unsigned char* pDestination,
         const std::size_t aRemaining = mCurrentPathLength - mPathBytesUsed;
         const std::size_t aChunk = std::min<std::size_t>(aWritable, aRemaining);
         if (aChunk == 0u) {
-          mStage = Stage::kContentLength;
+          mStage = Stage::kTypeFlag;
           break;
         }
         std::memcpy(pDestination + pOutBytesWritten,
@@ -69,19 +73,37 @@ bool BundleLogicalRecordEncoderV2::Fill(unsigned char* pDestination,
         pOutLogicalBytesWritten += static_cast<std::uint64_t>(aChunk);
         mPathBytesUsed += aChunk;
         if (mPathBytesUsed == mCurrentPathLength) {
-          mStage = Stage::kContentLength;
+          mStage = Stage::kTypeFlag;
         }
         break;
       }
 
-      case Stage::kContentLength: {
-        while (mContentLengthBytesUsed < 8u && pOutBytesWritten < pCapacity) {
-          pDestination[pOutBytesWritten++] =
-              mContentLengthLe[mContentLengthBytesUsed++];
+      case Stage::kTypeFlag: {
+        if (aWritable == 0u) {
+          pOutPausedAtBoundary = true;
+          return true;
+        }
+        pDestination[pOutBytesWritten++] = mCurrentTypeFlag;
+        ++pOutLogicalBytesWritten;
+        if (!memory_layout::TypedRecordTypeHasFileSizeV2(mCurrentTypeFlag)) {
+          FinishRecord();
+        } else {
+          mStage = Stage::kFileSize;
+        }
+        break;
+      }
+
+      case Stage::kFileSize: {
+        if (mFileSizeBytesUsed == 0u && aWritable < sizeof(mFileSizeLe)) {
+          pOutPausedAtBoundary = true;
+          return true;
+        }
+        while (mFileSizeBytesUsed < 8u && pOutBytesWritten < pCapacity) {
+          pDestination[pOutBytesWritten++] = mFileSizeLe[mFileSizeBytesUsed++];
           ++pOutLogicalBytesWritten;
         }
-        if (mContentLengthBytesUsed == 8u) {
-          if (mCurrentRecordIsDirectory) {
+        if (mFileSizeBytesUsed == 8u) {
+          if (!memory_layout::TypedRecordTypeHasContentBytesV2(mCurrentTypeFlag)) {
             FinishRecord();
           } else {
             mStage = Stage::kContentBytes;
@@ -136,7 +158,15 @@ bool BundleLogicalRecordEncoderV2::HasRemainingRecords() const {
 }
 
 bool BundleLogicalRecordEncoderV2::IsInsideFile() const {
-  return mStage == Stage::kContentBytes && !mCurrentRecordIsDirectory;
+  return mStage == Stage::kContentBytes &&
+         memory_layout::TypedRecordTypeHasContentBytesV2(mCurrentTypeFlag);
+}
+
+std::string BundleLogicalRecordEncoderV2::CurrentFileReference() const {
+  if (mDone || mCurrentRecordIsDirectory || mCurrentRecordRelativePath.empty()) {
+    return {};
+  }
+  return mCurrentRecordRelativePath;
 }
 
 std::size_t BundleLogicalRecordEncoderV2::PackedItemCount() const {
@@ -146,20 +176,19 @@ std::size_t BundleLogicalRecordEncoderV2::PackedItemCount() const {
 void BundleLogicalRecordEncoderV2::StartNextRecord() {
   mPathLengthBytesUsed = 0u;
   mPathBytesUsed = 0u;
-  mContentLengthBytesUsed = 0u;
+  mFileSizeBytesUsed = 0u;
   mContentBytesRemaining = 0u;
   mCurrentFileReadOffset = 0u;
   mCurrentRead.reset();
   mCurrentRecordRelativePath.clear();
+  mCurrentTypeFlag = 0u;
 
   if (mRecordIndex >= mRecords.size()) {
     mCurrentPathLength = 0u;
-    mPathLengthLe[0] = 0u;
-    mPathLengthLe[1] = 0u;
-    mCurrentRecordIsDirectory = false;
-    mStage = Stage::kPathLength;
+    mDone = true;
     return;
   }
+  mDone = false;
 
   const BundleRecordEntryV2& aRecord = mRecords[mRecordIndex];
   mCurrentRecordRelativePath = aRecord.mRelativePath;
@@ -170,16 +199,17 @@ void BundleLogicalRecordEncoderV2::StartNextRecord() {
   mPathLengthLe[1] =
       static_cast<unsigned char>((mCurrentPathLength >> 8u) & 0xFFu);
 
-  const std::uint64_t aContentLengthField = aRecord.mIsDirectory
-                                                ? memory_layout::kDirectoryRecordContentMarkerV2
-                                                : aRecord.mContentLength;
+  mCurrentTypeFlag = aRecord.mIsDirectory ? mFolderType : mFileType;
   for (int aByte = 0; aByte < 8; ++aByte) {
-    mContentLengthLe[static_cast<std::size_t>(aByte)] =
-        static_cast<unsigned char>((aContentLengthField >> (8 * aByte)) & 0xFFu);
+    mFileSizeLe[static_cast<std::size_t>(aByte)] =
+        static_cast<unsigned char>((aRecord.mContentLength >> (8 * aByte)) & 0xFFu);
   }
-  mContentBytesRemaining = aRecord.mIsDirectory ? 0u : aRecord.mContentLength;
+  mContentBytesRemaining =
+      memory_layout::TypedRecordTypeHasContentBytesV2(mCurrentTypeFlag)
+          ? aRecord.mContentLength
+          : 0u;
 
-  if (!mCurrentRecordIsDirectory) {
+  if (memory_layout::TypedRecordTypeHasContentBytesV2(mCurrentTypeFlag)) {
     mCurrentRead = mFileSystem.OpenReadStream(aRecord.mSourcePath);
   }
 

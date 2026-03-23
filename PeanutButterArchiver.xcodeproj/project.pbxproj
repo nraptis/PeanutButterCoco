@@ -11,7 +11,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
-		7796864F2F6E240900144DD9 /* PBXContainerItemProxy */ = {
+		776586452F70ED3500735D5C /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 779686352F6E240800144DD9 /* Project object */;
 			proxyType = 1;
@@ -21,38 +21,38 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		776586412F70ED3500735D5C /* HomeGrownTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = HomeGrownTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		7796863D2F6E240800144DD9 /* PeanutButterArchiver.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PeanutButterArchiver.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		7796864E2F6E240900144DD9 /* PeanutButterArchiverTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PeanutButterArchiverTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		7797934F2F6E2B5300D6A4FC /* AppKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AppKit.framework; path = System/Library/Frameworks/AppKit.framework; sourceTree = SDKROOT; };
 		779793512F6E2B5700D6A4FC /* Cocoa.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Cocoa.framework; path = System/Library/Frameworks/Cocoa.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		776586422F70ED3500735D5C /* HomeGrownTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = HomeGrownTests;
+			sourceTree = "<group>";
+		};
 		7796863F2F6E240800144DD9 /* PeanutButterArchiver */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = PeanutButterArchiver;
 			sourceTree = "<group>";
 		};
-		779686512F6E240900144DD9 /* PeanutButterArchiverTests */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = PeanutButterArchiverTests;
-			sourceTree = "<group>";
-		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		7765863E2F70ED3500735D5C /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		7796863A2F6E240800144DD9 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 				779793522F6E2B5700D6A4FC /* Cocoa.framework in Frameworks */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		7796864B2F6E240900144DD9 /* Frameworks */ = {
-			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -63,7 +63,7 @@
 			isa = PBXGroup;
 			children = (
 				7796863F2F6E240800144DD9 /* PeanutButterArchiver */,
-				779686512F6E240900144DD9 /* PeanutButterArchiverTests */,
+				776586422F70ED3500735D5C /* HomeGrownTests */,
 				7797934E2F6E2B5200D6A4FC /* Frameworks */,
 				7796863E2F6E240800144DD9 /* Products */,
 			);
@@ -73,7 +73,7 @@
 			isa = PBXGroup;
 			children = (
 				7796863D2F6E240800144DD9 /* PeanutButterArchiver.app */,
-				7796864E2F6E240900144DD9 /* PeanutButterArchiverTests.xctest */,
+				776586412F70ED3500735D5C /* HomeGrownTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -90,6 +90,29 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		776586402F70ED3500735D5C /* HomeGrownTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 776586472F70ED3500735D5C /* Build configuration list for PBXNativeTarget "HomeGrownTests" */;
+			buildPhases = (
+				7765863D2F70ED3500735D5C /* Sources */,
+				7765863E2F70ED3500735D5C /* Frameworks */,
+				7765863F2F70ED3500735D5C /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				776586462F70ED3500735D5C /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				776586422F70ED3500735D5C /* HomeGrownTests */,
+			);
+			name = HomeGrownTests;
+			packageProductDependencies = (
+			);
+			productName = HomeGrownTests;
+			productReference = 776586412F70ED3500735D5C /* HomeGrownTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 		7796863C2F6E240800144DD9 /* PeanutButterArchiver */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 779686622F6E240900144DD9 /* Build configuration list for PBXNativeTarget "PeanutButterArchiver" */;
@@ -112,29 +135,6 @@
 			productReference = 7796863D2F6E240800144DD9 /* PeanutButterArchiver.app */;
 			productType = "com.apple.product-type.application";
 		};
-		7796864D2F6E240900144DD9 /* PeanutButterArchiverTests */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = 779686652F6E240900144DD9 /* Build configuration list for PBXNativeTarget "PeanutButterArchiverTests" */;
-			buildPhases = (
-				7796864A2F6E240900144DD9 /* Sources */,
-				7796864B2F6E240900144DD9 /* Frameworks */,
-				7796864C2F6E240900144DD9 /* Resources */,
-			);
-			buildRules = (
-			);
-			dependencies = (
-				779686502F6E240900144DD9 /* PBXTargetDependency */,
-			);
-			fileSystemSynchronizedGroups = (
-				779686512F6E240900144DD9 /* PeanutButterArchiverTests */,
-			);
-			name = PeanutButterArchiverTests;
-			packageProductDependencies = (
-			);
-			productName = PeanutButterArchiverTests;
-			productReference = 7796864E2F6E240900144DD9 /* PeanutButterArchiverTests.xctest */;
-			productType = "com.apple.product-type.bundle.unit-test";
-		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -142,14 +142,15 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2630;
 				LastUpgradeCheck = 2630;
 				TargetAttributes = {
-					7796863C2F6E240800144DD9 = {
-						CreatedOnToolsVersion = 26.3;
-					};
-					7796864D2F6E240900144DD9 = {
+					776586402F70ED3500735D5C = {
 						CreatedOnToolsVersion = 26.3;
 						TestTargetID = 7796863C2F6E240800144DD9;
+					};
+					7796863C2F6E240800144DD9 = {
+						CreatedOnToolsVersion = 26.3;
 					};
 				};
 			};
@@ -168,20 +169,20 @@
 			projectRoot = "";
 			targets = (
 				7796863C2F6E240800144DD9 /* PeanutButterArchiver */,
-				7796864D2F6E240900144DD9 /* PeanutButterArchiverTests */,
+				776586402F70ED3500735D5C /* HomeGrownTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
-		7796863B2F6E240800144DD9 /* Resources */ = {
+		7765863F2F70ED3500735D5C /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		7796864C2F6E240900144DD9 /* Resources */ = {
+		7796863B2F6E240800144DD9 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -191,14 +192,14 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
-		779686392F6E240800144DD9 /* Sources */ = {
+		7765863D2F70ED3500735D5C /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		7796864A2F6E240900144DD9 /* Sources */ = {
+		779686392F6E240800144DD9 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -208,14 +209,48 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
-		779686502F6E240900144DD9 /* PBXTargetDependency */ = {
+		776586462F70ED3500735D5C /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = 7796863C2F6E240800144DD9 /* PeanutButterArchiver */;
-			targetProxy = 7796864F2F6E240900144DD9 /* PBXContainerItemProxy */;
+			targetProxy = 776586452F70ED3500735D5C /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		776586482F70ED3500735D5C /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = X9WGNLFN3B;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.china.foxcot.HomeGrownTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/PeanutButterArchiver.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/PeanutButterArchiver";
+			};
+			name = Debug;
+		};
+		776586492F70ED3500735D5C /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = X9WGNLFN3B;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.china.foxcot.HomeGrownTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/PeanutButterArchiver.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/PeanutButterArchiver";
+			};
+			name = Release;
+		};
 		779686602F6E240900144DD9 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -251,6 +286,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEFINES_MODULE = YES;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
@@ -312,6 +348,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEFINES_MODULE = YES;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
@@ -388,43 +425,18 @@
 			};
 			name = Release;
 		};
-		779686662F6E240900144DD9 /* Debug */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				BUNDLE_LOADER = "$(TEST_HOST)";
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				GENERATE_INFOPLIST_FILE = YES;
-				MACOSX_DEPLOYMENT_TARGET = 26.2;
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.usa.federation.PeanutButterArchiverTests;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				STRING_CATALOG_GENERATE_SYMBOLS = NO;
-				SWIFT_EMIT_LOC_STRINGS = NO;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/PeanutButterArchiver.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/PeanutButterArchiver";
-			};
-			name = Debug;
-		};
-		779686672F6E240900144DD9 /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				BUNDLE_LOADER = "$(TEST_HOST)";
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				GENERATE_INFOPLIST_FILE = YES;
-				MACOSX_DEPLOYMENT_TARGET = 26.2;
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.usa.federation.PeanutButterArchiverTests;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				STRING_CATALOG_GENERATE_SYMBOLS = NO;
-				SWIFT_EMIT_LOC_STRINGS = NO;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/PeanutButterArchiver.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/PeanutButterArchiver";
-			};
-			name = Release;
-		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		776586472F70ED3500735D5C /* Build configuration list for PBXNativeTarget "HomeGrownTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				776586482F70ED3500735D5C /* Debug */,
+				776586492F70ED3500735D5C /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		779686382F6E240800144DD9 /* Build configuration list for PBXProject "PeanutButterArchiver" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -439,15 +451,6 @@
 			buildConfigurations = (
 				779686632F6E240900144DD9 /* Debug */,
 				779686642F6E240900144DD9 /* Release */,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
-		};
-		779686652F6E240900144DD9 /* Build configuration list for PBXNativeTarget "PeanutButterArchiverTests" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				779686662F6E240900144DD9 /* Debug */,
-				779686672F6E240900144DD9 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

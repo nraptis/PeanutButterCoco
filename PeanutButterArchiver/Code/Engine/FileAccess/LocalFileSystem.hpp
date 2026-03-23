@@ -32,6 +32,9 @@ class LocalFileSystemV2 final : public FileSystemV2 {
                            std::size_t pOffset,
                            const unsigned char* pContents,
                            std::size_t pLength) override;
+  bool RenamePath(const std::string& pOldPath,
+                  const std::string& pNewPath) override;
+  bool RemovePath(const std::string& pPath) override;
   std::string JoinPath(const std::string& pLeft,
                        const std::string& pRight) const override;
   std::string RelativePathFrom(const std::string& pBasePath,

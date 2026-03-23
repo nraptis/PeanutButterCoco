@@ -47,10 +47,7 @@ inline std::uint64_t MixU64(std::uint64_t pValue) {
 
 CheckSumV2 ComputeSectionCheckSum(const unsigned char* pPayloadBytes,
                                   std::size_t pPayloadLength,
-                                  const SkipRecordV2& pSkipRecord,
-                                  std::uint8_t pSectionType,
-                                  std::uint8_t pSectionFlags,
-                                  const RepairRecordV2& pRepairRecord) {
+                                  const SectionHeaderV2& pHeader) {
   CheckSumV2 aCheckSum{};
   if (pPayloadBytes == nullptr || pPayloadLength == 0u) {
     return aCheckSum;
@@ -73,11 +70,22 @@ CheckSumV2 ComputeSectionCheckSum(const unsigned char* pPayloadBytes,
         static_cast<unsigned char>(aByte ^ static_cast<unsigned char>((aIndex * 131u) & 0xFFu)));
   }
 
-  unsigned char aMetaBytes[17] = {};
-  WriteSkipRecord(pSkipRecord, aMetaBytes + 0u, kSkipRecordBytesV2, nullptr);
-  aMetaBytes[7u] = pSectionType;
-  aMetaBytes[8u] = pSectionFlags;
-  WriteRepairRecord(pRepairRecord, aMetaBytes + 9u, kRepairRecordBytesV2, nullptr);
+  unsigned char aMetaBytes[61] = {};
+  WriteSkipRecord(pHeader.mSkipRecord, aMetaBytes + 0u, kSkipRecordBytesV2, nullptr);
+  WriteRepairRecord(
+      pHeader.mRepairRecord, aMetaBytes + kSkipRecordBytesV2, kRepairRecordBytesV2, nullptr);
+  aMetaBytes[15u] = pHeader.mSectionType;
+  aMetaBytes[16u] = pHeader.mSectionFlags;
+  WriteUint32LE(pHeader.mPayloadBytesUsed, aMetaBytes + 17u);
+  WriteUint32LE(pHeader.mArchiveFileCount, aMetaBytes + 21u);
+  WriteUint32LE(pHeader.mArchiveBlockCount, aMetaBytes + 25u);
+  WriteUint32LE(pHeader.mArchiveIndex, aMetaBytes + 29u);
+  WriteUint32LE(pHeader.mBlockIndex, aMetaBytes + 33u);
+  WriteUint32LE(pHeader.mArchiveDataBlockCount, aMetaBytes + 37u);
+  WriteUint32LE(pHeader.mPreviewManifestBlockCount, aMetaBytes + 41u);
+  WriteUint32LE(pHeader.mFolderManifestBlockCount, aMetaBytes + 45u);
+  WriteUint32LE(pHeader.mRepairDataBlockCount, aMetaBytes + 49u);
+  WriteUint64LE(pHeader.mArchiveFamilyId, aMetaBytes + 53u);
 
   aState0 = HashBytes(aMetaBytes, sizeof(aMetaBytes), aState0, 1u);
   aState1 = HashBytes(aMetaBytes, sizeof(aMetaBytes), aState1, 2u);
@@ -94,13 +102,7 @@ CheckSumV2 ComputeSectionCheckSum(const unsigned char* pPayloadBytes,
 bool ValidateSectionCheckSum(const SectionHeaderV2& pHeader,
                              const unsigned char* pPayloadBytes,
                              std::size_t pPayloadLength) {
-  const CheckSumV2 aExpected = ComputeSectionCheckSum(
-      pPayloadBytes,
-      pPayloadLength,
-      pHeader.mSkipRecord,
-      pHeader.mSectionType,
-      pHeader.mSectionFlags,
-      pHeader.mRepairRecord);
+  const CheckSumV2 aExpected = ComputeSectionCheckSum(pPayloadBytes, pPayloadLength, pHeader);
   return CheckSumsEqual(aExpected, pHeader.mCheckSum);
 }
 

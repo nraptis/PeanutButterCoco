@@ -5,9 +5,13 @@
 namespace peanutbutter {
 
 BundleStageContextV2::BundleStageContextV2(const BundleRequestV2& pRequest,
-                                           BundleRuntimeV2* pRuntime)
+                                           BundleRuntimeV2* pRuntime,
+                                           FileSystemV2* pFileSystem,
+                                           const memory_layout::ArchiveLayoutConfigV2* pLayout)
     : mRequest(pRequest),
-      mRuntime(pRuntime) {}
+      mRuntime(pRuntime),
+      mFileSystem(pFileSystem != nullptr ? pFileSystem : &mLocalFileSystem),
+      mLayout(pLayout != nullptr ? pLayout : &memory_layout::DefaultArchiveLayoutConfigV2()) {}
 
 const BundleRequestV2& BundleStageContextV2::Request() const {
   return mRequest;
@@ -22,11 +26,15 @@ const BundleWorkStateV2& BundleStageContextV2::State() const {
 }
 
 FileSystemV2& BundleStageContextV2::FileSystem() {
-  return mFileSystem;
+  return *mFileSystem;
 }
 
 const FileSystemV2& BundleStageContextV2::FileSystem() const {
-  return mFileSystem;
+  return *mFileSystem;
+}
+
+const memory_layout::ArchiveLayoutConfigV2& BundleStageContextV2::Layout() const {
+  return *mLayout;
 }
 
 bool BundleStageContextV2::IsCancelRequested() const {

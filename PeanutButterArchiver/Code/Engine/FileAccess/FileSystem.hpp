@@ -99,6 +99,9 @@ class FileSystemV2 {
                                    std::size_t pOffset,
                                    const unsigned char* pContents,
                                    std::size_t pLength) = 0;
+  virtual bool RenamePath(const std::string& pOldPath,
+                          const std::string& pNewPath) = 0;
+  virtual bool RemovePath(const std::string& pPath) = 0;
   virtual std::string JoinPath(const std::string& pLeft,
                                const std::string& pRight) const = 0;
   virtual std::string RelativePathFrom(const std::string& pBasePath,

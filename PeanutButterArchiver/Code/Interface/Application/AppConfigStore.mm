@@ -12,6 +12,17 @@ NSString *StringFromStd(const std::string& value) {
     return [NSString stringWithUTF8String:value.c_str()] ?: @"";
 }
 
+#if PB_APP_USE_BUNDLE_PARENT_ROOT
+NSString *PortableConfigFileName(void) {
+    NSString *bundleName =
+        [[[[AppRuntimePaths appBundleURL] lastPathComponent] stringByDeletingPathExtension] copy];
+    if (bundleName.length == 0) {
+        bundleName = @"PBCrypt";
+    }
+    return [bundleName stringByAppendingString:@".config.json"];
+}
+#endif
+
 std::string StdFromString(NSString *value) {
     if (value == nil) {
         return std::string();
@@ -121,11 +132,20 @@ AppConfigStateV2 ConfigFromDictionary(NSDictionary *dictionary) {
 @implementation AppConfigStore
 
 - (NSURL *)configDirectoryURL {
+#if PB_APP_USE_BUNDLE_PARENT_ROOT
+    return [AppRuntimePaths appContainerDirectoryURL];
+#else
     return [AppRuntimePaths applicationSupportDirectoryURL];
+#endif
 }
 
 - (NSURL *)configFileURL {
+#if PB_APP_USE_BUNDLE_PARENT_ROOT
+    return [[self configDirectoryURL] URLByAppendingPathComponent:PortableConfigFileName()
+                                                      isDirectory:NO];
+#else
     return [[self configDirectoryURL] URLByAppendingPathComponent:kConfigFileName isDirectory:NO];
+#endif
 }
 
 - (peanutbutter::AppConfigStateV2)loadOrCreateConfig {

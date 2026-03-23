@@ -8,14 +8,23 @@
 namespace peanutbutter {
 namespace {
 
-std::uint64_t RecordLogicalBytes(const BundleRecordEntryV2& pRecord) {
-  return 2u + static_cast<std::uint64_t>(pRecord.mRelativePath.size()) + 8u +
-         (pRecord.mIsDirectory ? 0u : pRecord.mContentLength);
-}
-
 std::uint64_t CeilingDivide(std::uint64_t pValue,
                             std::uint64_t pDivisor) {
   return pDivisor == 0u ? 0u : ((pValue + pDivisor - 1u) / pDivisor);
+}
+
+std::vector<std::uint32_t> BuildArchiveBlockCounts(std::uint64_t pTotalBlockCount,
+                                                   std::uint32_t pBlocksPerArchive) {
+  std::vector<std::uint32_t> aCounts;
+  std::uint64_t aBlocksRemaining = pTotalBlockCount;
+  const std::uint64_t aPerArchive = std::max<std::uint32_t>(1u, pBlocksPerArchive);
+  while (aBlocksRemaining > 0u) {
+    const std::uint32_t aBlockCount = static_cast<std::uint32_t>(
+        std::min<std::uint64_t>(aBlocksRemaining, aPerArchive));
+    aCounts.push_back(aBlockCount);
+    aBlocksRemaining -= static_cast<std::uint64_t>(aBlockCount);
+  }
+  return aCounts;
 }
 
 std::uint64_t HashString(std::uint64_t pState, const std::string& pValue) {
@@ -35,33 +44,21 @@ std::uint64_t HashU64(std::uint64_t pState, std::uint64_t pValue) {
   return pState;
 }
 
-std::string BuildPreviewManifestPayload(const BundleDiscoveryStateV2& pDiscovery) {
-  std::string aPayload;
-  aPayload.reserve(128u +
-                   (pDiscovery.mFileRecords.size() * 48u) +
-                   (pDiscovery.mEmptyFolderRecords.size() * 16u));
-  aPayload += "PBTR PUBLIC PREVIEW V2\n";
-  aPayload += "SOURCE\t";
-  aPayload += pDiscovery.mSourceStem;
-  aPayload += "\nFILES\t";
-  aPayload += std::to_string(pDiscovery.mFileRecords.size());
-  aPayload += "\nEMPTY_FOLDERS\t";
-  aPayload += std::to_string(pDiscovery.mEmptyFolderRecords.size());
-  aPayload += "\n";
-
-  for (const BundleRecordEntryV2& aFolderRecord : pDiscovery.mEmptyFolderRecords) {
-    aPayload += "DIR\t";
-    aPayload += aFolderRecord.mRelativePath;
-    aPayload += "\n";
+std::uint64_t RecordLogicalBytes(
+    const BundleRecordEntryV2& pRecord,
+    memory_layout::TypedRecordTypeV2 pFileType,
+    memory_layout::TypedRecordTypeV2 pFolderType) {
+  const std::uint8_t aType = static_cast<std::uint8_t>(
+      pRecord.mIsDirectory ? pFolderType : pFileType);
+  std::uint64_t aBytes =
+      2u + static_cast<std::uint64_t>(pRecord.mRelativePath.size()) + 1u;
+  if (memory_layout::TypedRecordTypeHasFileSizeV2(aType)) {
+    aBytes += 8u;
   }
-  for (const BundleRecordEntryV2& aFileRecord : pDiscovery.mFileRecords) {
-    aPayload += "FILE\t";
-    aPayload += std::to_string(aFileRecord.mContentLength);
-    aPayload += "\t";
-    aPayload += aFileRecord.mRelativePath;
-    aPayload += "\n";
+  if (memory_layout::TypedRecordTypeHasContentBytesV2(aType)) {
+    aBytes += pRecord.mContentLength;
   }
-  return aPayload;
+  return aBytes;
 }
 
 }  // namespace
@@ -70,62 +67,95 @@ bool BundleMemoryPlanningV2::Run(BundleStageContextV2& pContext) {
   const BundleDiscoveryStateV2& aDiscovery = pContext.State().mDiscovery;
   BundleMemoryPlanV2& aMemoryPlan = pContext.State().mMemoryPlan;
   BundleManifestStateV2& aManifest = pContext.State().mManifest;
+  const std::uint64_t aSectionPayloadBytes =
+      static_cast<std::uint64_t>(pContext.Layout().SectionPayloadBytes());
   aMemoryPlan = BundleMemoryPlanV2{};
   aManifest.mPreviewManifestPayload.clear();
   aManifest.mPreviewManifestBytes = 0u;
   aManifest.mPreviewManifestBlockCount = 0u;
 
   for (const BundleRecordEntryV2& aFileRecord : aDiscovery.mFileRecords) {
-    aMemoryPlan.mArchiveDataLogicalBytes += RecordLogicalBytes(aFileRecord);
+    aMemoryPlan.mArchiveDataLogicalBytes += RecordLogicalBytes(
+        aFileRecord,
+        memory_layout::TypedRecordTypeV2::kDataFile,
+        memory_layout::TypedRecordTypeV2::kDataFolder);
   }
 
   for (const BundleRecordEntryV2& aFolderRecord : aDiscovery.mEmptyFolderRecords) {
-    aMemoryPlan.mEmptyFolderLogicalBytes += RecordLogicalBytes(aFolderRecord);
-  }
-  if (!aDiscovery.mEmptyFolderRecords.empty()) {
-    aMemoryPlan.mEmptyFolderLogicalBytes += 2u;
+    aMemoryPlan.mEmptyFolderLogicalBytes += RecordLogicalBytes(
+        aFolderRecord,
+        memory_layout::TypedRecordTypeV2::kManifestFile,
+        memory_layout::TypedRecordTypeV2::kManifestFolder);
   }
 
   if (pContext.Request().mSafeModeEnabled) {
-    if (aDiscovery.mFileRecords.empty()) {
-      aMemoryPlan.mArchiveDataBlockCount = 1u;
-    } else {
-      for (const BundleRecordEntryV2& aFileRecord : aDiscovery.mFileRecords) {
-        aMemoryPlan.mArchiveDataBlockCount += CeilingDivide(
-            RecordLogicalBytes(aFileRecord),
-            static_cast<std::uint64_t>(memory_layout::kSectionPayloadBytesV2));
-      }
+    for (const BundleRecordEntryV2& aFileRecord : aDiscovery.mFileRecords) {
+      aMemoryPlan.mArchiveDataBlockCount += CeilingDivide(
+          RecordLogicalBytes(aFileRecord,
+                             memory_layout::TypedRecordTypeV2::kDataFile,
+                             memory_layout::TypedRecordTypeV2::kDataFolder),
+          aSectionPayloadBytes);
     }
   } else {
-    aMemoryPlan.mArchiveDataLogicalBytes += 2u;
     aMemoryPlan.mArchiveDataBlockCount = CeilingDivide(
-        aMemoryPlan.mArchiveDataLogicalBytes,
-        static_cast<std::uint64_t>(memory_layout::kSectionPayloadBytesV2));
+        aMemoryPlan.mArchiveDataLogicalBytes, aSectionPayloadBytes);
   }
   aMemoryPlan.mEmptyFolderBlockCount = CeilingDivide(
-      aMemoryPlan.mEmptyFolderLogicalBytes,
-      static_cast<std::uint64_t>(memory_layout::kSectionPayloadBytesV2));
+      aMemoryPlan.mEmptyFolderLogicalBytes, aSectionPayloadBytes);
   if (pContext.Request().mIncludePreviewManifest) {
-    aManifest.mPreviewManifestPayload = BuildPreviewManifestPayload(aDiscovery);
-    aManifest.mPreviewManifestBytes =
-        static_cast<std::uint64_t>(aManifest.mPreviewManifestPayload.size());
+    for (const BundleRecordEntryV2& aFolderRecord : aDiscovery.mEmptyFolderRecords) {
+      aManifest.mPreviewManifestBytes += RecordLogicalBytes(
+          aFolderRecord,
+          memory_layout::TypedRecordTypeV2::kManifestFile,
+          memory_layout::TypedRecordTypeV2::kManifestFolder);
+    }
+    for (const BundleRecordEntryV2& aFileRecord : aDiscovery.mFileRecords) {
+      aManifest.mPreviewManifestBytes += RecordLogicalBytes(
+          aFileRecord,
+          memory_layout::TypedRecordTypeV2::kManifestFile,
+          memory_layout::TypedRecordTypeV2::kManifestFolder);
+    }
     aManifest.mPreviewManifestBlockCount = CeilingDivide(
-        aManifest.mPreviewManifestBytes,
-        static_cast<std::uint64_t>(memory_layout::kSectionPayloadBytesV2));
+        aManifest.mPreviewManifestBytes, aSectionPayloadBytes);
   }
   aMemoryPlan.mPreviewManifestBlockCount = aManifest.mPreviewManifestBlockCount;
-  aMemoryPlan.mRepairSectorBlockCount = 0u;
-  aMemoryPlan.mTotalFamilyBlockCount =
+  aMemoryPlan.mNonRepairFamilyBlockCount =
       aMemoryPlan.mEmptyFolderBlockCount +
       aMemoryPlan.mPreviewManifestBlockCount +
-      aMemoryPlan.mArchiveDataBlockCount +
-      aMemoryPlan.mRepairSectorBlockCount;
+      aMemoryPlan.mArchiveDataBlockCount;
 
   const std::uint32_t aBlocksPerArchive =
       std::max<std::uint32_t>(1u, pContext.Request().mBlockCount);
+  aMemoryPlan.mSourceArchiveBlockCounts = BuildArchiveBlockCounts(
+      aMemoryPlan.mNonRepairFamilyBlockCount, aBlocksPerArchive);
+
+  aMemoryPlan.mRepairCopyBlockCounts.clear();
+  aMemoryPlan.mRepairSectorBlockCount = 0u;
+  if (pContext.Request().mRepairEnabled) {
+    for (std::uint32_t aSourceBlockCount : aMemoryPlan.mSourceArchiveBlockCounts) {
+      const std::uint64_t aRepairBlocks = CeilingDivide(
+          static_cast<std::uint64_t>(aSourceBlockCount) *
+              static_cast<std::uint64_t>(pContext.Request().mRepairPercent),
+          100u);
+      aMemoryPlan.mRepairCopyBlockCounts.push_back(
+          static_cast<std::uint32_t>(aRepairBlocks));
+      aMemoryPlan.mRepairSectorBlockCount += aRepairBlocks;
+    }
+  }
+
+  aMemoryPlan.mTotalFamilyBlockCount =
+      aMemoryPlan.mNonRepairFamilyBlockCount +
+      aMemoryPlan.mRepairSectorBlockCount;
   aMemoryPlan.mArchiveCount =
       CeilingDivide(aMemoryPlan.mTotalFamilyBlockCount,
                     static_cast<std::uint64_t>(aBlocksPerArchive));
+  if (aMemoryPlan.mArchiveCount > pContext.Layout().mMaxArchiveCount) {
+    pContext.EmitLog(
+        LogLevelV2::kError,
+        "Memory planning failed: archive count exceeds configured maximum of " +
+            std::to_string(pContext.Layout().mMaxArchiveCount) + ".");
+    return false;
+  }
 
   std::uint64_t aHash = 1469598103934665603ULL;
   aHash = HashString(aHash, aDiscovery.mSourceStem);

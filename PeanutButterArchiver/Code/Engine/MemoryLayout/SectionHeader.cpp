@@ -1,5 +1,7 @@
 #include "SectionHeader.hpp"
 
+#include "FormatUtilities.hpp"
+
 namespace peanutbutter::memory_layout {
 namespace {
 
@@ -25,23 +27,36 @@ bool ValidateSectionHeader(const SectionHeaderV2& pHeader,
                                             MemoryLayoutErrorCode::kInvalidSectionType,
                                             "ValidateSectionHeader",
                                             "SectionType",
-                                            39u,
+                                            47u,
                                             kSectionHeaderBytesV2,
                                             kSectionHeaderBytesV2,
                                             pHeader.mSectionType,
                                             static_cast<std::uint64_t>(SectionTypeV2::kRepairData));
     return false;
   }
-  if ((pHeader.mSectionFlags & ~kSectionFlagSparsePaddingHasNextRecordV2) != 0u) {
+  if (pHeader.mSectionFlags != 0u) {
     AssignMemoryLayoutObservedExpectedError(pOutError,
                                             MemoryLayoutErrorCode::kInvalidBooleanByte,
                                             "ValidateSectionHeader",
                                             "SectionFlags",
-                                            40u,
+                                            48u,
                                             kSectionHeaderBytesV2,
                                             kSectionHeaderBytesV2,
                                             pHeader.mSectionFlags,
-                                            kSectionFlagSparsePaddingHasNextRecordV2);
+                                            0u);
+    return false;
+  }
+  if (pHeader.mPayloadBytesUsed > 0u &&
+      pHeader.mPayloadBytesUsed > static_cast<std::uint32_t>(kSectionPayloadBytesV2)) {
+    AssignMemoryLayoutObservedExpectedError(pOutError,
+                                            MemoryLayoutErrorCode::kIntegerOutOfRange,
+                                            "ValidateSectionHeader",
+                                            "PayloadBytesUsed",
+                                            49u,
+                                            kSectionHeaderBytesV2,
+                                            kSectionHeaderBytesV2,
+                                            pHeader.mPayloadBytesUsed,
+                                            kSectionPayloadBytesV2);
     return false;
   }
 
@@ -95,23 +110,34 @@ bool ReadSectionHeader(const unsigned char* pBytes,
     return false;
   }
 
-  pOutHeader.mSectionType = pBytes[kCheckSumBytesV2 + kSkipRecordBytesV2];
-  pOutHeader.mSectionFlags = pBytes[kCheckSumBytesV2 + kSkipRecordBytesV2 + 1u];
-  for (std::size_t aIndex = 0u; aIndex < sizeof(pOutHeader.mReserved); ++aIndex) {
-    pOutHeader.mReserved[aIndex] =
-        pBytes[kCheckSumBytesV2 + kSkipRecordBytesV2 + 2u + aIndex];
-  }
-
-  if (!ReadRepairRecord(pBytes + kCheckSumBytesV2 + kSkipRecordBytesV2 + 17u,
+  if (!ReadRepairRecord(pBytes + kCheckSumBytesV2 + kSkipRecordBytesV2,
                         kRepairRecordBytesV2,
                         pOutHeader.mRepairRecord,
                         &aNestedError)) {
     if (pOutError != nullptr) {
       *pOutError = aNestedError;
       pOutError->mOperation = "ReadSectionHeader";
-      pOutError->mOffset += kCheckSumBytesV2 + kSkipRecordBytesV2 + 17u;
+      pOutError->mOffset += kCheckSumBytesV2 + kSkipRecordBytesV2;
     }
     return false;
+  }
+
+  constexpr std::size_t kMetadataOffset =
+      kCheckSumBytesV2 + kSkipRecordBytesV2 + kRepairRecordBytesV2;
+  pOutHeader.mSectionType = pBytes[kMetadataOffset + 0u];
+  pOutHeader.mSectionFlags = pBytes[kMetadataOffset + 1u];
+  pOutHeader.mPayloadBytesUsed = ReadUint32LE(pBytes + kMetadataOffset + 2u);
+  pOutHeader.mArchiveFileCount = ReadUint32LE(pBytes + kMetadataOffset + 6u);
+  pOutHeader.mArchiveBlockCount = ReadUint32LE(pBytes + kMetadataOffset + 10u);
+  pOutHeader.mArchiveIndex = ReadUint32LE(pBytes + kMetadataOffset + 14u);
+  pOutHeader.mBlockIndex = ReadUint32LE(pBytes + kMetadataOffset + 18u);
+  pOutHeader.mArchiveDataBlockCount = ReadUint32LE(pBytes + kMetadataOffset + 22u);
+  pOutHeader.mPreviewManifestBlockCount = ReadUint32LE(pBytes + kMetadataOffset + 26u);
+  pOutHeader.mFolderManifestBlockCount = ReadUint32LE(pBytes + kMetadataOffset + 30u);
+  pOutHeader.mRepairDataBlockCount = ReadUint32LE(pBytes + kMetadataOffset + 34u);
+  pOutHeader.mArchiveFamilyId = ReadUint64LE(pBytes + kMetadataOffset + 38u);
+  for (std::size_t aIndex = 0u; aIndex < sizeof(pOutHeader.mReserved); ++aIndex) {
+    pOutHeader.mReserved[aIndex] = pBytes[kMetadataOffset + 46u + aIndex];
   }
 
   return ValidateSectionHeader(pOutHeader, pOutError);
@@ -169,25 +195,35 @@ bool WriteSectionHeader(const SectionHeaderV2& pHeader,
     return false;
   }
 
-  pOutBytes[kCheckSumBytesV2 + kSkipRecordBytesV2] =
-      static_cast<unsigned char>(pHeader.mSectionType);
-  pOutBytes[kCheckSumBytesV2 + kSkipRecordBytesV2 + 1u] =
-      static_cast<unsigned char>(pHeader.mSectionFlags);
-  for (std::size_t aIndex = 0u; aIndex < sizeof(pHeader.mReserved); ++aIndex) {
-    pOutBytes[kCheckSumBytesV2 + kSkipRecordBytesV2 + 2u + aIndex] =
-        static_cast<unsigned char>(pHeader.mReserved[aIndex]);
-  }
-
   if (!WriteRepairRecord(pHeader.mRepairRecord,
-                         pOutBytes + kCheckSumBytesV2 + kSkipRecordBytesV2 + 17u,
+                         pOutBytes + kCheckSumBytesV2 + kSkipRecordBytesV2,
                          kRepairRecordBytesV2,
                          &aNestedError)) {
     if (pOutError != nullptr) {
       *pOutError = aNestedError;
       pOutError->mOperation = "WriteSectionHeader";
-      pOutError->mOffset += kCheckSumBytesV2 + kSkipRecordBytesV2 + 17u;
+      pOutError->mOffset += kCheckSumBytesV2 + kSkipRecordBytesV2;
     }
     return false;
+  }
+
+  constexpr std::size_t kMetadataOffset =
+      kCheckSumBytesV2 + kSkipRecordBytesV2 + kRepairRecordBytesV2;
+  pOutBytes[kMetadataOffset + 0u] = static_cast<unsigned char>(pHeader.mSectionType);
+  pOutBytes[kMetadataOffset + 1u] = static_cast<unsigned char>(pHeader.mSectionFlags);
+  WriteUint32LE(pHeader.mPayloadBytesUsed, pOutBytes + kMetadataOffset + 2u);
+  WriteUint32LE(pHeader.mArchiveFileCount, pOutBytes + kMetadataOffset + 6u);
+  WriteUint32LE(pHeader.mArchiveBlockCount, pOutBytes + kMetadataOffset + 10u);
+  WriteUint32LE(pHeader.mArchiveIndex, pOutBytes + kMetadataOffset + 14u);
+  WriteUint32LE(pHeader.mBlockIndex, pOutBytes + kMetadataOffset + 18u);
+  WriteUint32LE(pHeader.mArchiveDataBlockCount, pOutBytes + kMetadataOffset + 22u);
+  WriteUint32LE(pHeader.mPreviewManifestBlockCount, pOutBytes + kMetadataOffset + 26u);
+  WriteUint32LE(pHeader.mFolderManifestBlockCount, pOutBytes + kMetadataOffset + 30u);
+  WriteUint32LE(pHeader.mRepairDataBlockCount, pOutBytes + kMetadataOffset + 34u);
+  WriteUint64LE(pHeader.mArchiveFamilyId, pOutBytes + kMetadataOffset + 38u);
+  for (std::size_t aIndex = 0u; aIndex < sizeof(pHeader.mReserved); ++aIndex) {
+    pOutBytes[kMetadataOffset + 46u + aIndex] =
+        static_cast<unsigned char>(pHeader.mReserved[aIndex]);
   }
 
   return true;

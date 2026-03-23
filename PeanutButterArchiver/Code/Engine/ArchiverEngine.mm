@@ -25,15 +25,6 @@ struct LaunchDecisionV2 {
   std::string mMessage;
 };
 
-std::string CurrentResolutionRoot() {
-  std::error_code aError;
-  const std::filesystem::path aCurrentPath = std::filesystem::current_path(aError);
-  if (aError) {
-    return ".";
-  }
-  return aCurrentPath.lexically_normal().generic_string();
-}
-
 std::string TrimmedCopy(const std::string& pValue) {
   std::size_t aStart = 0u;
   while (aStart < pValue.size() &&
@@ -157,7 +148,7 @@ std::string ResolveBundleSourcePath(const std::string& pRawPath) {
     return {};
   }
 
-  const std::filesystem::path aRootPath(CurrentResolutionRoot());
+  const std::filesystem::path aRootPath(GetWorkingDirectoryV2());
   const std::filesystem::path aCandidatePath = MakeCandidatePath(aTrimmed, aRootPath);
   return aCandidatePath.generic_string();
 }
@@ -168,7 +159,7 @@ std::string ResolveBundleDestinationPath(const std::string& pRawPath) {
     return {};
   }
 
-  const std::filesystem::path aRootPath(CurrentResolutionRoot());
+  const std::filesystem::path aRootPath(GetWorkingDirectoryV2());
   const std::filesystem::path aCandidatePath = MakeCandidatePath(aTrimmed, aRootPath);
   const bool aLooksDirectory = LooksDirectoryLike(aTrimmed);
   if (PathExists(aCandidatePath)) {
@@ -260,6 +251,12 @@ class ArchiverEngine::ActiveRuntimeV2 final : public BundleRuntimeV2,
 };
 
 ArchiverEngine::ArchiverEngine() {
+  {
+    std::lock_guard<std::recursive_mutex> aLock(mMutex);
+    EmitLogLocked(LogLevelV2::kInfo,
+                  "[App] Working directory: " +
+                      FormatPathForLogV2(GetWorkingDirectoryV2()));
+  }
   mWorkerThread = std::thread([this]() { WorkerLoop(); });
 }
 
@@ -330,9 +327,13 @@ void ArchiverEngine::EnqueuePromptResponse(const UiPromptResponseV2& pResponse) 
 
 void ArchiverEngine::EnqueueCancelRequest() {
   std::lock_guard<std::recursive_mutex> aLock(mMutex);
-  EngineCommandV2 aCommand;
-  aCommand.mType = EngineCommandTypeV2::kCancel;
-  mIncomingCommands.push(std::move(aCommand));
+  if (mCurrentPrimaryAction == EnginePrimaryActionV2::kNone) {
+    RejectCancelLocked(LogCancelRejectedNoActionV2());
+  } else if (mIsCancelPending) {
+    RejectCancelLocked(LogCancelRejectedAlreadyPendingV2());
+  } else {
+    AcceptCancelLocked();
+  }
   mWorkerCv.notify_all();
 }
 
@@ -516,7 +517,7 @@ void ArchiverEngine::ProcessCurrentActionLocked() {
       (void)mDecodeDirector->Step();
     }
 
-    if (mDecodeDirector->WasCanceled() || mIsCancelPending) {
+    if (mDecodeDirector->WasCanceled()) {
       FinishCurrentActionLocked(EngineEventTypeV2::kActionCanceled,
                                 LogActionCanceledV2(LogActionV2::kDecode));
       return;
@@ -548,7 +549,7 @@ void ArchiverEngine::ProcessCurrentActionLocked() {
       (void)mManifestDirector->Step();
     }
 
-    if (mManifestDirector->WasCanceled() || mIsCancelPending) {
+    if (mManifestDirector->WasCanceled()) {
       FinishCurrentActionLocked(EngineEventTypeV2::kActionCanceled,
                                 LogActionCanceledV2(LogActionV2::kManifest));
       return;
@@ -579,7 +580,7 @@ void ArchiverEngine::ProcessCurrentActionLocked() {
     if (aShouldStep) {
       (void)mSanityDirector->Step();
     }
-    if (mSanityDirector->WasCanceled() || mIsCancelPending) {
+    if (mSanityDirector->WasCanceled()) {
       FinishCurrentActionLocked(EngineEventTypeV2::kActionCanceled,
                                 LogActionCanceledV2(LogActionV2::kSanity));
       return;
@@ -593,13 +594,6 @@ void ArchiverEngine::ProcessCurrentActionLocked() {
       FinishCurrentActionLocked(EngineEventTypeV2::kActionCompleted,
                                 LogActionCompletedV2(LogActionV2::kSanity));
     }
-    return;
-  }
-
-  if (mIsCancelPending && mCurrentPrimaryAction != EnginePrimaryActionV2::kBundle &&
-      mCurrentPrimaryAction != EnginePrimaryActionV2::kRepair) {
-    FinishCurrentActionLocked(EngineEventTypeV2::kActionCanceled,
-                              LogActionCanceledV2(LogActionV2::kSanity));
     return;
   }
 
@@ -624,7 +618,7 @@ void ArchiverEngine::ProcessCurrentActionLocked() {
       (void)mBundleDirector->Step();
     }
 
-    if (mBundleDirector->WasCanceled() || mIsCancelPending) {
+    if (mBundleDirector->WasCanceled()) {
       FinishCurrentActionLocked(EngineEventTypeV2::kActionCanceled,
                                 LogActionCanceledV2(LogActionV2::kBundle));
       return;
@@ -656,7 +650,7 @@ void ArchiverEngine::ProcessCurrentActionLocked() {
       (void)mRepairDirector->Step();
     }
 
-    if (mRepairDirector->WasCanceled() || mIsCancelPending) {
+    if (mRepairDirector->WasCanceled()) {
       FinishCurrentActionLocked(EngineEventTypeV2::kActionCanceled,
                                 LogActionCanceledV2(LogActionV2::kRepair));
       return;
