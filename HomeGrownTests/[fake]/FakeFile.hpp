@@ -17,10 +17,10 @@ public:
     
     ByteString              mName;
     ByteString              mContent;
+    bool                    mIsFolder;
     
     bool                    HasName(ByteString pName);
     bool                    HasContent(ByteString pContent);
-    
     
     bool                    ToPayload(ByteString *pPayload, ByteString *pError);
     bool                    FromPayload(ByteString &pPayload, ByteString *pError);

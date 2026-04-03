@@ -12,7 +12,7 @@
 FakeFile::
 
 FakeFile::FakeFile() {
-    
+    mIsFolder = false;
 }
 
 FakeFile::~FakeFile() {

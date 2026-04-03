@@ -165,7 +165,6 @@ void ByteString::ParseInt(int pNumber) {
     }
 
     // Find where the number ends so we can fill the buffer backwards
-    int aStartDigits = aWritePos;
     long long temp = n;
     while (temp > 0) {
         temp /= 10;
@@ -212,7 +211,6 @@ void ByteString::ParseFloat(float pFloat, int pDecimalCount) {
     double aFractionPart = aVal - (double)aWholePart;
 
     // 1. Write Whole Number (Backwards then Flip)
-    int aWholeStart = aWritePos;
     if (aWholePart == 0) {
         aBuffer[aWritePos++] = '0';
     } else {
@@ -242,6 +240,10 @@ void ByteString::ParseFloat(float pFloat, int pDecimalCount) {
 
     // 3. Commit to UString
     Set(aBuffer, aWritePos);
+}
+
+string ByteString::ToString() const {
+    return string((const char*)mData, mLength);
 }
 
 // Inside the ByteString class:

@@ -16,6 +16,7 @@
 #include "Knobs.hpp"
 #include "Primatives.hpp"
 
+#include "Bundle_Workflow.hpp"
 #include "BundleRequest.hpp"
 #include "DecodeRequest.hpp"
 #include "RepairRequest.hpp"
@@ -33,6 +34,9 @@ using namespace peanutbutter::memory_layout;
 using namespace peanutbutter::repair_workflow;
 using namespace knobs;
 
+using namespace peanutbutter::bundle_workflow;
+using namespace bundle_workflow;
+
 using peanutbutter::BundleExecutionResultV2;
 using peanutbutter::BundleRequestV2;
 using peanutbutter::DecodeExecutionResultV2;
@@ -43,7 +47,5 @@ using peanutbutter::RepairRequestV2;
 using peanutbutter::RuntimeEventKindV2;
 using peanutbutter::RuntimeEventV2;
 using peanutbutter::StrengthPresetV2;
-
-
 
 #endif /* namespaces_h */

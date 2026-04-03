@@ -39,6 +39,8 @@ public:
     inline void                         ParseInt(int pNumber);
     inline void                         ParseFloat(float pFloat, int pDecimalCount);
     
+    string                              ToString() const;
+    
     inline bool                         operator == (const ByteString &pString) { return (Compare(pString) == 0); }
     inline bool                         operator == (const string &pString) { return (Compare(pString) == 0); }
     
