@@ -60,7 +60,13 @@ std::string LogPhaseFailedV2(LogActionV2 pAction,
 std::string LogSanityCompareStartV2(void);
 std::string LogSanityCompareSliceV2(const LoggingStatV2& pStat);
 std::string LogSanityCompareEndV2(const LoggingStatV2& pStat);
-std::string LogSanityDiscoverySliceV2(const LoggingStatV2& pStat);
+std::string LogSanityDiscoverySliceV2(std::uint64_t pItemCount);
+std::string LogBundleDiscoverySliceV2(std::uint64_t pFileCount,
+                                      std::uint64_t pFolderCount,
+                                      std::uint64_t pItemsScanned);
+std::string LogDecodeDiscoverySliceV2(LogActionV2 pAction,
+                                      std::uint64_t pArchiveFilesScanned,
+                                      std::uint64_t pNonArchiveFilesScanned);
 std::string LogSanitySummaryHealthyV2(const LoggingStatV2& pStat);
 std::string LogSanitySummaryMismatchV2(const LoggingStatV2& pStat,
                                        std::uint64_t pMismatchCount);

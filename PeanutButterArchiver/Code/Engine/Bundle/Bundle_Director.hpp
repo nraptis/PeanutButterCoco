@@ -20,6 +20,7 @@ class BundleDirector final {
   bool HasFailed() const;
   bool WasCanceled() const;
   const BundleWorkStateV2& State() const;
+  const std::string& FailureMessage() const;
 
  private:
   using PhaseRunner = bool (*)(BundleStageContextV2&);

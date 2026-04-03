@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <string>
 
+#include "../../Knobs.hpp"
 #include "ArchiveHeader.hpp"
 #include "CheckSum.hpp"
 #include "RepairRecord.hpp"
@@ -12,12 +13,9 @@
 
 namespace peanutbutter::memory_layout {
 
-inline constexpr std::size_t kArchiveBlockBytesV2 = 1044480u;
-inline constexpr std::size_t kSectionPayloadBytesV2 =
-    kArchiveBlockBytesV2 - kSectionHeaderBytesV2;
-inline constexpr std::size_t kMaxPathLengthV2 = 16384u;
-inline constexpr std::uint64_t kDirectoryRecordContentMarkerV2 =
-    0xFFFFFFFFFFFFFFFFULL;
+inline std::size_t& kArchiveBlockBytesV2 = knobs::kArchiveBlockBytesV2;
+inline std::size_t& kSectionPayloadBytesV2 = knobs::kSectionPayloadBytesV2;
+inline constexpr std::size_t kMaxPathLengthV2 = knobs::kMaxPathLengthV2;
 inline constexpr char kArchiveFileSuffixV2[] = ".PBTR";
 
 enum class TypedRecordTypeV2 : std::uint8_t {
@@ -25,11 +23,28 @@ enum class TypedRecordTypeV2 : std::uint8_t {
   kManifestFolder = 2u,
   kDataFile = 3u,
   kDataFolder = 4u,
+  kDataReference = 5u,
+};
+
+enum class ReferenceRecordKindV2 : std::uint8_t {
+  kSymlink = 1u,
+  kAlias = 2u,
+  kReparsePoint = 3u,
+  kHardlink = 4u,
 };
 
 inline constexpr bool IsKnownTypedRecordTypeV2(std::uint8_t pValue) {
   return pValue >= static_cast<std::uint8_t>(TypedRecordTypeV2::kManifestFile) &&
-         pValue <= static_cast<std::uint8_t>(TypedRecordTypeV2::kDataFolder);
+         pValue <= static_cast<std::uint8_t>(TypedRecordTypeV2::kDataReference);
+}
+
+inline constexpr bool IsKnownReferenceRecordKindV2(std::uint8_t pValue) {
+  return pValue >= static_cast<std::uint8_t>(ReferenceRecordKindV2::kSymlink) &&
+         pValue <= static_cast<std::uint8_t>(ReferenceRecordKindV2::kHardlink);
+}
+
+inline constexpr bool TypedRecordTypeIsReferenceV2(std::uint8_t pValue) {
+  return pValue == static_cast<std::uint8_t>(TypedRecordTypeV2::kDataReference);
 }
 
 inline constexpr bool TypedRecordTypeHasFileSizeV2(std::uint8_t pValue) {
@@ -54,12 +69,7 @@ bool ValidateSectionCheckSum(const SectionHeaderV2& pHeader,
                              const unsigned char* pPayloadBytes,
                              std::size_t pPayloadLength);
 
-RepairRecordV2 MakeIgnoredRepairRecord(std::uint64_t pArchiveFamilyId,
-                                       std::uint64_t pArchiveIndex,
-                                       std::uint64_t pBlockIndex);
-
 std::string MakeArchiveFileNameV2(const std::string& pPrefix,
-                                  const std::string& pSourceStem,
                                   std::size_t pArchiveOrdinal,
                                   std::size_t pArchiveCount,
                                   const std::string& pSuffix = kArchiveFileSuffixV2);

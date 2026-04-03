@@ -58,30 +58,70 @@ Stream versus container rules
 - Blocks own their boundaries from the outside.
 - Sections own their byte budgets from the outside.
 - The orchestrator decides:
-  - how many manifest blocks exist
+  - how many preview-manifest blocks exist
   - how many data blocks exist
   - how many repair blocks exist
   - what zone comes next after a block finishes
-- The record parser should not need to know whether packing was tight or sparse.
-- Sparse mode is an orchestration rule, not a second record grammar.
-- Sparse packing may choose to pre-separate folders from file payload before writing.
-- That pre-separation is a pack-time execution choice, not a decode-time grammar fork.
+- The record parser should not need packing-mode branches.
+- Folders and files are streamed together in archive-data records.
 - Variable-length payload may cross block boundaries.
-- Fixed-width structural scalars must not cross block boundaries.
-- Hardline: all fixed-width scalars are block-local.
-- Writers must leave sufficient tail padding so no scalar begins unless it fully fits in the remaining block payload.
+- Fixed-width structural scalars may also cross block boundaries.
+- Hardline: scalar fields are stream bytes, not block-local atoms.
+- Writers must stream logical records continuously across blocks; they must not inject structural tail gaps just to realign scalars.
 - Unused tail bytes are zero-filled.
 
 Block-level section planning
 - The archive still plans block-level zones at planning time.
 - Archive boxes should be able to store at least:
-  - `mManifestBlockCount`
+  - `mPreviewManifestBlockCount`
   - `mDataBlockCount`
   - `mRepairBlockCount`
   - whether the physical file is present
   - whether the physical file is readable
 - These counts are local per-box planning promises, not family-level extraction authority.
 - This is what allows decode to know how many blocks of each kind are expected while still keeping record writers container-agnostic.
+
+Archive-header layout (v2)
+- The archive header size is fixed at 64 bytes.
+- Packed layout:
+  - magic: 8 bytes
+  - archive format version: 1 byte
+  - cipher version: 1 byte
+  - expander version: 1 byte
+  - dirty state: 1 byte
+  - is encrypted: 1 byte
+  - cipher profile: 1 byte
+  - expander profile: 1 byte
+  - reserved0: 1 byte
+  - archive index: 6 bytes
+  - archive count: 6 bytes
+  - archive data block count: 6 bytes
+  - empty folder block count: 6 bytes
+  - preview manifest block count: 6 bytes
+  - repair sector block count: 6 bytes
+  - archive family id: 8 bytes
+  - reserved1: 4 bytes
+- Dirty-state values:
+  - `0 = invalid`
+  - `1 = finished_with_cancel`
+  - `2 = finished_with_error`
+  - `3 = finished_with_cancel_and_error`
+  - `4 = finished`
+- Count-mod fields:
+  - `reserved0` stores `file_count % 256`
+  - low byte of `reserved1` stores `folder_count % 256`
+  - upper 24 bits of `reserved1` are reserved
+- Family-ID inputs:
+  - source stem
+  - file prefix
+  - requested block count
+  - encryption enabled flag
+  - include-preview-manifest flag
+  - file count mod 256
+  - folder count mod 256
+  - file record relative paths and content lengths
+  - folder record relative paths
+  - if computed hash is `0`, normalize to `1`
 
 Section-header redundancy
 - Every section header carries the full checked bootstrap set, even if some fields are unused for that section type.
@@ -92,6 +132,7 @@ Section-header redundancy
   - checksum: 32 bytes
   - skip record: 7 bytes
   - repair record: 8 bytes
+  - checksum kind: 1 byte
   - section type: 1 byte
   - section flags: 1 byte
   - payload bytes used: 4 bytes
@@ -101,10 +142,10 @@ Section-header redundancy
   - this block index: 4 bytes
   - archive data block count: 4 bytes
   - preview manifest block count: 4 bytes
-  - folder manifest block count: 4 bytes
+  - folder manifest block count: 4 bytes (legacy compatibility field; current bundler writes 0)
   - repair data block count: 4 bytes
   - archive family id: 8 bytes
-  - reserved padding: 3 bytes
+  - reserved padding: 2 bytes
 - A 96-byte section header is acceptable overhead because:
   - it divides cleanly by 16
   - it keeps all bootstrap geometry in one place
@@ -127,22 +168,17 @@ Manifest meanings
   - may include file sizes for preview file records
   - must not drive extraction decisions
 - Manifest-zone records inside the real archive stream:
-  - authoritative
-  - mainly useful for sparse mode
+  - preview records are advisory only
+  - authoritative extraction records are in archive-data
   - decoded with the same typed-record grammar as everything else
-  - may contain tightly packed folder records in sparse execution
 
 Packing execution modes
-- Compact execution may inter-mix file and folder records directly in the data zone.
-- Sparse execution may separate folders from file payload before packing.
-- In sparse execution:
-  - folder records may be packed tightly into manifest-zone blocks
-  - file payload records still use the same typed-record grammar
-  - this is a separate packing execution, not a separate decode format
-- Decode and Recover should not need branch logic for:
-  - folder manifest
-  - archive data sparse
-  - archive data compact
+- Current layout:
+  - preview manifest blocks first (non-encrypted)
+  - archive-data blocks next (encrypted when enabled)
+  - repair blocks last (if enabled)
+- Archive-data records inter-mix folders and files in one linear stream.
+- Decode and Recover should not need branch logic for packing variants.
 - Decode and Recover should only need zone ownership and typed-record semantics.
 
 Sources of truth
@@ -220,7 +256,7 @@ Header-count handling
 - Once accepted archive count exists, Recover may derive expected family geometry from it, including:
   - expected archive count
   - expected preview manifest block count
-  - expected folder manifest block count
+  - expected folder manifest block count (legacy compatibility expectation)
   - expected data block count
 - Those accepted expectations are what allow gap archives to exist without shifting later logical payload left.
 - Header disagreement that loses the one-header rule or majority vote does not become family truth.
@@ -258,6 +294,7 @@ Inspection phase
   - once a valid block is found, use its section-header truth to refine the archive boxes
   - throw away any speculative decoded content from the inspection pass
   - then start the real recovery job
+  - recovery never switches into repair-block replacement; it remains an unbundle flow
 - Inspection should refine archive boxes explicitly.
 - Inspection should not silently replace Discovery as the first phase.
 
@@ -299,11 +336,14 @@ Sparse expectations
   - recovery continued with partial physical evidence
 
 Skip record rules
-- Skip records are for repair mode.
-- Their main semantic purpose is to re-find a file start.
-- They are not general semantic truth.
+- Skip records are recovery hints, not general semantic truth.
+- Their main semantic purpose is to re-find a file start in salvage decode.
 - Normal unbundle must not depend on skip records for correctness.
-- Repair may honor a skip record after damage is detected.
+- In recover walk, after a damaged block is accepted and the next block with a
+  valid checksum+header is decoded, decode should attempt one skip-record resync
+  immediately (before normal record consume on that block).
+- If that immediate resync is not applicable, decode continues naive forward from that
+  valid block.
 - A zero skip means "no jump".
 - Invalid skip records are ignored and logged.
 
@@ -321,13 +361,17 @@ Skip target rules
 
 Repair behavior
 - Repair is block replacement first, not merely tolerant decode.
+- Repair is a separate action from Recover.
+- Recover does not consume repair blocks as replacement payload.
+- Repair does not unpack files or folders.
 - Bundle-time repair coverage options are:
-  - `25%`
-  - `50%`
-  - `75%`
-  - `100%`
+  - `20%`
+  - `40%`
+  - `60%`
+  - `80%`
 - The chosen repair percentage means:
-  - for each archive file, count its non-repair blocks
+  - for each archive file, count its repair-eligible non-repair source blocks
+  - preview-manifest blocks are not repair-eligible
   - multiply by the chosen percentage
   - round up to the nearest whole block
   - emit exactly that many repair-copy blocks for that archive
@@ -337,11 +381,12 @@ Repair behavior
   - archive B: `b1 b2 b3 b4`
   - archive C: `c1 c2 c3 c4`
   - archive D: `d1 d2 d3 d4`
-- At `25%`, the repair zone is:
+- At `20%`, the repair zone is:
   - `a1 b1 c1 d1`
-- At `50%`, the repair zone is:
+- At `40%`, the repair zone is:
   - `a1 b1 c1 d1 a2 b2 c2 d2`
-- These repair-copy blocks are exact copies of the source archive blocks taken from the fronts of the archive files.
+- These repair-copy blocks are generated from the source-front block plan in layer order.
+- Bundle packing may rebuild repair blocks from source records rather than byte-copying from already-written destination archives.
 - A valid family may contain repair blocks even when there is only one archive file.
 - Example:
   - one small image
@@ -375,14 +420,20 @@ Repair behavior
   - repair records are encountered in discovery order
   - target validation happens after each repair record is decoded
   - jumping to a target does not change which repair record counts as "next"
-- Recommended repair rule:
-  - try the original data block
-  - if the original data block validates, use it
-  - if the original data block fails and the repair block validates, substitute the repair block
-  - if both fail, continue the repair walk
-- The simplest integrity rule is to make the original block and repair block validate under the same checksum semantics.
-- Repair may still use skip hints to re-find file starts after substitution or after unrecoverable damage.
-- Repair is allowed to create missing archive files when necessary for recovery.
+- Recommended repair-apply rule:
+  - validate the repair block checksum and header
+  - validate that the repair pointer targets a legal archive/block
+  - build a patched target block by copying payload + section-header fields from the repair block, while preserving target repair-record semantics
+  - recompute section checksum
+  - reseal if encrypted
+  - if repair mode is non-aggressive and the target block already validates, skip overwrite
+  - otherwise overwrite the target block with the patched block bytes
+  - if repair block validation or target-pointer validation fails, continue repair walk policy for that failure class
+- No precondition requires the target block checksum to equal the repair block checksum before applying repair.
+- Repair request policy:
+  - `mAggressive = false`: favor existing archive block when already valid
+  - `mAggressive = true`: favor repair block bytes even when existing target validates
+- Repair is allowed to create missing archive files when necessary for repair reconstruction.
 - Those created files may be synthesized as zero-filled files sized from trusted section-header and family geometry.
 - If Repair determines that an archive file must reach an exact size and the current physical file is too small:
   - grow it to that exact size
@@ -650,7 +701,7 @@ Canonical specific codes
   - `DATA_NUM_008_FileSizeTooLarge`
   - `DATA_FNC_009_FileSizeCrossesFence`
   - `DATA_FNC_010_FileContentCrossesFence`
-  - `DATA_FNC_011_ScalarStartsInShortTail`
+  - `DATA_FNC_011_ScalarStartsInShortTail` (retired by scalar-splitting rule)
   - `DATA_INV_012_NonZeroTailPadding`
   - `DATA_NUM_013_ContentLengthExceedsPolicy`
   - `DATA_INV_014_BlockContinuityMismatch`
@@ -706,7 +757,6 @@ Errors that do not overlap under the current first-hit rule
 - forbidden traversal part does not overlap with any later semantic path error, because it emits at the first byte position where that exact invalid part becomes knowable
 - unknown type flag does not overlap with file-size or file-content errors from the same record
 - archive pointer error does not overlap with block pointer error from the same repair-record parse if archive pointer is encountered first
-- scalar-starts-in-short-tail does not overlap with successful scalar parse
 - under-read header errors do not overlap with later semantic header errors from that same truncated structure
 - under-read block-body errors do not overlap with later inner-record parse errors from that same incomplete planned block
 - payload-bytes-used-too-large does not overlap with later inner-record parse errors from that block, because the block span itself is already invalid
@@ -738,12 +788,11 @@ Collision list
     - outer already-known warnings may remain earlier in the stack
     - later system failure may be appended if it truly occurs during output handling
     - do not recursively explode one broken parse into five sibling codes
-  - a data record whose path ends near block tail, next scalar cannot fit, tail bytes are non-zero, and the destination path would also be unsafe
+  - a data record whose path ends near block tail, tail bytes are non-zero, and the destination path would also be unsafe
   - hardline rule:
     - if the unsafe path became knowable first, emit the path error
-    - if scalar-starts-in-short-tail became knowable before path semantics were complete, emit the short-tail scalar error
     - non-zero tail padding may stand alone only if the parser is already in tail-padding interpretation state
-    - never emit all three just because all three feel "true" in hindsight
+    - never emit both just because both feel "true" in hindsight
   - a tiny truncated archive header file where the filename slot also disagrees with the would-have-been header index
   - hardline rule:
     - emit `ARHD_UND_001_HeaderTooShort`

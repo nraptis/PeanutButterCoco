@@ -14,8 +14,14 @@ bool BundleDeriveCipherMaterialV2::Run(BundleStageContextV2& pContext) {
     return !pContext.IsCancelRequested();
   }
 
+  pContext.EmitLog(LogLevelV2::kInfo,
+                   LogPhaseStartedV2(LogActionV2::kBundle,
+                                     ProgressStageV2::kDeriveCipherMaterial));
   pContext.State().mCipher.mDerived = true;
   pContext.EmitLog(LogLevelV2::kInfo, LogBundleCipherDeriveDetailV2());
+  pContext.EmitLog(LogLevelV2::kInfo,
+                   LogPhaseCompletedV2(LogActionV2::kBundle,
+                                       ProgressStageV2::kDeriveCipherMaterial));
   pContext.EmitPhaseProgress(1.0, "Cipher material derived");
   return !pContext.IsCancelRequested();
 }

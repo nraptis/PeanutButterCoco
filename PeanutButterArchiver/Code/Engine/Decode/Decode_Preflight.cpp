@@ -44,6 +44,14 @@ bool DecodePreflightV2::Run(DecodeStageContextV2& pContext) {
                                       ProgressStageV2::kPreflight, "destination directory could not be created"));
     return false;
   }
+  if (pContext.Request().mClearDestinationBeforeWrite &&
+      !pContext.FileSystem().ClearDirectory(
+          pContext.Request().mDestinationDirectory)) {
+    pContext.EmitLog(LogLevelV2::kError,
+                     LogPhaseFailedV2(LogActionFromDecodeIntentV2(pContext.Request().mIntent),
+                                      ProgressStageV2::kPreflight, "destination directory could not be cleared"));
+    return false;
+  }
 
   pContext.EmitPhaseProgress(1.0, "Preflight complete");
   pContext.EmitLog(LogLevelV2::kInfo,

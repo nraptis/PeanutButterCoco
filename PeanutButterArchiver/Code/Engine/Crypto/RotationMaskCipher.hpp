@@ -17,16 +17,28 @@ class RotationMaskCipherV2 final {
 
   bool IsConfigured() const;
   bool Seal(const unsigned char* pSource,
+            unsigned char* pWorker,
+            unsigned char* pDestination,
+            std::size_t pLength,
+            std::string* pOutError = nullptr) const;
+  bool Seal(const unsigned char* pSource,
             unsigned char* pDestination,
             std::size_t pLength,
             std::string* pOutError = nullptr) const;
   bool Unseal(const unsigned char* pSource,
+              unsigned char* pWorker,
               unsigned char* pDestination,
               std::size_t pLength,
               std::string* pOutError = nullptr) const;
+  bool Unseal(const unsigned char* pSource,
+              unsigned char* pDestination,
+              std::size_t pLength,
+              std::string* pOutError = nullptr) const;
+  static std::size_t WorkerBufferBytes();
 
  private:
   bool Apply(const unsigned char* pSource,
+             unsigned char* pWorker,
              unsigned char* pDestination,
              std::size_t pLength,
              int pSignedShift,

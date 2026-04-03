@@ -1,5 +1,7 @@
 #include "SectionHeader.hpp"
 
+#include <cstring>
+
 #include "FormatUtilities.hpp"
 
 namespace peanutbutter::memory_layout {
@@ -22,12 +24,28 @@ bool ValidateSectionHeader(const SectionHeaderV2& pHeader,
                            MemoryLayoutErrorInfo* pOutError) {
   ClearMemoryLayoutError(pOutError);
 
+  constexpr std::uint64_t kMetadataOffset = static_cast<std::uint64_t>(
+      kCheckSumBytesV2 + kSkipRecordBytesV2 + kRepairRecordBytesV2);
+  if (pHeader.mCheckSumKind != specs_verified::kSectionCheckSumKindSha256V2) {
+    AssignMemoryLayoutObservedExpectedError(
+        pOutError,
+        MemoryLayoutErrorCode::kIntegerOutOfRange,
+        "ValidateSectionHeader",
+        "CheckSumKind",
+        kMetadataOffset + 0u,
+        kSectionHeaderBytesV2,
+        kSectionHeaderBytesV2,
+        pHeader.mCheckSumKind,
+        specs_verified::kSectionCheckSumKindSha256V2);
+    return false;
+  }
+
   if (!IsKnownSectionType(pHeader.mSectionType)) {
     AssignMemoryLayoutObservedExpectedError(pOutError,
                                             MemoryLayoutErrorCode::kInvalidSectionType,
                                             "ValidateSectionHeader",
                                             "SectionType",
-                                            47u,
+                                            kMetadataOffset + 1u,
                                             kSectionHeaderBytesV2,
                                             kSectionHeaderBytesV2,
                                             pHeader.mSectionType,
@@ -39,7 +57,7 @@ bool ValidateSectionHeader(const SectionHeaderV2& pHeader,
                                             MemoryLayoutErrorCode::kInvalidBooleanByte,
                                             "ValidateSectionHeader",
                                             "SectionFlags",
-                                            48u,
+                                            kMetadataOffset + 2u,
                                             kSectionHeaderBytesV2,
                                             kSectionHeaderBytesV2,
                                             pHeader.mSectionFlags,
@@ -52,7 +70,7 @@ bool ValidateSectionHeader(const SectionHeaderV2& pHeader,
                                             MemoryLayoutErrorCode::kIntegerOutOfRange,
                                             "ValidateSectionHeader",
                                             "PayloadBytesUsed",
-                                            49u,
+                                            kMetadataOffset + 3u,
                                             kSectionHeaderBytesV2,
                                             kSectionHeaderBytesV2,
                                             pHeader.mPayloadBytesUsed,
@@ -124,21 +142,21 @@ bool ReadSectionHeader(const unsigned char* pBytes,
 
   constexpr std::size_t kMetadataOffset =
       kCheckSumBytesV2 + kSkipRecordBytesV2 + kRepairRecordBytesV2;
-  pOutHeader.mSectionType = pBytes[kMetadataOffset + 0u];
-  pOutHeader.mSectionFlags = pBytes[kMetadataOffset + 1u];
-  pOutHeader.mPayloadBytesUsed = ReadUint32LE(pBytes + kMetadataOffset + 2u);
-  pOutHeader.mArchiveFileCount = ReadUint32LE(pBytes + kMetadataOffset + 6u);
-  pOutHeader.mArchiveBlockCount = ReadUint32LE(pBytes + kMetadataOffset + 10u);
-  pOutHeader.mArchiveIndex = ReadUint32LE(pBytes + kMetadataOffset + 14u);
-  pOutHeader.mBlockIndex = ReadUint32LE(pBytes + kMetadataOffset + 18u);
-  pOutHeader.mArchiveDataBlockCount = ReadUint32LE(pBytes + kMetadataOffset + 22u);
-  pOutHeader.mPreviewManifestBlockCount = ReadUint32LE(pBytes + kMetadataOffset + 26u);
-  pOutHeader.mFolderManifestBlockCount = ReadUint32LE(pBytes + kMetadataOffset + 30u);
-  pOutHeader.mRepairDataBlockCount = ReadUint32LE(pBytes + kMetadataOffset + 34u);
-  pOutHeader.mArchiveFamilyId = ReadUint64LE(pBytes + kMetadataOffset + 38u);
-  for (std::size_t aIndex = 0u; aIndex < sizeof(pOutHeader.mReserved); ++aIndex) {
-    pOutHeader.mReserved[aIndex] = pBytes[kMetadataOffset + 46u + aIndex];
-  }
+  pOutHeader.mCheckSumKind = pBytes[kMetadataOffset + 0u];
+  pOutHeader.mSectionType = pBytes[kMetadataOffset + 1u];
+  pOutHeader.mSectionFlags = pBytes[kMetadataOffset + 2u];
+  pOutHeader.mPayloadBytesUsed = ReadUint32LE(pBytes + kMetadataOffset + 3u);
+  pOutHeader.mArchiveFileCount = ReadUint32LE(pBytes + kMetadataOffset + 7u);
+  pOutHeader.mArchiveBlockCount = ReadUint32LE(pBytes + kMetadataOffset + 11u);
+  pOutHeader.mArchiveIndex = ReadUint32LE(pBytes + kMetadataOffset + 15u);
+  pOutHeader.mBlockIndex = ReadUint32LE(pBytes + kMetadataOffset + 19u);
+  pOutHeader.mArchiveDataBlockCount = ReadUint32LE(pBytes + kMetadataOffset + 23u);
+  pOutHeader.mPreviewManifestBlockCount = ReadUint32LE(pBytes + kMetadataOffset + 27u);
+  pOutHeader.mFolderManifestBlockCount = ReadUint32LE(pBytes + kMetadataOffset + 31u);
+  pOutHeader.mRepairDataBlockCount = ReadUint32LE(pBytes + kMetadataOffset + 35u);
+  pOutHeader.mArchiveFamilyId = ReadUint64LE(pBytes + kMetadataOffset + 39u);
+  std::memcpy(
+      pOutHeader.mReserved, pBytes + kMetadataOffset + 47u, sizeof(pOutHeader.mReserved));
 
   return ValidateSectionHeader(pOutHeader, pOutError);
 }
@@ -209,22 +227,22 @@ bool WriteSectionHeader(const SectionHeaderV2& pHeader,
 
   constexpr std::size_t kMetadataOffset =
       kCheckSumBytesV2 + kSkipRecordBytesV2 + kRepairRecordBytesV2;
-  pOutBytes[kMetadataOffset + 0u] = static_cast<unsigned char>(pHeader.mSectionType);
-  pOutBytes[kMetadataOffset + 1u] = static_cast<unsigned char>(pHeader.mSectionFlags);
-  WriteUint32LE(pHeader.mPayloadBytesUsed, pOutBytes + kMetadataOffset + 2u);
-  WriteUint32LE(pHeader.mArchiveFileCount, pOutBytes + kMetadataOffset + 6u);
-  WriteUint32LE(pHeader.mArchiveBlockCount, pOutBytes + kMetadataOffset + 10u);
-  WriteUint32LE(pHeader.mArchiveIndex, pOutBytes + kMetadataOffset + 14u);
-  WriteUint32LE(pHeader.mBlockIndex, pOutBytes + kMetadataOffset + 18u);
-  WriteUint32LE(pHeader.mArchiveDataBlockCount, pOutBytes + kMetadataOffset + 22u);
-  WriteUint32LE(pHeader.mPreviewManifestBlockCount, pOutBytes + kMetadataOffset + 26u);
-  WriteUint32LE(pHeader.mFolderManifestBlockCount, pOutBytes + kMetadataOffset + 30u);
-  WriteUint32LE(pHeader.mRepairDataBlockCount, pOutBytes + kMetadataOffset + 34u);
-  WriteUint64LE(pHeader.mArchiveFamilyId, pOutBytes + kMetadataOffset + 38u);
-  for (std::size_t aIndex = 0u; aIndex < sizeof(pHeader.mReserved); ++aIndex) {
-    pOutBytes[kMetadataOffset + 46u + aIndex] =
-        static_cast<unsigned char>(pHeader.mReserved[aIndex]);
-  }
+  pOutBytes[kMetadataOffset + 0u] = static_cast<unsigned char>(pHeader.mCheckSumKind);
+  pOutBytes[kMetadataOffset + 1u] = static_cast<unsigned char>(pHeader.mSectionType);
+  pOutBytes[kMetadataOffset + 2u] = static_cast<unsigned char>(pHeader.mSectionFlags);
+  WriteUint32LE(pHeader.mPayloadBytesUsed, pOutBytes + kMetadataOffset + 3u);
+  WriteUint32LE(pHeader.mArchiveFileCount, pOutBytes + kMetadataOffset + 7u);
+  WriteUint32LE(pHeader.mArchiveBlockCount, pOutBytes + kMetadataOffset + 11u);
+  WriteUint32LE(pHeader.mArchiveIndex, pOutBytes + kMetadataOffset + 15u);
+  WriteUint32LE(pHeader.mBlockIndex, pOutBytes + kMetadataOffset + 19u);
+  WriteUint32LE(pHeader.mArchiveDataBlockCount, pOutBytes + kMetadataOffset + 23u);
+  WriteUint32LE(pHeader.mPreviewManifestBlockCount, pOutBytes + kMetadataOffset + 27u);
+  WriteUint32LE(pHeader.mFolderManifestBlockCount, pOutBytes + kMetadataOffset + 31u);
+  WriteUint32LE(pHeader.mRepairDataBlockCount, pOutBytes + kMetadataOffset + 35u);
+  WriteUint64LE(pHeader.mArchiveFamilyId, pOutBytes + kMetadataOffset + 39u);
+  std::memcpy(pOutBytes + kMetadataOffset + 47u,
+              pHeader.mReserved,
+              sizeof(pHeader.mReserved));
 
   return true;
 }

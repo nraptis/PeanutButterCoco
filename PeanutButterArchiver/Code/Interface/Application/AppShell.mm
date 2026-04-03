@@ -1,12 +1,16 @@
 #import "AppShell.hpp"
 
+#include <atomic>
 #include <memory>
+#include <vector>
 
+#include "../../Knobs.hpp"
 #import "../../Common/BundleRequest.hpp"
 #import "../../Common/DecodeRequest.hpp"
+#import "../../Common/LogCatalog.hpp"
 #import "../../Common/RepairRequest.hpp"
 #import "../../Common/SanityRequest.hpp"
-#import "../../Engine/ArchiverEngine.hpp"
+#import "../../Engine/ArchiverExecutor.hpp"
 #import "AppRuntimePaths.hpp"
 #import "../ViewControllers/HomeContainerViewController.hpp"
 #import "../Views/HomeActiveModeContainerView.hpp"
@@ -31,6 +35,49 @@ static std::string PBStdStringFromNSString(NSString *value) {
     }
 
     return std::string(static_cast<const char *>(data.bytes), static_cast<std::size_t>(data.length));
+}
+
+static void PBAppendRuntimeInfoPart(const peanutbutter::RuntimeEventV2& event,
+                                    const char *key,
+                                    const char *prefix,
+                                    std::vector<std::string>& parts) {
+    const std::string value = event.FetchInfo(key);
+    if (!value.empty()) {
+        parts.push_back(std::string(prefix) + value);
+    }
+}
+
+static bool PBShouldRenderRuntimeLog(const peanutbutter::RuntimeEventV2& event) {
+    return event.mKind != peanutbutter::RuntimeEventKindV2::kBundleFileFinished &&
+           event.mKind != peanutbutter::RuntimeEventKindV2::kDecodeFileFinished;
+}
+
+static std::string PBCompactRuntimeEventLine(const peanutbutter::RuntimeEventV2& event) {
+    std::string line = "[Runtime][" +
+        peanutbutter::ProgressStageLabelV2(event.mStage) + "][" +
+        peanutbutter::RuntimeEventKindLabelV2(event.mKind) + "]";
+
+    std::vector<std::string> parts;
+    parts.reserve(8);
+    PBAppendRuntimeInfoPart(event, "archive_index", "a=", parts);
+    PBAppendRuntimeInfoPart(event, "block_index", "b=", parts);
+    PBAppendRuntimeInfoPart(event, "family_block_index", "fb=", parts);
+    PBAppendRuntimeInfoPart(event, "destination_archive_index", "da=", parts);
+    PBAppendRuntimeInfoPart(event, "destination_block_index", "db=", parts);
+    PBAppendRuntimeInfoPart(event, "source_archive_index", "sa=", parts);
+    PBAppendRuntimeInfoPart(event, "source_block_index", "sb=", parts);
+    PBAppendRuntimeInfoPart(event, "section_type", "sec=", parts);
+
+    for (const std::string& part : parts) {
+        line += " ";
+        line += part;
+    }
+    return line;
+}
+
+static std::string PBCompactCheckpointLine(const peanutbutter::EngineCheckpointRequestV2& checkpoint) {
+    return "[Checkpoint #" + std::to_string(checkpoint.mCheckpointId) + "] " +
+           PBCompactRuntimeEventLine(checkpoint.mRuntimeEvent);
 }
 
 typedef NS_ENUM(NSInteger, PBResolvedPathMode) {
@@ -130,18 +177,18 @@ static NSString *PBResolvedDestinationFallbackPath(NSURL *candidateURL, NSURL *r
     return parentPath;
 }
 
-static std::uint8_t PBRepairPercentFromTitle(NSString *title) {
+static peanutbutter::RepairCoveragePresetV2 PBRepairCoverageFromTitle(NSString *title) {
     NSString *safeTitle = PBTrimmedString(title);
-    if ([safeTitle isEqualToString:@"50%"]) {
-        return 50u;
+    if ([safeTitle isEqualToString:@"40%"]) {
+        return peanutbutter::RepairCoveragePresetV2::k40;
     }
-    if ([safeTitle isEqualToString:@"75%"]) {
-        return 75u;
+    if ([safeTitle isEqualToString:@"60%"]) {
+        return peanutbutter::RepairCoveragePresetV2::k60;
     }
-    if ([safeTitle isEqualToString:@"100%"]) {
-        return 100u;
+    if ([safeTitle isEqualToString:@"80%"]) {
+        return peanutbutter::RepairCoveragePresetV2::k80;
     }
-    return 25u;
+    return peanutbutter::RepairCoveragePresetV2::k20;
 }
 
 static NSString *PBResolvePathString(NSString *value, PBResolvedPathMode mode) {
@@ -244,7 +291,7 @@ static std::uint32_t PBBlockCountFromTitle(NSString *title) {
     if ([scanner scanInteger:&value] && value > 0) {
         return (std::uint32_t)value;
     }
-    return 4u;
+    return peanutbutter::knobs::kDefaultBlocksPerArchiveV2;
 }
 
 static NSString *PBCurrentActionTitle(HomeContainerViewController *controller) {
@@ -291,10 +338,38 @@ static NSAlertStyle PBAlertStyleFromDialogKind(peanutbutter::UiDialogKindV2 kind
     }
 }
 
+@interface AppShell ()
+- (void)scheduleCommandBusDrain;
+- (void)drainCommandBus;
+- (void)applyCommandBusItem:(const peanutbutter::CommandBusItemV2&)item;
+@end
+
+namespace {
+
+class AppShellExecutorDelegateV2 final : public peanutbutter::ArchiverExecutorDelegate {
+public:
+    explicit AppShellExecutorDelegateV2(AppShell *owner)
+        : mOwner(owner) {}
+
+    void OnArchiverExecutorItemsAvailable() override {
+        if (mOwner != nil) {
+            [mOwner scheduleCommandBusDrain];
+        }
+    }
+
+private:
+    AppShell *mOwner = nil;
+};
+
+}  // namespace
+
 @implementation AppShell {
     __weak HomeContainerViewController *_homeContainerViewController;
-    std::unique_ptr<peanutbutter::ArchiverEngine> _engine;
-    NSTimer *_pollTimer;
+    std::unique_ptr<peanutbutter::ArchiverExecutor> _executor;
+    std::unique_ptr<AppShellExecutorDelegateV2> _executorDelegate;
+    dispatch_queue_t _heartbeatQueue;
+    dispatch_source_t _heartbeatTimer;
+    std::atomic<bool> _commandBusDrainScheduled;
 }
 
 - (instancetype)initWithHomeContainerViewController:(HomeContainerViewController *)homeContainerViewController {
@@ -304,25 +379,61 @@ static NSAlertStyle PBAlertStyleFromDialogKind(peanutbutter::UiDialogKindV2 kind
     }
 
     _homeContainerViewController = homeContainerViewController;
-    _engine = std::make_unique<peanutbutter::ArchiverEngine>();
+    _executor = std::make_unique<peanutbutter::ArchiverExecutor>();
+    _executorDelegate = std::make_unique<AppShellExecutorDelegateV2>(self);
+    _executor->SetDelegate(_executorDelegate.get());
+    _commandBusDrainScheduled.store(false);
     return self;
 }
 
+- (void)dealloc {
+    if (_executor != nullptr) {
+        _executor->SetDelegate(nullptr);
+        _executor->Dispose();
+    }
+    [self stopPolling];
+}
+
 - (void)startPolling {
-    if (_pollTimer != nil) {
+    if (_heartbeatTimer != nil) {
         return;
     }
 
-    _pollTimer = [NSTimer scheduledTimerWithTimeInterval:(1.0 / 60.0)
-                                                  target:self
-                                                selector:@selector(handlePollTimer:)
-                                                userInfo:nil
-                                                 repeats:YES];
+    if (_heartbeatQueue == nil) {
+        _heartbeatQueue = dispatch_queue_create("com.peanutbutter.archiver.heartbeat",
+                                                DISPATCH_QUEUE_SERIAL);
+    }
+
+    if (_heartbeatTimer == nil) {
+        _heartbeatTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER,
+                                                0,
+                                                0,
+                                                _heartbeatQueue);
+        dispatch_source_set_timer(_heartbeatTimer,
+                                  dispatch_time(DISPATCH_TIME_NOW, 0),
+                                  static_cast<uint64_t>(NSEC_PER_SEC / 240.0),
+                                  static_cast<uint64_t>(NSEC_PER_MSEC));
+        __weak AppShell *weakSelf = self;
+        dispatch_source_set_event_handler(_heartbeatTimer, ^{
+            AppShell *strongSelf = weakSelf;
+            if (strongSelf == nil) {
+                return;
+            }
+            if (strongSelf->_executor != nullptr) {
+                strongSelf->_executor->Heartbeat();
+            }
+        });
+        dispatch_resume(_heartbeatTimer);
+    }
 }
 
 - (void)stopPolling {
-    [_pollTimer invalidate];
-    _pollTimer = nil;
+    if (_heartbeatTimer != nil) {
+        dispatch_source_cancel(_heartbeatTimer);
+        _heartbeatTimer = nil;
+    }
+    _heartbeatQueue = nil;
+    _commandBusDrainScheduled.store(false);
 }
 
 - (void)enqueueBundleRequestWithSourceDirectory:(NSString *)sourceDirectory
@@ -337,6 +448,7 @@ static NSAlertStyle PBAlertStyleFromDialogKind(peanutbutter::UiDialogKindV2 kind
                                  blockCountTitle:(NSString *)blockCountTitle
                         encryptionStrengthTitle:(NSString *)encryptionStrengthTitle
                               tableStrengthTitle:(NSString *)tableStrengthTitle {
+    (void)safeEnabled;
     peanutbutter::BundleRequestV2 request;
     NSString *normalizedSourceDirectory = PBTrimmedString(sourceDirectory);
     NSString *normalizedDestinationDirectory = PBTrimmedString(destinationDirectory);
@@ -346,8 +458,7 @@ static NSAlertStyle PBAlertStyleFromDialogKind(peanutbutter::UiDialogKindV2 kind
     request.mDestinationDirectory = PBStdStringFromNSString(normalizedDestinationDirectory);
     request.mFilePrefix = PBStdStringFromNSString(normalizedFilePrefix.length > 0 ? normalizedFilePrefix : @"archive");
     request.mRepairEnabled = repairEnabled;
-    request.mRepairPercent = PBRepairPercentFromTitle(repairSizeTitle);
-    request.mSafeModeEnabled = safeEnabled;
+    request.mRepairCoverage = PBRepairCoverageFromTitle(repairSizeTitle);
     request.mEncryptionEnabled = encryptionEnabled;
     request.mIncludePreviewManifest = includePreviewEnabled;
     request.mPassword = PBStdStringFromNSString(password);
@@ -355,7 +466,9 @@ static NSAlertStyle PBAlertStyleFromDialogKind(peanutbutter::UiDialogKindV2 kind
     request.mEncryptionStrength = PBStrengthFromTitle(encryptionStrengthTitle);
     request.mTableStrength = PBStrengthFromTitle(tableStrengthTitle);
 
-    _engine->EnqueueBundleRequest(request);
+    if (_executor != nullptr) {
+        _executor->EnqueueBundleRequest(request);
+    }
 }
 
 - (void)enqueueUnbundleRequestWithSourcePath:(NSString *)sourcePath
@@ -372,7 +485,9 @@ static NSAlertStyle PBAlertStyleFromDialogKind(peanutbutter::UiDialogKindV2 kind
     request.mIntent = recoverEnabled ? peanutbutter::DecodeIntentV2::kRecover
                                      : peanutbutter::DecodeIntentV2::kUnbundle;
 
-    _engine->EnqueueDecodeRequest(request);
+    if (_executor != nullptr) {
+        _executor->EnqueueDecodeRequest(request);
+    }
 }
 
 - (void)enqueueManifestRequestWithSourcePath:(NSString *)sourcePath
@@ -387,11 +502,14 @@ static NSAlertStyle PBAlertStyleFromDialogKind(peanutbutter::UiDialogKindV2 kind
     request.mPassword = PBStdStringFromNSString(password);
     request.mIntent = peanutbutter::DecodeIntentV2::kManifest;
 
-    _engine->EnqueueManifestRequest(request);
+    if (_executor != nullptr) {
+        _executor->EnqueueManifestRequest(request);
+    }
 }
 
 - (void)enqueueRepairRequestWithSourcePath:(NSString *)sourcePath
                       destinationDirectory:(NSString *)destinationDirectory
+                          aggressiveEnabled:(BOOL)aggressiveEnabled
                                   password:(NSString *)password {
     peanutbutter::RepairRequestV2 request;
     request.mSourcePath =
@@ -399,9 +517,12 @@ static NSAlertStyle PBAlertStyleFromDialogKind(peanutbutter::UiDialogKindV2 kind
     request.mDestinationDirectory =
         PBStdStringFromNSString(PBResolvePathString(destinationDirectory, PBResolvedPathModeDestination));
     request.mEncryptionEnabled = YES;
+    request.mAggressive = aggressiveEnabled;
     request.mPassword = PBStdStringFromNSString(password);
 
-    _engine->EnqueueRepairRequest(request);
+    if (_executor != nullptr) {
+        _executor->EnqueueRepairRequest(request);
+    }
 }
 
 - (void)enqueueSanityRequestWithLeftDirectory:(NSString *)leftDirectory
@@ -414,11 +535,21 @@ static NSAlertStyle PBAlertStyleFromDialogKind(peanutbutter::UiDialogKindV2 kind
         PBStdStringFromNSString(PBResolvePathString(rightDirectory, PBResolvedPathModeSource));
     request.mIgnoreHidden = ignoreHidden;
 
-    _engine->EnqueueSanityRequest(request);
+    if (_executor != nullptr) {
+        _executor->EnqueueSanityRequest(request);
+    }
 }
 
 - (void)enqueueCancelRequest {
-    _engine->EnqueueCancelRequest();
+    if (_executor != nullptr) {
+        _executor->EnqueueCancelRequest();
+    }
+}
+
+- (void)setVerboseRuntimeEventsEnabled:(BOOL)enabled {
+    if (_executor != nullptr) {
+        _executor->SetCaptureVerboseRuntimeEvents(enabled);
+    }
 }
 
 - (void)presentDialogRequest:(const peanutbutter::UiDialogRequestV2&)dialog {
@@ -464,7 +595,9 @@ static NSAlertStyle PBAlertStyleFromDialogKind(peanutbutter::UiDialogKindV2 kind
         } else {
             promptResponse.mChoice = peanutbutter::UiPromptChoiceV2::kCancel;
         }
-        self->_engine->EnqueuePromptResponse(promptResponse);
+        if (self->_executor != nullptr) {
+            self->_executor->EnqueuePromptResponse(promptResponse);
+        }
     };
 
     NSWindow *window = _homeContainerViewController.view.window;
@@ -477,104 +610,52 @@ static NSAlertStyle PBAlertStyleFromDialogKind(peanutbutter::UiDialogKindV2 kind
     }
 }
 
-- (void)handlePollTimer:(NSTimer *)timer {
-    (void)timer;
+- (void)scheduleCommandBusDrain {
     if (_homeContainerViewController == nil) {
         return;
     }
 
-    peanutbutter::EngineEventListV2 events = _engine->Poll();
-    [self applyEventBatch:events];
-}
-
-- (void)applyEventBatch:(const peanutbutter::EngineEventListV2&)events {
-    if (_homeContainerViewController == nil || events.empty()) {
+    const bool alreadyScheduled =
+        _commandBusDrainScheduled.exchange(true);
+    if (alreadyScheduled) {
         return;
     }
 
-    std::optional<peanutbutter::EngineSnapshotV2> finalSnapshot;
-    std::optional<peanutbutter::UiEffectV2> finalLoadingEffect;
-    std::optional<peanutbutter::EngineSnapshotV2> finalLoadingSnapshot;
-    std::optional<peanutbutter::ProgressSnapshotV2> finalProgress;
-    std::optional<peanutbutter::EngineSnapshotV2> finalProgressSnapshot;
-    std::optional<peanutbutter::UiDialogRequestV2> finalDialog;
-    std::optional<peanutbutter::UiPromptRequestV2> finalPrompt;
+    __weak AppShell *weakSelf = self;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        AppShell *strongSelf = weakSelf;
+        if (strongSelf == nil) {
+            return;
+        }
+        strongSelf->_commandBusDrainScheduled.store(false);
+        [strongSelf drainCommandBus];
+    });
+}
 
-    for (const peanutbutter::EngineEventV2& event : events) {
-        finalSnapshot = event.mSnapshot;
+- (void)drainCommandBus {
+    if (_homeContainerViewController == nil || _executor == nullptr) {
+        return;
+    }
 
-        switch (event.mType) {
-            case peanutbutter::EngineEventTypeV2::kActionAccepted:
-            case peanutbutter::EngineEventTypeV2::kActionRejected:
-            case peanutbutter::EngineEventTypeV2::kActionCompleted:
-            case peanutbutter::EngineEventTypeV2::kActionFailed:
-            case peanutbutter::EngineEventTypeV2::kActionCanceled:
-            case peanutbutter::EngineEventTypeV2::kCancelAccepted:
-            case peanutbutter::EngineEventTypeV2::kCancelRejected:
-                [self appendLogLine:PBNSStringFromStdString(event.mMessage)];
-                break;
-            case peanutbutter::EngineEventTypeV2::kUiStateChanged:
-                switch (event.mUiEffect.mType) {
-                    case peanutbutter::UiEffectTypeV2::kShowLoading:
-                    case peanutbutter::UiEffectTypeV2::kUpdateLoading:
-                    case peanutbutter::UiEffectTypeV2::kHideLoading:
-                        finalLoadingEffect = event.mUiEffect;
-                        finalLoadingSnapshot = event.mSnapshot;
-                        break;
-                    case peanutbutter::UiEffectTypeV2::kShowDialog:
-                        finalDialog = event.mUiEffect.mDialog;
-                        finalPrompt.reset();
-                        break;
-                    case peanutbutter::UiEffectTypeV2::kShowPrompt:
-                        finalPrompt = event.mUiEffect.mPrompt;
-                        finalDialog.reset();
-                        break;
-                }
-                break;
-            case peanutbutter::EngineEventTypeV2::kLog:
-                [self appendLogLine:PBNSStringFromStdString(event.mLogEntry.mMessage)];
-                break;
-            case peanutbutter::EngineEventTypeV2::kProgress:
-                finalProgress = event.mProgress;
-                finalProgressSnapshot = event.mSnapshot;
-                break;
+    while (true) {
+        const peanutbutter::CommandBusItemListV2 items = _executor->TakeItems();
+        if (items.empty()) {
+            break;
+        }
+
+        for (const peanutbutter::CommandBusItemV2& item : items) {
+            [self applyCommandBusItem:item];
         }
     }
+}
 
-    peanutbutter::EngineSnapshotV2 snapshot = finalSnapshot.value_or(peanutbutter::EngineSnapshotV2{});
-    if (!snapshot.mIsUiLocked) {
-        [_homeContainerViewController transitionToHomeState];
-    } else if (finalProgress.has_value()) {
-        peanutbutter::ProgressSnapshotV2 progress = *finalProgress;
-        NSString *actionTitle =
-            PBActionTitleFromPrimaryAction(snapshot.mCurrentPrimaryAction, _homeContainerViewController);
-        [_homeContainerViewController transitionToLoadingStateWithTitle:actionTitle
-                                                                 detail:PBNSStringFromStdString(progress.mLabel)
-                                                               fraction:progress.mOverallFraction
-                                                          cancelEnabled:!snapshot.mIsCancelPending];
-    } else if (finalLoadingEffect.has_value() &&
-               finalLoadingEffect->mType != peanutbutter::UiEffectTypeV2::kHideLoading) {
-        peanutbutter::UiEffectV2 effect = *finalLoadingEffect;
-        NSString *actionTitle =
-            PBActionTitleFromPrimaryAction(snapshot.mCurrentPrimaryAction, _homeContainerViewController);
-        [_homeContainerViewController transitionToLoadingStateWithTitle:actionTitle
-                                                                 detail:PBNSStringFromStdString(effect.mLabel)
-                                                               fraction:0.0
-                                                          cancelEnabled:!snapshot.mIsCancelPending];
-    } else {
-        NSString *actionTitle =
-            PBActionTitleFromPrimaryAction(snapshot.mCurrentPrimaryAction, _homeContainerViewController);
-        [_homeContainerViewController transitionToGhostStateWithTitle:actionTitle
-                                                               detail:@"Preparing..."];
+- (void)applyCommandBusItem:(const peanutbutter::CommandBusItemV2&)item {
+    if (item.mType == peanutbutter::CommandBusItemTypeV2::kLog) {
+        [self appendLogLine:PBNSStringFromStdString(item.mLog.mMessage)];
+        return;
     }
 
-    if (finalDialog.has_value()) {
-        peanutbutter::UiDialogRequestV2 dialog = *finalDialog;
-        [self presentDialogRequest:dialog];
-    } else if (finalPrompt.has_value()) {
-        peanutbutter::UiPromptRequestV2 prompt = *finalPrompt;
-        [self presentPromptRequest:prompt];
-    }
+    [self applyEvent:item.mEvent];
 }
 
 - (void)applyEvent:(const peanutbutter::EngineEventV2&)event {
@@ -601,6 +682,19 @@ static NSAlertStyle PBAlertStyleFromDialogKind(peanutbutter::UiDialogKindV2 kind
         case peanutbutter::EngineEventTypeV2::kProgress:
             [self applyProgress:event.mProgress snapshot:event.mSnapshot];
             break;
+        case peanutbutter::EngineEventTypeV2::kCheckpointRequested:
+            if (PBShouldRenderRuntimeLog(event.mCheckpointRequest.mRuntimeEvent)) {
+                [self appendLogLine:PBNSStringFromStdString(PBCompactCheckpointLine(event.mCheckpointRequest))];
+            }
+            if (_executor != nullptr) {
+                _executor->ContinueCheckpoint(event.mCheckpointRequest.mCheckpointId);
+            }
+            break;
+        case peanutbutter::EngineEventTypeV2::kRuntimeEvent:
+            if (PBShouldRenderRuntimeLog(event.mRuntimeEvent)) {
+                [self appendLogLine:PBNSStringFromStdString(PBCompactRuntimeEventLine(event.mRuntimeEvent))];
+            }
+            break;
     }
 
     BOOL isUiEnabled = !event.mSnapshot.mIsUiLocked;
@@ -609,6 +703,12 @@ static NSAlertStyle PBAlertStyleFromDialogKind(peanutbutter::UiDialogKindV2 kind
     _homeContainerViewController.homeActiveModeContainerView.progressCancelButton.enabled =
         event.mSnapshot.mCurrentPrimaryAction != peanutbutter::EnginePrimaryActionV2::kNone &&
         !event.mSnapshot.mIsCancelPending;
+
+    if (event.mType == peanutbutter::EngineEventTypeV2::kActionRejected &&
+        !event.mSnapshot.mIsUiLocked &&
+        event.mSnapshot.mCurrentPrimaryAction == peanutbutter::EnginePrimaryActionV2::kNone) {
+        [_homeContainerViewController transitionToHomeState];
+    }
 }
 
 - (void)applyUiEffect:(const peanutbutter::UiEffectV2&)effect
@@ -618,14 +718,18 @@ static NSAlertStyle PBAlertStyleFromDialogKind(peanutbutter::UiDialogKindV2 kind
     switch (effect.mType) {
         case peanutbutter::UiEffectTypeV2::kShowLoading:
         case peanutbutter::UiEffectTypeV2::kUpdateLoading:
-            [_homeContainerViewController.homeActiveModeContainerView setShowsProgressPanel:YES];
-            [_homeContainerViewController.homeActiveModeContainerView
-                updateProgressTitle:actionTitle
-                              detail:PBNSStringFromStdString(effect.mLabel)
-                            fraction:0.0];
+            [_homeContainerViewController transitionToLoadingStateWithTitle:actionTitle
+                                                                     detail:PBNSStringFromStdString(effect.mLabel)
+                                                                   fraction:0.0
+                                                              cancelEnabled:(snapshot.mCurrentPrimaryAction != peanutbutter::EnginePrimaryActionV2::kNone &&
+                                                                             !snapshot.mIsCancelPending)];
             break;
         case peanutbutter::UiEffectTypeV2::kHideLoading:
-            [_homeContainerViewController.homeActiveModeContainerView setShowsProgressPanel:NO];
+            if (!snapshot.mIsUiLocked) {
+                [_homeContainerViewController transitionToHomeState];
+            } else {
+                [_homeContainerViewController.homeActiveModeContainerView setShowsProgressPanel:NO];
+            }
             break;
         case peanutbutter::UiEffectTypeV2::kShowDialog:
             [self presentDialogRequest:effect.mDialog];
@@ -640,11 +744,11 @@ static NSAlertStyle PBAlertStyleFromDialogKind(peanutbutter::UiDialogKindV2 kind
              snapshot:(const peanutbutter::EngineSnapshotV2&)snapshot {
     NSString *actionTitle =
         PBActionTitleFromPrimaryAction(snapshot.mCurrentPrimaryAction, _homeContainerViewController);
-    [_homeContainerViewController.homeActiveModeContainerView setShowsProgressPanel:YES];
-    [_homeContainerViewController.homeActiveModeContainerView
-        updateProgressTitle:actionTitle
-                      detail:PBNSStringFromStdString(progress.mLabel)
-                    fraction:progress.mOverallFraction];
+    [_homeContainerViewController transitionToLoadingStateWithTitle:actionTitle
+                                                             detail:PBNSStringFromStdString(progress.mLabel)
+                                                           fraction:progress.mOverallFraction
+                                                      cancelEnabled:(snapshot.mCurrentPrimaryAction != peanutbutter::EnginePrimaryActionV2::kNone &&
+                                                                     !snapshot.mIsCancelPending)];
 }
 
 - (void)appendLogLine:(NSString *)line {

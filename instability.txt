@@ -2,9 +2,11 @@ Bundle / Unbundle / Repair / Folder Compare instability notes
 
 1. Operation lifecycle and UI state are still settling.
 The UI now has Home / Ghost / Loading states, while the engine runs on a worker thread and emits events back to the app shell. This is improved, but the final ownership rules for prompts, orphaned events, stale responses, and mode switching during active work are not fully written down yet.
+Relay-point ownership and response rules now have a draft in `relay_points_spec.md`. Treat that document as the source of truth for stale/orphan handling while this note remains open for implementation cutover.
 
 2. Director cancel policy is still under-specified.
 The intended rule is "finish the current user file, then honor cancel, then finalize safely." The mock flow approximates this, but Bundle / Unbundle / Repair directors do not yet all expose the same explicit cancel boundary contract.
+Draft cancel-boundary and UI check-in policy now lives in `relay_points_spec.md` (see cancel boundary, check-in cycle, and recover-walk sections).
 
 3. Repair is only partly distinct from Unbundle.
 The engine now has a RepairDirector, but the exact salvage policy is still not fully defined: what gets skipped, what gets reconstructed, what should be logged as damaged, and when Repair should still fail hard instead of continuing.

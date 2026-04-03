@@ -1,30 +1,9 @@
 #include "Decode_Director.hpp"
 
-#include "Decode_ArchiveDecode.hpp"
-#include "Decode_AssembleCipherStack.hpp"
-#include "Decode_DeriveCipherMaterial.hpp"
-#include "Decode_Discovery.hpp"
-#include "Decode_Finalize.hpp"
-#include "Decode_HeaderBootstrap.hpp"
-#include "Decode_ManifestDiscovery.hpp"
-#include "Decode_Preflight.hpp"
+#include "../../Common/LogCatalog.hpp"
+#include "../Repair/Repair_Workflow.hpp"
 
 namespace peanutbutter {
-
-namespace {
-
-DecodeRequestV2 MakeRepairDecodeRequest(const RepairRequestV2& pRequest) {
-  DecodeRequestV2 aDecodeRequest;
-  aDecodeRequest.mSourcePath = pRequest.mSourcePath;
-  aDecodeRequest.mDestinationDirectory = pRequest.mDestinationDirectory;
-  aDecodeRequest.mEncryptionEnabled = pRequest.mEncryptionEnabled;
-  aDecodeRequest.mCancelFinishBlocks = pRequest.mCancelFinishBlocks;
-  aDecodeRequest.mPassword = pRequest.mPassword;
-  aDecodeRequest.mIntent = DecodeIntentV2::kRecover;
-  return aDecodeRequest;
-}
-
-}  // namespace
 
 DecodeDirector::DecodeDirector(const DecodeRequestV2& pRequest,
                                DecodeRuntimeV2* pRuntime,
@@ -56,8 +35,12 @@ bool DecodeDirector::Step() {
     return false;
   }
 
+  if (mContext.ActivePhaseNeedsMoreHeartbeats()) {
+    return true;
+  }
+
   if (mContext.IsCancelRequested()) {
-    const ProgressStageV2 aStage = mPhases[mCurrentPhaseIndex].mStage;
+    const ProgressStageV2 aStage = mPhases.mEntries[mCurrentPhaseIndex].mStage;
     if (mContext.State().mCancel.mShouldFinalizeAfterCancel &&
         aStage != ProgressStageV2::kFinalize) {
       mCurrentPhaseIndex = FindPhaseIndex(ProgressStageV2::kFinalize);
@@ -69,7 +52,7 @@ bool DecodeDirector::Step() {
   }
 
   ++mCurrentPhaseIndex;
-  if (mCurrentPhaseIndex >= mPhases.size()) {
+  if (mCurrentPhaseIndex >= mPhases.mCount) {
     mIsFinished = true;
   }
   return true;
@@ -91,64 +74,51 @@ const DecodeWorkStateV2& DecodeDirector::State() const {
   return mContext.State();
 }
 
+const std::string& DecodeDirector::FailureMessage() const {
+  return mContext.LastErrorLog();
+}
+
 void DecodeDirector::BuildPhaseList() {
-  mPhases.clear();
-  mPhases.push_back({ProgressStageV2::kPreflight, &DecodePreflightV2::Run});
-  mPhases.push_back({ProgressStageV2::kHeaderBootstrap,
-                     &DecodeHeaderBootstrapV2::Run});
-  mPhases.push_back({ProgressStageV2::kDiscovery, &DecodeDiscoveryV2::Run});
-  mPhases.push_back({ProgressStageV2::kDeriveCipherMaterial,
-                     &DecodeDeriveCipherMaterialV2::Run});
-  mPhases.push_back({ProgressStageV2::kAssembleCipherStack,
-                     &DecodeAssembleCipherStackV2::Run});
-  mPhases.push_back({ProgressStageV2::kInspection, &DecodeInspectionV2::Run});
-  mPhases.push_back({ProgressStageV2::kManifestDiscovery,
-                     &DecodeManifestDiscoveryV2::Run});
-  mPhases.push_back({ProgressStageV2::kArchiveDecode,
-                     &DecodeArchiveDecodeV2::Run});
-  mPhases.push_back({ProgressStageV2::kFinalize, &DecodeFinalizeV2::Run});
+  mPhases = decode_workflow::BuildDecodePhaseListV2(
+      decode_workflow::DecodePhasePlanV2::kDecode);
 }
 
 bool DecodeDirector::RunCurrentPhase() {
-  if (mCurrentPhaseIndex >= mPhases.size()) {
+  if (mCurrentPhaseIndex >= mPhases.mCount) {
     return false;
   }
 
-  const PhaseEntry& aEntry = mPhases[mCurrentPhaseIndex];
-  if (aEntry.mRun == nullptr) {
-    return false;
-  }
-
-  mContext.SetActivePhase(aEntry.mStage, mCurrentPhaseIndex, mPhases.size());
-  return aEntry.mRun(mContext);
+  return decode_workflow::RunDecodePhaseV2(
+      mContext,
+      mPhases.mEntries[mCurrentPhaseIndex],
+      mCurrentPhaseIndex,
+      mPhases.mCount,
+      LogActionFromDecodeIntentV2(mContext.Request().mIntent));
 }
 
 bool DecodeDirector::ShouldDeferCancelForCurrentPhase() const {
-  if (mCurrentPhaseIndex >= mPhases.size()) {
+  if (mCurrentPhaseIndex >= mPhases.mCount) {
     return false;
   }
 
-  const ProgressStageV2 aStage = mPhases[mCurrentPhaseIndex].mStage;
-  if (mContext.State().mCancel.mShouldFinalizeAfterCancel) {
-    return aStage == ProgressStageV2::kFinalize;
-  }
-  return aStage == ProgressStageV2::kArchiveDecode;
+  return decode_workflow::ShouldDeferDecodeCancelForPhaseV2(
+      mContext.State(),
+      mPhases.mEntries[mCurrentPhaseIndex].mStage,
+      ProgressStageV2::kArchiveDecode);
 }
 
 std::size_t DecodeDirector::FindPhaseIndex(ProgressStageV2 pStage) const {
-  for (std::size_t aIndex = 0u; aIndex < mPhases.size(); ++aIndex) {
-    if (mPhases[aIndex].mStage == pStage) {
-      return aIndex;
-    }
-  }
-  return mPhases.size();
+  return decode_workflow::FindDecodePhaseIndexV2(mPhases, pStage);
 }
 
 RepairDirector::RepairDirector(const RepairRequestV2& pRequest,
                                DecodeRuntimeV2* pRuntime,
                                FileSystemV2* pFileSystem,
                                const memory_layout::ArchiveLayoutConfigV2* pLayout)
-    : mContext(MakeRepairDecodeRequest(pRequest), pRuntime, pFileSystem, pLayout) {
+    : mContext(repair_workflow::MakeRepairDecodeRequestV2(pRequest),
+               pRuntime,
+               pFileSystem,
+               pLayout) {
   BuildPhaseList();
 }
 
@@ -174,8 +144,12 @@ bool RepairDirector::Step() {
     return false;
   }
 
+  if (mContext.ActivePhaseNeedsMoreHeartbeats()) {
+    return true;
+  }
+
   if (mContext.IsCancelRequested()) {
-    const ProgressStageV2 aStage = mPhases[mCurrentPhaseIndex].mStage;
+    const ProgressStageV2 aStage = mPhases.mEntries[mCurrentPhaseIndex].mStage;
     if (mContext.State().mCancel.mShouldFinalizeAfterCancel &&
         aStage != ProgressStageV2::kFinalize) {
       mCurrentPhaseIndex = FindPhaseIndex(ProgressStageV2::kFinalize);
@@ -187,7 +161,7 @@ bool RepairDirector::Step() {
   }
 
   ++mCurrentPhaseIndex;
-  if (mCurrentPhaseIndex >= mPhases.size()) {
+  if (mCurrentPhaseIndex >= mPhases.mCount) {
     mIsFinished = true;
   }
   return true;
@@ -209,56 +183,37 @@ const DecodeWorkStateV2& RepairDirector::State() const {
   return mContext.State();
 }
 
+const std::string& RepairDirector::FailureMessage() const {
+  return mContext.LastErrorLog();
+}
+
 void RepairDirector::BuildPhaseList() {
-  mPhases.clear();
-  mPhases.push_back({ProgressStageV2::kPreflight, &DecodePreflightV2::Run});
-  mPhases.push_back({ProgressStageV2::kHeaderBootstrap,
-                     &DecodeHeaderBootstrapV2::Run});
-  mPhases.push_back({ProgressStageV2::kDiscovery, &DecodeDiscoveryV2::Run});
-  mPhases.push_back({ProgressStageV2::kDeriveCipherMaterial,
-                     &DecodeDeriveCipherMaterialV2::Run});
-  mPhases.push_back({ProgressStageV2::kAssembleCipherStack,
-                     &DecodeAssembleCipherStackV2::Run});
-  mPhases.push_back({ProgressStageV2::kInspection, &DecodeInspectionV2::Run});
-  mPhases.push_back({ProgressStageV2::kManifestDiscovery,
-                     &DecodeManifestDiscoveryV2::Run});
-  mPhases.push_back({ProgressStageV2::kRepairApply, &DecodeRepairApplyV2::Run});
-  mPhases.push_back({ProgressStageV2::kFinalize, &DecodeFinalizeV2::Run});
+  mPhases = repair_workflow::BuildRepairPhaseListV2();
 }
 
 bool RepairDirector::RunCurrentPhase() {
-  if (mCurrentPhaseIndex >= mPhases.size()) {
+  if (mCurrentPhaseIndex >= mPhases.mCount) {
     return false;
   }
 
-  const PhaseEntry& aEntry = mPhases[mCurrentPhaseIndex];
-  if (aEntry.mRun == nullptr) {
-    return false;
-  }
-
-  mContext.SetActivePhase(aEntry.mStage, mCurrentPhaseIndex, mPhases.size());
-  return aEntry.mRun(mContext);
+  return repair_workflow::RunRepairPhaseV2(
+      mContext,
+      mPhases.mEntries[mCurrentPhaseIndex],
+      mCurrentPhaseIndex,
+      mPhases.mCount);
 }
 
 bool RepairDirector::ShouldDeferCancelForCurrentPhase() const {
-  if (mCurrentPhaseIndex >= mPhases.size()) {
+  if (mCurrentPhaseIndex >= mPhases.mCount) {
     return false;
   }
 
-  const ProgressStageV2 aStage = mPhases[mCurrentPhaseIndex].mStage;
-  if (mContext.State().mCancel.mShouldFinalizeAfterCancel) {
-    return aStage == ProgressStageV2::kFinalize;
-  }
-  return aStage == ProgressStageV2::kRepairApply;
+  return repair_workflow::ShouldDeferRepairCancelForPhaseV2(
+      mContext.State(), mPhases.mEntries[mCurrentPhaseIndex].mStage);
 }
 
 std::size_t RepairDirector::FindPhaseIndex(ProgressStageV2 pStage) const {
-  for (std::size_t aIndex = 0u; aIndex < mPhases.size(); ++aIndex) {
-    if (mPhases[aIndex].mStage == pStage) {
-      return aIndex;
-    }
-  }
-  return mPhases.size();
+  return repair_workflow::FindRepairPhaseIndexV2(mPhases, pStage);
 }
 
 ManifestDirector::ManifestDirector(const DecodeRequestV2& pRequest,
@@ -291,8 +246,12 @@ bool ManifestDirector::Step() {
     return false;
   }
 
+  if (mContext.ActivePhaseNeedsMoreHeartbeats()) {
+    return true;
+  }
+
   ++mCurrentPhaseIndex;
-  if (mCurrentPhaseIndex >= mPhases.size()) {
+  if (mCurrentPhaseIndex >= mPhases.mCount) {
     mIsFinished = true;
   }
   return true;
@@ -314,28 +273,26 @@ const DecodeWorkStateV2& ManifestDirector::State() const {
   return mContext.State();
 }
 
+const std::string& ManifestDirector::FailureMessage() const {
+  return mContext.LastErrorLog();
+}
+
 void ManifestDirector::BuildPhaseList() {
-  mPhases.clear();
-  mPhases.push_back({ProgressStageV2::kPreflight, &DecodePreflightV2::Run});
-  mPhases.push_back({ProgressStageV2::kHeaderBootstrap,
-                     &DecodeHeaderBootstrapV2::Run});
-  mPhases.push_back({ProgressStageV2::kDiscovery, &DecodeDiscoveryV2::Run});
-  mPhases.push_back({ProgressStageV2::kManifestDiscovery,
-                     &DecodeManifestDiscoveryV2::Run});
+  mPhases = decode_workflow::BuildDecodePhaseListV2(
+      decode_workflow::DecodePhasePlanV2::kManifest);
 }
 
 bool ManifestDirector::RunCurrentPhase() {
-  if (mCurrentPhaseIndex >= mPhases.size()) {
+  if (mCurrentPhaseIndex >= mPhases.mCount) {
     return false;
   }
 
-  const PhaseEntry& aEntry = mPhases[mCurrentPhaseIndex];
-  if (aEntry.mRun == nullptr) {
-    return false;
-  }
-
-  mContext.SetActivePhase(aEntry.mStage, mCurrentPhaseIndex, mPhases.size());
-  return aEntry.mRun(mContext);
+  return decode_workflow::RunDecodePhaseV2(
+      mContext,
+      mPhases.mEntries[mCurrentPhaseIndex],
+      mCurrentPhaseIndex,
+      mPhases.mCount,
+      LogActionFromDecodeIntentV2(mContext.Request().mIntent));
 }
 
 }  // namespace peanutbutter

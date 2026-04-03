@@ -2,12 +2,11 @@
 
 #import "../Views/HomeHeaderView.hpp"
 
-@class MockAppShell;
 @class AppShell;
 @class AppConfigStore;
 @class HomeContainerViewController;
 
-@interface RootViewController : NSViewController <HomeHeaderViewDelegate, NSTextFieldDelegate>
+@interface RootViewController : NSViewController <NSTextFieldDelegate>
 
 @property (strong, nonatomic) HomeContainerViewController *homeContainerViewController;
 @property (strong, nonatomic) AppConfigStore *configStore;

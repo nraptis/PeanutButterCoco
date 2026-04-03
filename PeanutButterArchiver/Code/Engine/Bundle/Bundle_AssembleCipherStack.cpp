@@ -21,13 +21,30 @@ bool BundleAssembleCipherStackV2::Run(BundleStageContextV2& pContext) {
     return false;
   }
 
+  pContext.EmitLog(LogLevelV2::kInfo,
+                   LogPhaseStartedV2(LogActionV2::kBundle,
+                                     ProgressStageV2::kAssembleCipherStack));
   pContext.State().mCipher.mCipher = RotationMaskCipherV2(
       pContext.Request().mPassword,
       pContext.Request().mEncryptionStrength,
       pContext.Request().mTableStrength);
   pContext.State().mCipher.mAssembled =
       pContext.State().mCipher.mCipher.IsConfigured();
+  if (pContext.State().mCipher.mAssembled &&
+      !pContext.State().mCipher.mWorkerBuffer.Resize(
+          pContext.Layout().mArchiveBlockBytes)) {
+    pContext.EmitLog(
+        LogLevelV2::kError,
+        LogPhaseFailedV2(LogActionV2::kBundle,
+                         ProgressStageV2::kAssembleCipherStack,
+                         "failed allocating worker buffer for cipher operations"));
+    pContext.State().mCipher.mAssembled = false;
+    return false;
+  }
   pContext.EmitLog(LogLevelV2::kInfo, LogBundleCipherAssembledV2());
+  pContext.EmitLog(LogLevelV2::kInfo,
+                   LogPhaseCompletedV2(LogActionV2::kBundle,
+                                       ProgressStageV2::kAssembleCipherStack));
   pContext.EmitPhaseProgress(1.0, "Cipher stack assembled");
   return pContext.State().mCipher.mAssembled && !pContext.IsCancelRequested();
 }

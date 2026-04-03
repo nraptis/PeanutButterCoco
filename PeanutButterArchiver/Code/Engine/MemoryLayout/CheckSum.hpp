@@ -5,10 +5,12 @@
 #include <cstdint>
 
 #include "MemoryLayoutError.hpp"
+#include "Specs_Verified.hpp"
 
 namespace peanutbutter::memory_layout {
 
-inline constexpr std::size_t kCheckSumBytesV2 = 32u;
+inline constexpr std::size_t kCheckSumBytesV2 =
+    specs_verified::kSectionCheckSumBytesV2;
 
 struct CheckSumV2 {
   std::array<std::uint8_t, kCheckSumBytesV2> mBytes{};

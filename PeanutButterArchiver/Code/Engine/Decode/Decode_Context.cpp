@@ -43,10 +43,51 @@ bool DecodeStageContextV2::IsCancelRequested() const {
 
 void DecodeStageContextV2::EmitLog(LogLevelV2 pLevel,
                                    const std::string& pMessage) const {
-  if (mRuntime == nullptr) {
-    return;
+  if (pLevel == LogLevelV2::kError) {
+    const_cast<DecodeStageContextV2*>(this)->mActivePhaseHasError = true;
+    DecodeStageContextV2* const aMutableThis =
+        const_cast<DecodeStageContextV2*>(this);
+    if (aMutableThis->mLastErrorLog.empty()) {
+      aMutableThis->mLastErrorLog = pMessage;
+    }
+    if (!aMutableThis->mState.mFailure.HasFailure()) {
+      aMutableThis->mState.mFailure.mFamily =
+          InferFailureFamilyV2(aMutableThis->mActiveStage, pMessage);
+      aMutableThis->mState.mFailure.mStage = aMutableThis->mActiveStage;
+      aMutableThis->mState.mFailure.mWorkUnit = aMutableThis->mState.mWorkUnitsProcessed;
+      aMutableThis->mState.mFailure.mMessage = pMessage;
+    }
   }
-  mRuntime->EmitLog(pLevel, pMessage);
+  if (mRuntime != nullptr) {
+    mRuntime->EmitLog(pLevel, pMessage);
+  }
+  if (pLevel == LogLevelV2::kError) {
+    RuntimeEventV2 aEvent;
+    aEvent.mKind = RuntimeEventKindV2::kDecodeError;
+    aEvent.mStage = mActiveStage;
+    aEvent.mLabel = pMessage;
+    EmitRuntimeEvent(aEvent);
+  }
+}
+
+bool DecodeStageContextV2::WantsRuntimeEvent(RuntimeEventKindV2 pKind) const {
+  return mRuntime != nullptr && mRuntime->WantsRuntimeEvent(pKind);
+}
+
+bool DecodeStageContextV2::EmitRuntimeEvent(const RuntimeEventV2& pEvent) const {
+  if (mRuntime == nullptr || !mRuntime->WantsRuntimeEvent(pEvent.mKind)) {
+    return true;
+  }
+
+  RuntimeEventV2 aEvent = pEvent;
+  TrackRuntimeEventTransferV2(
+      aEvent,
+      const_cast<DecodeStageContextV2*>(this)->mState.mTransfers);
+  ScrubRuntimeEventFileInfoV2(aEvent);
+  if (aEvent.mStage == ProgressStageV2::kIdle) {
+    aEvent.mStage = mActiveStage;
+  }
+  return mRuntime->EmitRuntimeEvent(aEvent);
 }
 
 void DecodeStageContextV2::SetActivePhase(ProgressStageV2 pStage,
@@ -55,6 +96,30 @@ void DecodeStageContextV2::SetActivePhase(ProgressStageV2 pStage,
   mActiveStage = pStage;
   mActivePhaseIndex = pPhaseIndex;
   mActivePhaseCount = std::max<std::size_t>(1u, pPhaseCount);
+  mActivePhaseNeedsMoreHeartbeats = false;
+  mActivePhaseBatchYieldRequested = false;
+  mActivePhaseHasError = false;
+  mLastErrorLog.clear();
+}
+
+void DecodeStageContextV2::BeginWorkUnit() {
+  ++mState.mWorkUnitsProcessed;
+}
+
+void DecodeStageContextV2::ContinuePhaseOnNextHeartbeat() {
+  mActivePhaseNeedsMoreHeartbeats = true;
+}
+
+bool DecodeStageContextV2::ActivePhaseNeedsMoreHeartbeats() const {
+  return mActivePhaseNeedsMoreHeartbeats;
+}
+
+void DecodeStageContextV2::RequestBatchYield() {
+  mActivePhaseBatchYieldRequested = true;
+}
+
+bool DecodeStageContextV2::ActivePhaseBatchYieldRequested() const {
+  return mActivePhaseBatchYieldRequested;
 }
 
 void DecodeStageContextV2::EmitPhaseProgress(double pLocalFraction,
@@ -74,6 +139,21 @@ void DecodeStageContextV2::EmitProgress(ProgressStageV2 pStage,
     return;
   }
   mRuntime->EmitProgress(pStage, pLocalFraction, pOverallFraction, pLabel);
+}
+
+bool DecodeStageContextV2::ActivePhaseHasError() const {
+  return mActivePhaseHasError;
+}
+
+const std::string& DecodeStageContextV2::LastErrorLog() const {
+  if (mState.mFailure.HasFailure() && !mState.mFailure.mMessage.empty()) {
+    return mState.mFailure.mMessage;
+  }
+  return mLastErrorLog;
+}
+
+const FailureInfoV2& DecodeStageContextV2::Failure() const {
+  return mState.mFailure;
 }
 
 }  // namespace peanutbutter

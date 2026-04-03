@@ -1,13 +1,14 @@
 #import "ArchiverEngine.hpp"
 
 #include <algorithm>
-#include <chrono>
+#include <array>
+#include <ctime>
 #include <filesystem>
 #include <system_error>
-#include <thread>
 #include <utility>
 
 #include "../Common/LogCatalog.hpp"
+#include "../Knobs.hpp"
 
 namespace peanutbutter {
 
@@ -25,6 +26,19 @@ struct LaunchDecisionV2 {
   std::string mMessage;
 };
 
+using StartCommandHasRequestFnV2 =
+    bool (ArchiverEngineBase::*)(const EngineCommandV2&) const;
+using StartCommandAcceptFnV2 =
+    void (ArchiverEngineBase::*)(const EngineCommandV2&);
+
+struct StartCommandDescriptorV2 {
+  EngineCommandTypeV2 mType = EngineCommandTypeV2::kCancel;
+  EnginePrimaryActionV2 mPrimaryAction = EnginePrimaryActionV2::kNone;
+  LogActionV2 mLogAction = LogActionV2::kBundle;
+  StartCommandHasRequestFnV2 mHasRequest = nullptr;
+  StartCommandAcceptFnV2 mAccept = nullptr;
+};
+
 std::string TrimmedCopy(const std::string& pValue) {
   std::size_t aStart = 0u;
   while (aStart < pValue.size() &&
@@ -40,56 +54,33 @@ std::string TrimmedCopy(const std::string& pValue) {
   return pValue.substr(aStart, aEnd - aStart);
 }
 
-bool PathExists(const std::filesystem::path& pPath) {
-  std::error_code aError;
-  return std::filesystem::exists(pPath, aError) && !aError;
+bool PathExists(const FileSystemV2& pFileSystem, const std::string& pPath) {
+  return pFileSystem.Exists(pPath);
 }
 
-bool PathIsDirectory(const std::filesystem::path& pPath) {
-  std::error_code aError;
-  return std::filesystem::is_directory(pPath, aError) && !aError;
+bool PathIsDirectory(const FileSystemV2& pFileSystem,
+                     const std::string& pPath) {
+  return pFileSystem.IsDirectory(pPath);
 }
 
-bool PathIsFile(const std::filesystem::path& pPath) {
-  std::error_code aError;
-  return std::filesystem::is_regular_file(pPath, aError) && !aError;
+bool PathIsFile(const FileSystemV2& pFileSystem, const std::string& pPath) {
+  return pFileSystem.IsFile(pPath);
 }
 
-bool RelativePathHasHiddenSegment(const std::filesystem::path& pRelativePath) {
-  for (const std::filesystem::path& aPart : pRelativePath) {
-    const std::string aName = aPart.generic_string();
-    if (aName.empty() || aName == "." || aName == "..") {
-      continue;
-    }
-    if (aName[0] == '.') {
-      return true;
-    }
-  }
-  return false;
+bool PathComponentIsHidden(const std::string& pName) {
+  return !pName.empty() && pName[0] == '.';
 }
 
-bool DirectoryHasVisibleEntries(const std::filesystem::path& pPath) {
-  std::error_code aRootError;
-  if (!std::filesystem::is_directory(pPath, aRootError) || aRootError) {
+bool DirectoryHasVisibleEntries(const FileSystemV2& pFileSystem,
+                                const std::string& pPath) {
+  if (!pFileSystem.IsDirectory(pPath)) {
     return false;
   }
 
-  std::error_code aIteratorError;
-  std::filesystem::recursive_directory_iterator aIterator(
-      pPath,
-      std::filesystem::directory_options::skip_permission_denied,
-      aIteratorError);
-  std::filesystem::recursive_directory_iterator aEnd;
-  while (!aIteratorError && aIterator != aEnd) {
-    const std::filesystem::path aEntryPath = aIterator->path();
-    std::error_code aRelativeError;
-    const std::filesystem::path aRelative =
-        std::filesystem::relative(aEntryPath, pPath, aRelativeError);
-    if (!aRelativeError && !aRelative.empty() &&
-        !RelativePathHasHiddenSegment(aRelative)) {
+  for (const DirectoryEntryV2& aEntry : pFileSystem.ListDirectoryEntries(pPath)) {
+    if (!PathComponentIsHidden(aEntry.mRelativePath)) {
       return true;
     }
-    aIterator.increment(aIteratorError);
   }
   return false;
 }
@@ -104,105 +95,83 @@ bool LooksDirectoryLike(const std::string& pValue) {
   return std::filesystem::path(LastPathComponent(pValue)).extension().empty();
 }
 
-std::filesystem::path MakeCandidatePath(const std::string& pRawPath,
-                                        const std::filesystem::path& pRootPath) {
+std::string MakeCandidatePath(const FileSystemV2& pFileSystem,
+                              const std::string& pRawPath,
+                              const std::string& pRootPath) {
   const std::filesystem::path aPath(pRawPath);
   if (aPath.is_absolute()) {
-    return aPath.lexically_normal();
+    return aPath.lexically_normal().generic_string();
   }
-  return (pRootPath / aPath).lexically_normal();
+  return pFileSystem.JoinPath(pRootPath, pRawPath);
 }
 
-std::filesystem::path FindDescendantNamed(const std::filesystem::path& pRootPath,
-                                          const std::string& pName,
-                                          bool pDirectoriesOnly) {
-  if (pName.empty() || !PathIsDirectory(pRootPath)) {
-    return {};
-  }
-
-  std::error_code aIteratorError;
-  std::filesystem::recursive_directory_iterator aIterator(
-      pRootPath,
-      std::filesystem::directory_options::skip_permission_denied,
-      aIteratorError);
-  std::filesystem::recursive_directory_iterator aEnd;
-  while (!aIteratorError && aIterator != aEnd) {
-    const std::filesystem::directory_entry aEntry = *aIterator;
-    std::error_code aEntryError;
-    const std::string aFileName = aEntry.path().filename().generic_string();
-    if (aFileName == pName) {
-      const bool aIsDirectory = aEntry.is_directory(aEntryError) && !aEntryError;
-      if (!pDirectoriesOnly || aIsDirectory) {
-        return aEntry.path().lexically_normal();
-      }
-    }
-    aIterator.increment(aIteratorError);
-  }
-
-  return {};
-}
-
-std::string ResolveBundleSourcePath(const std::string& pRawPath) {
+std::string ResolveBundleSourcePath(const std::string& pRawPath,
+                                    const FileSystemV2& pFileSystem) {
   const std::string aTrimmed = TrimmedCopy(pRawPath);
   if (aTrimmed.empty()) {
     return {};
   }
 
-  const std::filesystem::path aRootPath(GetWorkingDirectoryV2());
-  const std::filesystem::path aCandidatePath = MakeCandidatePath(aTrimmed, aRootPath);
-  return aCandidatePath.generic_string();
+  const std::string aRootPath = pFileSystem.CurrentWorkingDirectory();
+  return MakeCandidatePath(pFileSystem, aTrimmed, aRootPath);
 }
 
-std::string ResolveBundleDestinationPath(const std::string& pRawPath) {
+std::string ResolveBundleDestinationPath(const std::string& pRawPath,
+                                         const FileSystemV2& pFileSystem) {
   const std::string aTrimmed = TrimmedCopy(pRawPath);
   if (aTrimmed.empty()) {
     return {};
   }
 
-  const std::filesystem::path aRootPath(GetWorkingDirectoryV2());
-  const std::filesystem::path aCandidatePath = MakeCandidatePath(aTrimmed, aRootPath);
+  const std::string aRootPath = pFileSystem.CurrentWorkingDirectory();
+  const std::string aCandidatePath =
+      MakeCandidatePath(pFileSystem, aTrimmed, aRootPath);
   const bool aLooksDirectory = LooksDirectoryLike(aTrimmed);
-  if (PathExists(aCandidatePath)) {
-    if (aLooksDirectory || PathIsDirectory(aCandidatePath)) {
-      return aCandidatePath.generic_string();
+  if (PathExists(pFileSystem, aCandidatePath)) {
+    if (aLooksDirectory || PathIsDirectory(pFileSystem, aCandidatePath)) {
+      return aCandidatePath;
     }
-    return aCandidatePath.parent_path().lexically_normal().generic_string();
+    return pFileSystem.ParentPath(aCandidatePath);
   }
 
   if (aLooksDirectory) {
-    return aCandidatePath.generic_string();
+    return aCandidatePath;
   }
-  return aCandidatePath.parent_path().lexically_normal().generic_string();
+  return pFileSystem.ParentPath(aCandidatePath);
 }
 
-BundleRequestV2 ResolveBundleRequestPaths(const BundleRequestV2& pRequest) {
+BundleRequestV2 ResolveBundleRequestPaths(const BundleRequestV2& pRequest,
+                                          const FileSystemV2& pFileSystem) {
   BundleRequestV2 aResolved = pRequest;
-  aResolved.mSourceDirectory = ResolveBundleSourcePath(pRequest.mSourceDirectory);
+  aResolved.mSourceDirectory =
+      ResolveBundleSourcePath(pRequest.mSourceDirectory, pFileSystem);
   aResolved.mDestinationDirectory =
-      ResolveBundleDestinationPath(pRequest.mDestinationDirectory);
+      ResolveBundleDestinationPath(pRequest.mDestinationDirectory, pFileSystem);
   return aResolved;
 }
 
-LaunchDecisionV2 CheckBundleLaunch(const BundleRequestV2& pRequest) {
+LaunchDecisionV2 CheckBundleLaunch(const BundleRequestV2& pRequest,
+                                   const FileSystemV2& pFileSystem) {
   if (pRequest.mSourceDirectory.empty() || pRequest.mDestinationDirectory.empty()) {
     return {LaunchSignalV2::kRed, "Bundle blocked",
             "Bundle source and destination are required."};
   }
 
-  const std::filesystem::path aSourcePath(pRequest.mSourceDirectory);
-  if (!PathExists(aSourcePath) ||
-      (!PathIsDirectory(aSourcePath) && !PathIsFile(aSourcePath))) {
+  if (!PathExists(pFileSystem, pRequest.mSourceDirectory) ||
+      (!PathIsDirectory(pFileSystem, pRequest.mSourceDirectory) &&
+       !PathIsFile(pFileSystem, pRequest.mSourceDirectory))) {
     return {LaunchSignalV2::kRed, "Bundle blocked",
             "Bundle source must be an existing file or folder."};
   }
 
-  const std::filesystem::path aDestinationPath(pRequest.mDestinationDirectory);
-  if (PathExists(aDestinationPath) && !PathIsDirectory(aDestinationPath)) {
+  if (PathExists(pFileSystem, pRequest.mDestinationDirectory) &&
+      !PathIsDirectory(pFileSystem, pRequest.mDestinationDirectory)) {
     return {LaunchSignalV2::kRed, "Bundle blocked",
             "Bundle destination must be a folder path."};
   }
 
-  if (PathExists(aDestinationPath) && DirectoryHasVisibleEntries(aDestinationPath)) {
+  if (PathExists(pFileSystem, pRequest.mDestinationDirectory) &&
+      DirectoryHasVisibleEntries(pFileSystem, pRequest.mDestinationDirectory)) {
     return {LaunchSignalV2::kYellow, "Bundle Destination",
             "Choose how to use the destination folder:\n" +
                 pRequest.mDestinationDirectory};
@@ -211,13 +180,117 @@ LaunchDecisionV2 CheckBundleLaunch(const BundleRequestV2& pRequest) {
   return {LaunchSignalV2::kGreen, "Bundle ready", "Bundle can proceed."};
 }
 
+LaunchDecisionV2 CheckDecodeLaunch(const DecodeRequestV2& pRequest,
+                                   const FileSystemV2& pFileSystem) {
+  const LogActionV2 aAction = LogActionFromDecodeIntentV2(pRequest.mIntent);
+  const std::string aActionLabel = LogActionLabelV2(aAction);
+  if (pRequest.mSourcePath.empty() || pRequest.mDestinationDirectory.empty()) {
+    return {LaunchSignalV2::kRed,
+            aActionLabel + " blocked",
+            aActionLabel + " source and destination are required."};
+  }
+
+  if (!PathExists(pFileSystem, pRequest.mSourcePath) ||
+      (!PathIsDirectory(pFileSystem, pRequest.mSourcePath) &&
+       !PathIsFile(pFileSystem, pRequest.mSourcePath))) {
+    return {LaunchSignalV2::kRed,
+            aActionLabel + " blocked",
+            aActionLabel + " source must be an existing file or folder."};
+  }
+
+  if (PathExists(pFileSystem, pRequest.mDestinationDirectory) &&
+      !PathIsDirectory(pFileSystem, pRequest.mDestinationDirectory)) {
+    return {LaunchSignalV2::kRed,
+            aActionLabel + " blocked",
+            aActionLabel + " destination must be a folder path."};
+  }
+
+  if (PathExists(pFileSystem, pRequest.mDestinationDirectory) &&
+      DirectoryHasVisibleEntries(pFileSystem, pRequest.mDestinationDirectory)) {
+    return {LaunchSignalV2::kYellow,
+            aActionLabel + " Destination",
+            "Choose how to use the destination folder:\n" +
+                pRequest.mDestinationDirectory};
+  }
+
+  return {LaunchSignalV2::kGreen,
+          aActionLabel + " ready",
+          aActionLabel + " can proceed."};
+}
+
+const char* EngineTypeLabel(ArchiverEngineTypeV2 pEngineType) {
+  switch (pEngineType) {
+    case ArchiverEngineTypeV2::kBase:
+      return "base";
+    case ArchiverEngineTypeV2::kBundle:
+      return "bundle";
+    case ArchiverEngineTypeV2::kDecode:
+      return "decode";
+    case ArchiverEngineTypeV2::kRepair:
+      return "repair";
+    case ArchiverEngineTypeV2::kSanity:
+      return "sanity";
+  }
+  return "unknown";
+}
+
+std::string CurrentClockPrefixV2() {
+  if (!knobs::kLogShowTimestampsV2) {
+    return {};
+  }
+
+  const std::time_t aNow = std::time(nullptr);
+  std::tm aLocalTime{};
+#if defined(_WIN32)
+  if (localtime_s(&aLocalTime, &aNow) != 0) {
+    return {};
+  }
+#else
+  if (localtime_r(&aNow, &aLocalTime) == nullptr) {
+    return {};
+  }
+#endif
+
+  std::array<char, 16u> aTimeBuffer{};
+  if (std::strftime(aTimeBuffer.data(),
+                    aTimeBuffer.size(),
+                    "%H:%M:%S",
+                    &aLocalTime) == 0u) {
+    return {};
+  }
+
+  return "[" + std::string(aTimeBuffer.data()) + "]";
+}
+
+void PrefixEventMessageWithClockIfEnabled(EngineEventV2& pEvent) {
+  if (!knobs::kLogShowTimestampsV2 || pEvent.mMessage.empty()) {
+    return;
+  }
+
+  if (pEvent.mType == EngineEventTypeV2::kProgress ||
+      pEvent.mType == EngineEventTypeV2::kRuntimeEvent ||
+      pEvent.mType == EngineEventTypeV2::kUiStateChanged) {
+    return;
+  }
+
+  const std::string aPrefix = CurrentClockPrefixV2();
+  if (aPrefix.empty()) {
+    return;
+  }
+
+  pEvent.mMessage = aPrefix + pEvent.mMessage;
+  if (pEvent.mType == EngineEventTypeV2::kLog) {
+    pEvent.mLogEntry.mMessage = pEvent.mMessage;
+  }
+}
+
 }  // namespace
 
-class ArchiverEngine::ActiveRuntimeV2 final : public BundleRuntimeV2,
+class ArchiverEngineBase::ActiveRuntimeV2 final : public BundleRuntimeV2,
                                               public DecodeRuntimeV2,
                                               public SanityRuntimeV2 {
  public:
-  explicit ActiveRuntimeV2(ArchiverEngine* pOwner)
+  explicit ActiveRuntimeV2(ArchiverEngineBase* pOwner)
       : mOwner(pOwner) {}
 
   bool IsCancelRequested() const override {
@@ -246,240 +319,275 @@ class ArchiverEngine::ActiveRuntimeV2 final : public BundleRuntimeV2,
     mOwner->EmitProgressLocked(aSnapshot);
   }
 
+  bool WantsRuntimeEvent(RuntimeEventKindV2 pKind) const override {
+    return mOwner != nullptr && mOwner->WantsRuntimeEventKind(pKind);
+  }
+
+  bool EmitRuntimeEvent(const RuntimeEventV2& pEvent) override {
+    if (mOwner == nullptr) {
+      return true;
+    }
+    return mOwner->EmitRuntimeEventLocked(pEvent);
+  }
+
  private:
-  ArchiverEngine* mOwner = nullptr;
+  ArchiverEngineBase* mOwner = nullptr;
 };
 
-ArchiverEngine::ArchiverEngine() {
-  {
-    std::lock_guard<std::recursive_mutex> aLock(mMutex);
-    EmitLogLocked(LogLevelV2::kInfo,
-                  "[App] Working directory: " +
-                      FormatPathForLogV2(GetWorkingDirectoryV2()));
+ArchiverEngineBase::ArchiverEngineBase(
+    ArchiverEngineTypeV2 pEngineType,
+    FileSystemV2* pFileSystem,
+    const memory_layout::ArchiveLayoutConfigV2* pLayout,
+    CommandBusV2* pCommandBus)
+    : mEngineType(pEngineType),
+      mFileSystem(pFileSystem != nullptr ? pFileSystem : &mLocalFileSystem),
+      mCommandBus(pCommandBus != nullptr ? pCommandBus : &mOwnedCommandBus),
+      mLayout(pLayout != nullptr ? pLayout
+                                 : &memory_layout::DefaultArchiveLayoutConfigV2()) {
+  std::lock_guard<std::recursive_mutex> aLock(mMutex);
+  EmitLogLocked(LogLevelV2::kInfo,
+                "[App] Working directory: " +
+                    FormatPathForLogV2(mFileSystem->CurrentWorkingDirectory()));
+  EmitLogLocked(LogLevelV2::kInfo,
+                std::string("[App] Engine type: ") + EngineTypeLabel(mEngineType));
+}
+
+ArchiverEngineBase::~ArchiverEngineBase() = default;
+
+void ArchiverEngineBase::EnqueueBundleRequest(const BundleRequestV2& pRequest) {
+  mCommandBus->EnqueueCommand(MakeBundleCommandV2(pRequest));
+}
+
+void ArchiverEngineBase::EnqueueDecodeRequest(const DecodeRequestV2& pRequest) {
+  mCommandBus->EnqueueCommand(MakeDecodeCommandV2(pRequest));
+}
+
+void ArchiverEngineBase::EnqueueManifestRequest(const DecodeRequestV2& pRequest) {
+  mCommandBus->EnqueueCommand(MakeManifestCommandV2(pRequest));
+}
+
+void ArchiverEngineBase::EnqueueRepairRequest(const RepairRequestV2& pRequest) {
+  mCommandBus->EnqueueCommand(MakeRepairCommandV2(pRequest));
+}
+
+void ArchiverEngineBase::EnqueueSanityRequest(const SanityRequestV2& pRequest) {
+  mCommandBus->EnqueueCommand(MakeSanityCommandV2(pRequest));
+}
+
+void ArchiverEngineBase::EnqueuePromptResponse(const UiPromptResponseV2& pResponse) {
+  mCommandBus->EnqueueCommand(MakePromptResponseCommandV2(pResponse));
+}
+
+void ArchiverEngineBase::EnqueueCancelRequest() {
+  mCommandBus->Cancel();
+}
+
+void ArchiverEngineBase::EnqueueCheckpointDecision(
+    const EngineCheckpointDecisionV2& pDecision) {
+  mCommandBus->EnqueueCommand(MakeCheckpointDecisionCommandV2(pDecision));
+}
+
+void ArchiverEngineBase::ContinueCheckpoint(std::uint64_t pCheckpointId) {
+  mCommandBus->ContinueCheckpoint(pCheckpointId);
+}
+
+void ArchiverEngineBase::CancelCheckpoint(std::uint64_t pCheckpointId) {
+  mCommandBus->CancelCheckpoint(pCheckpointId);
+}
+
+void ArchiverEngineBase::Dispose() {
+  std::lock_guard<std::recursive_mutex> aLock(mMutex);
+  if (mIsDisposed) {
+    return;
   }
-  mWorkerThread = std::thread([this]() { WorkerLoop(); });
-}
 
-ArchiverEngine::~ArchiverEngine() {
-  {
-    std::lock_guard<std::recursive_mutex> aLock(mMutex);
-    mShouldStopWorker = true;
-  }
-  mWorkerCv.notify_all();
-  if (mWorkerThread.joinable()) {
-    mWorkerThread.join();
-  }
-}
-
-void ArchiverEngine::EnqueueBundleRequest(const BundleRequestV2& pRequest) {
-  std::lock_guard<std::recursive_mutex> aLock(mMutex);
-  EngineCommandV2 aCommand;
-  aCommand.mType = EngineCommandTypeV2::kStartBundle;
-  aCommand.mBundleRequest = pRequest;
-  mIncomingCommands.push(std::move(aCommand));
-  mWorkerCv.notify_all();
-}
-
-void ArchiverEngine::EnqueueDecodeRequest(const DecodeRequestV2& pRequest) {
-  std::lock_guard<std::recursive_mutex> aLock(mMutex);
-  EngineCommandV2 aCommand;
-  aCommand.mType = EngineCommandTypeV2::kStartDecode;
-  aCommand.mDecodeRequest = pRequest;
-  mIncomingCommands.push(std::move(aCommand));
-  mWorkerCv.notify_all();
-}
-
-void ArchiverEngine::EnqueueManifestRequest(const DecodeRequestV2& pRequest) {
-  std::lock_guard<std::recursive_mutex> aLock(mMutex);
-  EngineCommandV2 aCommand;
-  aCommand.mType = EngineCommandTypeV2::kStartManifest;
-  aCommand.mManifestRequest = pRequest;
-  mIncomingCommands.push(std::move(aCommand));
-  mWorkerCv.notify_all();
-}
-
-void ArchiverEngine::EnqueueRepairRequest(const RepairRequestV2& pRequest) {
-  std::lock_guard<std::recursive_mutex> aLock(mMutex);
-  EngineCommandV2 aCommand;
-  aCommand.mType = EngineCommandTypeV2::kStartRepair;
-  aCommand.mRepairRequest = pRequest;
-  mIncomingCommands.push(std::move(aCommand));
-  mWorkerCv.notify_all();
-}
-
-void ArchiverEngine::EnqueueSanityRequest(const SanityRequestV2& pRequest) {
-  std::lock_guard<std::recursive_mutex> aLock(mMutex);
-  EngineCommandV2 aCommand;
-  aCommand.mType = EngineCommandTypeV2::kStartSanity;
-  aCommand.mSanityRequest = pRequest;
-  mIncomingCommands.push(std::move(aCommand));
-  mWorkerCv.notify_all();
-}
-
-void ArchiverEngine::EnqueuePromptResponse(const UiPromptResponseV2& pResponse) {
-  std::lock_guard<std::recursive_mutex> aLock(mMutex);
-  EngineCommandV2 aCommand;
-  aCommand.mType = EngineCommandTypeV2::kPromptResponse;
-  aCommand.mPromptResponse = pResponse;
-  mIncomingCommands.push(std::move(aCommand));
-  mWorkerCv.notify_all();
-}
-
-void ArchiverEngine::EnqueueCancelRequest() {
-  std::lock_guard<std::recursive_mutex> aLock(mMutex);
-  if (mCurrentPrimaryAction == EnginePrimaryActionV2::kNone) {
-    RejectCancelLocked(LogCancelRejectedNoActionV2());
-  } else if (mIsCancelPending) {
-    RejectCancelLocked(LogCancelRejectedAlreadyPendingV2());
+  mIsDisposed = true;
+  mPendingCheckpointRequest.reset();
+  if (mCurrentPrimaryAction != EnginePrimaryActionV2::kNone) {
+    FinishCurrentActionLocked(EngineEventTypeV2::kActionCanceled, "Engine disposed.");
   } else {
-    AcceptCancelLocked();
+    mIsUiLocked = false;
+    mIsCancelPending = false;
+    mActiveTask.reset();
+    mActiveRuntime.reset();
+    mPendingPromptId.reset();
+    mPendingBundlePromptRequest.reset();
+    mPendingDecodePromptRequest.reset();
   }
-  mWorkerCv.notify_all();
+
+  EmitLogLocked(LogLevelV2::kInfo, "[App] Engine disposed.");
 }
 
-EngineEventListV2 ArchiverEngine::Poll() {
+void ArchiverEngineBase::Heartbeat() {
   std::lock_guard<std::recursive_mutex> aLock(mMutex);
-  EngineEventListV2 aEvents = std::move(mPendingEvents);
-  mPendingEvents.clear();
+  ProcessIncomingCommandsLocked();
+  if (mCurrentPrimaryAction == EnginePrimaryActionV2::kNone) {
+    return;
+  }
+
+  if (!ShouldHeartbeatCurrentActionLocked()) {
+    EvaluateCurrentActionLocked();
+    return;
+  }
+
+  if (mActiveTask != nullptr) {
+    (void)mActiveTask->Heartbeat();
+  }
+
+  ProcessIncomingCommandsLocked();
+  EvaluateCurrentActionLocked();
+}
+
+void ArchiverEngineBase::SetCaptureVerboseRuntimeEvents(bool pEnabled) {
+  std::lock_guard<std::recursive_mutex> aLock(mMutex);
+  mCaptureVerboseRuntimeEvents = pEnabled;
+}
+
+void ArchiverEngineBase::SetBlockingCheckpointKinds(
+    const std::vector<RuntimeEventKindV2>& pKinds) {
+  std::lock_guard<std::recursive_mutex> aLock(mMutex);
+  mBlockingCheckpointKinds = pKinds;
+  std::sort(mBlockingCheckpointKinds.begin(), mBlockingCheckpointKinds.end());
+  mBlockingCheckpointKinds.erase(
+      std::unique(mBlockingCheckpointKinds.begin(),
+                  mBlockingCheckpointKinds.end()),
+      mBlockingCheckpointKinds.end());
+}
+
+EngineEventListV2 ArchiverEngineBase::Poll() {
+  const CommandBusItemListV2 aItems = mCommandBus->TakeItems();
+  EngineEventListV2 aEvents;
+  aEvents.reserve(aItems.size());
+  for (const CommandBusItemV2& aItem : aItems) {
+    if (aItem.mType == CommandBusItemTypeV2::kEvent) {
+      aEvents.push_back(aItem.mEvent);
+      continue;
+    }
+
+    EngineEventV2 aEvent;
+    aEvent.mType = EngineEventTypeV2::kLog;
+    aEvent.mSnapshot = aItem.mSnapshot;
+    aEvent.mMessage = aItem.mLog.mMessage;
+    aEvent.mLogEntry = aItem.mLog;
+    aEvents.push_back(std::move(aEvent));
+  }
   return aEvents;
 }
 
-EngineSnapshotV2 ArchiverEngine::Snapshot() const {
+bool ArchiverEngineBase::CapturesVerboseRuntimeEvents() const {
+  std::lock_guard<std::recursive_mutex> aLock(mMutex);
+  return mCaptureVerboseRuntimeEvents;
+}
+
+EngineSnapshotV2 ArchiverEngineBase::Snapshot() const {
   std::lock_guard<std::recursive_mutex> aLock(mMutex);
   return BuildSnapshotLocked();
 }
 
-bool ArchiverEngine::HasPendingWorkLocked() const {
-  return !mIncomingCommands.empty() ||
-         (mCurrentPrimaryAction != EnginePrimaryActionV2::kNone &&
-          ShouldStepCurrentActionLocked());
+std::optional<EngineTerminalStateV2> ArchiverEngineBase::TakeTerminalState() {
+  std::lock_guard<std::recursive_mutex> aLock(mMutex);
+  std::optional<EngineTerminalStateV2> aTerminal = std::move(mLastTerminalState);
+  mLastTerminalState.reset();
+  return aTerminal;
 }
 
-bool ArchiverEngine::ShouldStepCurrentActionLocked() const {
+CommandBusV2& ArchiverEngineBase::CommandBus() {
+  return *mCommandBus;
+}
+
+const CommandBusV2& ArchiverEngineBase::CommandBus() const {
+  return *mCommandBus;
+}
+
+bool ArchiverEngineBase::WantsRuntimeEventKind(RuntimeEventKindV2 pKind) const {
+  std::lock_guard<std::recursive_mutex> aLock(mMutex);
+  return WantsRuntimeEventKindLocked(pKind);
+}
+
+bool ArchiverEngineBase::SupportsPrimaryActionLocked(
+    EnginePrimaryActionV2 pAction) const {
+  if (mIsDisposed) {
+    return false;
+  }
+  switch (mEngineType) {
+    case ArchiverEngineTypeV2::kBase:
+      return true;
+    case ArchiverEngineTypeV2::kBundle:
+      return pAction == EnginePrimaryActionV2::kBundle;
+    case ArchiverEngineTypeV2::kDecode:
+      return pAction == EnginePrimaryActionV2::kDecode ||
+             pAction == EnginePrimaryActionV2::kManifest;
+    case ArchiverEngineTypeV2::kRepair:
+      return pAction == EnginePrimaryActionV2::kRepair;
+    case ArchiverEngineTypeV2::kSanity:
+      return pAction == EnginePrimaryActionV2::kSanity;
+  }
+  return false;
+}
+
+std::string ArchiverEngineBase::UnsupportedActionMessageLocked(
+    EnginePrimaryActionV2 pAction) const {
+  if (mIsDisposed) {
+    return "Engine is disposed.";
+  }
+
+  const char* aActionLabel = "action";
+  switch (pAction) {
+    case EnginePrimaryActionV2::kBundle:
+      aActionLabel = "bundle";
+      break;
+    case EnginePrimaryActionV2::kDecode:
+      aActionLabel = "decode";
+      break;
+    case EnginePrimaryActionV2::kManifest:
+      aActionLabel = "manifest";
+      break;
+    case EnginePrimaryActionV2::kRepair:
+      aActionLabel = "repair";
+      break;
+    case EnginePrimaryActionV2::kSanity:
+      aActionLabel = "sanity";
+      break;
+    case EnginePrimaryActionV2::kNone:
+      aActionLabel = "none";
+      break;
+  }
+
+  return "This " + std::string(EngineTypeLabel(mEngineType)) +
+         " engine does not accept " + aActionLabel + " actions.";
+}
+
+bool ArchiverEngineBase::ShouldHeartbeatCurrentActionLocked() const {
+  if (mIsDisposed) {
+    return false;
+  }
   if (mCurrentPrimaryAction == EnginePrimaryActionV2::kNone) {
     return false;
   }
-  return !(mCurrentPrimaryAction == EnginePrimaryActionV2::kBundle &&
-           mPendingBundlePromptRequest.has_value() &&
-           !mIsCancelPending);
-}
-
-void ArchiverEngine::WorkerLoop() {
-  std::unique_lock<std::recursive_mutex> aLock(mMutex);
-  while (!mShouldStopWorker) {
-    mWorkerCv.wait(aLock, [this]() {
-      return mShouldStopWorker || HasPendingWorkLocked();
-    });
-    if (mShouldStopWorker) {
-      break;
-    }
-
-    ProcessIncomingCommandsLocked();
-    if (mShouldStopWorker) {
-      break;
-    }
-
-    if (mCurrentPrimaryAction == EnginePrimaryActionV2::kNone) {
-      continue;
-    }
-
-    if (!ShouldStepCurrentActionLocked()) {
-      ProcessCurrentActionLocked();
-      continue;
-    }
-
-    const EnginePrimaryActionV2 aAction = mCurrentPrimaryAction;
-    BundleDirector* const aBundleDirector = mBundleDirector.get();
-    DecodeDirector* const aDecodeDirector = mDecodeDirector.get();
-    RepairDirector* const aRepairDirector = mRepairDirector.get();
-    ManifestDirector* const aManifestDirector = mManifestDirector.get();
-    SanityDirector* const aSanityDirector = mSanityDirector.get();
-    mSkipCurrentActionStep = true;
-
-    aLock.unlock();
-    switch (aAction) {
-      case EnginePrimaryActionV2::kBundle:
-        if (aBundleDirector != nullptr) {
-          (void)aBundleDirector->Step();
-        }
-        break;
-      case EnginePrimaryActionV2::kDecode:
-        if (aDecodeDirector != nullptr) {
-          (void)aDecodeDirector->Step();
-        }
-        break;
-      case EnginePrimaryActionV2::kManifest:
-        if (aManifestDirector != nullptr) {
-          (void)aManifestDirector->Step();
-        }
-        break;
-      case EnginePrimaryActionV2::kRepair:
-        if (aRepairDirector != nullptr) {
-          (void)aRepairDirector->Step();
-        }
-        break;
-      case EnginePrimaryActionV2::kSanity:
-        if (aSanityDirector != nullptr) {
-          (void)aSanityDirector->Step();
-        }
-        break;
-      case EnginePrimaryActionV2::kNone:
-        break;
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    aLock.lock();
-
-    ProcessIncomingCommandsLocked();
-    ProcessCurrentActionLocked();
+  if (mPendingCheckpointRequest.has_value()) {
+    return false;
   }
+  if (mCurrentPrimaryAction == EnginePrimaryActionV2::kBundle &&
+      mPendingBundlePromptRequest.has_value() &&
+      !mIsCancelPending) {
+    return false;
+  }
+  if (mCurrentPrimaryAction == EnginePrimaryActionV2::kDecode &&
+      mPendingDecodePromptRequest.has_value() &&
+      !mIsCancelPending) {
+    return false;
+  }
+  return mActiveTask != nullptr;
 }
 
-void ArchiverEngine::ProcessIncomingCommandsLocked() {
-  while (!mIncomingCommands.empty()) {
-    const EngineCommandV2 aCommand = std::move(mIncomingCommands.front());
-    mIncomingCommands.pop();
+void ArchiverEngineBase::ProcessIncomingCommandsLocked() {
+  EngineCommandV2 aCommand;
+  while (mCommandBus->TryDequeueCommand(&aCommand)) {
+    if (TryHandleStartCommandLocked(aCommand)) {
+      continue;
+    }
 
     switch (aCommand.mType) {
-      case EngineCommandTypeV2::kStartBundle:
-        if (mCurrentPrimaryAction == EnginePrimaryActionV2::kNone &&
-            aCommand.mBundleRequest.has_value()) {
-          AcceptBundleLocked(*aCommand.mBundleRequest);
-        } else {
-          RejectPrimaryActionLocked(LogPrimaryRejectedWhileLockedV2(LogActionV2::kBundle));
-        }
-        break;
-      case EngineCommandTypeV2::kStartDecode:
-        if (mCurrentPrimaryAction == EnginePrimaryActionV2::kNone &&
-            aCommand.mDecodeRequest.has_value()) {
-          AcceptDecodeLocked(*aCommand.mDecodeRequest);
-        } else {
-          RejectPrimaryActionLocked(LogPrimaryRejectedWhileLockedV2(LogActionV2::kDecode));
-        }
-        break;
-      case EngineCommandTypeV2::kStartManifest:
-        if (mCurrentPrimaryAction == EnginePrimaryActionV2::kNone &&
-            aCommand.mManifestRequest.has_value()) {
-          AcceptManifestLocked(*aCommand.mManifestRequest);
-        } else {
-          RejectPrimaryActionLocked(LogPrimaryRejectedWhileLockedV2(LogActionV2::kManifest));
-        }
-        break;
-      case EngineCommandTypeV2::kStartRepair:
-        if (mCurrentPrimaryAction == EnginePrimaryActionV2::kNone &&
-            aCommand.mRepairRequest.has_value()) {
-          AcceptRepairLocked(*aCommand.mRepairRequest);
-        } else {
-          RejectPrimaryActionLocked(LogPrimaryRejectedWhileLockedV2(LogActionV2::kRepair));
-        }
-        break;
-      case EngineCommandTypeV2::kStartSanity:
-        if (mCurrentPrimaryAction == EnginePrimaryActionV2::kNone &&
-            aCommand.mSanityRequest.has_value()) {
-          AcceptSanityLocked(*aCommand.mSanityRequest);
-        } else {
-          RejectPrimaryActionLocked(LogPrimaryRejectedWhileLockedV2(LogActionV2::kSanity));
-        }
-        break;
       case EngineCommandTypeV2::kCancel:
         if (mCurrentPrimaryAction == EnginePrimaryActionV2::kNone) {
           RejectCancelLocked(LogCancelRejectedNoActionV2());
@@ -494,414 +602,405 @@ void ArchiverEngine::ProcessIncomingCommandsLocked() {
           HandlePromptResponseLocked(*aCommand.mPromptResponse);
         }
         break;
+      case EngineCommandTypeV2::kCheckpointDecision:
+        if (aCommand.mCheckpointDecision.has_value()) {
+          HandleCheckpointDecisionLocked(*aCommand.mCheckpointDecision);
+        }
+        break;
+      case EngineCommandTypeV2::kStartBundle:
+      case EngineCommandTypeV2::kStartDecode:
+      case EngineCommandTypeV2::kStartManifest:
+      case EngineCommandTypeV2::kStartRepair:
+      case EngineCommandTypeV2::kStartSanity:
+        break;
     }
   }
 }
 
-void ArchiverEngine::ProcessCurrentActionLocked() {
-  if (mCurrentPrimaryAction == EnginePrimaryActionV2::kNone) {
-    mSkipCurrentActionStep = false;
-    return;
-  }
+bool ArchiverEngineBase::TryHandleStartCommandLocked(const EngineCommandV2& pCommand) {
+  static const std::array<StartCommandDescriptorV2, 5u> kDescriptors = {{
+      {EngineCommandTypeV2::kStartBundle,
+       EnginePrimaryActionV2::kBundle,
+       LogActionV2::kBundle,
+       &ArchiverEngineBase::HasBundleStartRequestLocked,
+       &ArchiverEngineBase::AcceptBundleStartCommandLocked},
+      {EngineCommandTypeV2::kStartDecode,
+       EnginePrimaryActionV2::kDecode,
+       LogActionV2::kDecode,
+       &ArchiverEngineBase::HasDecodeStartRequestLocked,
+       &ArchiverEngineBase::AcceptDecodeStartCommandLocked},
+      {EngineCommandTypeV2::kStartManifest,
+       EnginePrimaryActionV2::kManifest,
+       LogActionV2::kManifest,
+       &ArchiverEngineBase::HasManifestStartRequestLocked,
+       &ArchiverEngineBase::AcceptManifestStartCommandLocked},
+      {EngineCommandTypeV2::kStartRepair,
+       EnginePrimaryActionV2::kRepair,
+       LogActionV2::kRepair,
+       &ArchiverEngineBase::HasRepairStartRequestLocked,
+       &ArchiverEngineBase::AcceptRepairStartCommandLocked},
+      {EngineCommandTypeV2::kStartSanity,
+       EnginePrimaryActionV2::kSanity,
+       LogActionV2::kSanity,
+       &ArchiverEngineBase::HasSanityStartRequestLocked,
+       &ArchiverEngineBase::AcceptSanityStartCommandLocked},
+  }};
 
-  if (mCurrentPrimaryAction == EnginePrimaryActionV2::kDecode) {
-    if (mDecodeDirector == nullptr) {
-      FinishCurrentActionLocked(EngineEventTypeV2::kActionFailed,
-                                LogPrimaryDirectorMissingV2(LogActionV2::kDecode));
-      return;
-    }
-
-    const bool aShouldStep = !mSkipCurrentActionStep;
-    mSkipCurrentActionStep = false;
-    if (aShouldStep) {
-      (void)mDecodeDirector->Step();
-    }
-
-    if (mDecodeDirector->WasCanceled()) {
-      FinishCurrentActionLocked(EngineEventTypeV2::kActionCanceled,
-                                LogActionCanceledV2(LogActionV2::kDecode));
-      return;
-    }
-
-    if (mDecodeDirector->HasFailed()) {
-      FinishCurrentActionLocked(EngineEventTypeV2::kActionFailed,
-                                LogActionFailedV2(LogActionV2::kDecode));
-      return;
-    }
-
-    if (mDecodeDirector->IsFinished()) {
-      FinishCurrentActionLocked(EngineEventTypeV2::kActionCompleted,
-                                LogActionCompletedV2(LogActionV2::kDecode));
-    }
-    return;
-  }
-
-  if (mCurrentPrimaryAction == EnginePrimaryActionV2::kManifest) {
-    if (mManifestDirector == nullptr) {
-      FinishCurrentActionLocked(EngineEventTypeV2::kActionFailed,
-                                LogPrimaryDirectorMissingV2(LogActionV2::kManifest));
-      return;
+  for (const StartCommandDescriptorV2& aDescriptor : kDescriptors) {
+    if (aDescriptor.mType != pCommand.mType) {
+      continue;
     }
 
-    const bool aShouldStep = !mSkipCurrentActionStep;
-    mSkipCurrentActionStep = false;
-    if (aShouldStep) {
-      (void)mManifestDirector->Step();
-    }
-
-    if (mManifestDirector->WasCanceled()) {
-      FinishCurrentActionLocked(EngineEventTypeV2::kActionCanceled,
-                                LogActionCanceledV2(LogActionV2::kManifest));
-      return;
-    }
-
-    if (mManifestDirector->HasFailed()) {
-      FinishCurrentActionLocked(EngineEventTypeV2::kActionFailed,
-                                LogActionFailedV2(LogActionV2::kManifest));
-      return;
-    }
-
-    if (mManifestDirector->IsFinished()) {
-      FinishCurrentActionLocked(EngineEventTypeV2::kActionCompleted,
-                                LogActionCompletedV2(LogActionV2::kManifest));
-    }
-    return;
-  }
-
-  if (mCurrentPrimaryAction == EnginePrimaryActionV2::kSanity) {
-    if (mSanityDirector == nullptr) {
-      FinishCurrentActionLocked(EngineEventTypeV2::kActionFailed,
-                                LogPrimaryDirectorMissingV2(LogActionV2::kSanity));
-      return;
-    }
-
-    const bool aShouldStep = !mSkipCurrentActionStep;
-    mSkipCurrentActionStep = false;
-    if (aShouldStep) {
-      (void)mSanityDirector->Step();
-    }
-    if (mSanityDirector->WasCanceled()) {
-      FinishCurrentActionLocked(EngineEventTypeV2::kActionCanceled,
-                                LogActionCanceledV2(LogActionV2::kSanity));
-      return;
-    }
-    if (mSanityDirector->HasFailed()) {
-      FinishCurrentActionLocked(EngineEventTypeV2::kActionFailed,
-                                LogActionFailedV2(LogActionV2::kSanity));
-      return;
-    }
-    if (mSanityDirector->IsFinished()) {
-      FinishCurrentActionLocked(EngineEventTypeV2::kActionCompleted,
-                                LogActionCompletedV2(LogActionV2::kSanity));
-    }
-    return;
-  }
-
-  if (mCurrentPrimaryAction == EnginePrimaryActionV2::kBundle) {
-    if (mPendingBundlePromptRequest.has_value()) {
-      if (mIsCancelPending) {
-        FinishCurrentActionLocked(EngineEventTypeV2::kActionCanceled,
-                                  LogActionCanceledV2(LogActionV2::kBundle));
+    const bool aHasRequest =
+        aDescriptor.mHasRequest != nullptr &&
+        (this->*aDescriptor.mHasRequest)(pCommand);
+    if (mCurrentPrimaryAction == EnginePrimaryActionV2::kNone && aHasRequest) {
+      if (SupportsPrimaryActionLocked(aDescriptor.mPrimaryAction)) {
+        (this->*aDescriptor.mAccept)(pCommand);
+      } else {
+        RejectPrimaryActionLocked(
+            UnsupportedActionMessageLocked(aDescriptor.mPrimaryAction));
       }
-      return;
+    } else {
+      RejectPrimaryActionLocked(
+          LogPrimaryRejectedWhileLockedV2(aDescriptor.mLogAction));
     }
+    return true;
+  }
 
-    if (mBundleDirector == nullptr) {
-      FinishCurrentActionLocked(EngineEventTypeV2::kActionFailed,
-                                LogPrimaryDirectorMissingV2(LogActionV2::kBundle));
-      return;
-    }
+  return false;
+}
 
-    const bool aShouldStep = !mSkipCurrentActionStep;
-    mSkipCurrentActionStep = false;
-    if (aShouldStep) {
-      (void)mBundleDirector->Step();
-    }
+bool ArchiverEngineBase::HasBundleStartRequestLocked(
+    const EngineCommandV2& pCommand) const {
+  return pCommand.mBundleRequest.has_value();
+}
 
-    if (mBundleDirector->WasCanceled()) {
+bool ArchiverEngineBase::HasDecodeStartRequestLocked(
+    const EngineCommandV2& pCommand) const {
+  return pCommand.mDecodeRequest.has_value();
+}
+
+bool ArchiverEngineBase::HasManifestStartRequestLocked(
+    const EngineCommandV2& pCommand) const {
+  return pCommand.mManifestRequest.has_value();
+}
+
+bool ArchiverEngineBase::HasRepairStartRequestLocked(
+    const EngineCommandV2& pCommand) const {
+  return pCommand.mRepairRequest.has_value();
+}
+
+bool ArchiverEngineBase::HasSanityStartRequestLocked(
+    const EngineCommandV2& pCommand) const {
+  return pCommand.mSanityRequest.has_value();
+}
+
+void ArchiverEngineBase::AcceptBundleStartCommandLocked(
+    const EngineCommandV2& pCommand) {
+  if (!pCommand.mBundleRequest.has_value()) {
+    return;
+  }
+  AcceptBundleLocked(*pCommand.mBundleRequest);
+}
+
+void ArchiverEngineBase::AcceptDecodeStartCommandLocked(
+    const EngineCommandV2& pCommand) {
+  if (!pCommand.mDecodeRequest.has_value()) {
+    return;
+  }
+  AcceptDecodeLocked(*pCommand.mDecodeRequest);
+}
+
+void ArchiverEngineBase::AcceptManifestStartCommandLocked(
+    const EngineCommandV2& pCommand) {
+  if (!pCommand.mManifestRequest.has_value()) {
+    return;
+  }
+  AcceptManifestLocked(*pCommand.mManifestRequest);
+}
+
+void ArchiverEngineBase::AcceptRepairStartCommandLocked(
+    const EngineCommandV2& pCommand) {
+  if (!pCommand.mRepairRequest.has_value()) {
+    return;
+  }
+  AcceptRepairLocked(*pCommand.mRepairRequest);
+}
+
+void ArchiverEngineBase::AcceptSanityStartCommandLocked(
+    const EngineCommandV2& pCommand) {
+  if (!pCommand.mSanityRequest.has_value()) {
+    return;
+  }
+  AcceptSanityLocked(*pCommand.mSanityRequest);
+}
+
+void ArchiverEngineBase::EvaluateCurrentActionLocked() {
+  if (mCurrentPrimaryAction == EnginePrimaryActionV2::kNone) {
+    return;
+  }
+
+  if (mCurrentPrimaryAction == EnginePrimaryActionV2::kBundle &&
+      mPendingBundlePromptRequest.has_value()) {
+    if (mIsCancelPending) {
       FinishCurrentActionLocked(EngineEventTypeV2::kActionCanceled,
                                 LogActionCanceledV2(LogActionV2::kBundle));
-      return;
-    }
-
-    if (mBundleDirector->HasFailed()) {
-      FinishCurrentActionLocked(EngineEventTypeV2::kActionFailed,
-                                LogActionFailedV2(LogActionV2::kBundle));
-      return;
-    }
-
-    if (mBundleDirector->IsFinished()) {
-      FinishCurrentActionLocked(EngineEventTypeV2::kActionCompleted,
-                                LogActionCompletedV2(LogActionV2::kBundle));
     }
     return;
   }
-
-  if (mCurrentPrimaryAction == EnginePrimaryActionV2::kRepair) {
-    if (mRepairDirector == nullptr) {
-      FinishCurrentActionLocked(EngineEventTypeV2::kActionFailed,
-                                LogPrimaryDirectorMissingV2(LogActionV2::kRepair));
-      return;
-    }
-
-    const bool aShouldStep = !mSkipCurrentActionStep;
-    mSkipCurrentActionStep = false;
-    if (aShouldStep) {
-      (void)mRepairDirector->Step();
-    }
-
-    if (mRepairDirector->WasCanceled()) {
+  if (mCurrentPrimaryAction == EnginePrimaryActionV2::kDecode &&
+      mPendingDecodePromptRequest.has_value()) {
+    if (mIsCancelPending) {
       FinishCurrentActionLocked(EngineEventTypeV2::kActionCanceled,
-                                LogActionCanceledV2(LogActionV2::kRepair));
-      return;
-    }
-
-    if (mRepairDirector->HasFailed()) {
-      FinishCurrentActionLocked(EngineEventTypeV2::kActionFailed,
-                                LogActionFailedV2(LogActionV2::kRepair));
-      return;
-    }
-
-    if (mRepairDirector->IsFinished()) {
-      FinishCurrentActionLocked(EngineEventTypeV2::kActionCompleted,
-                                LogActionCompletedV2(LogActionV2::kRepair));
+                                LogActionCanceledV2(LogActionV2::kDecode));
     }
     return;
   }
 
-  if (mBundleDirector == nullptr) {
+  if (mPendingCheckpointRequest.has_value()) {
+    return;
+  }
+
+  if (mActiveTask == nullptr) {
     FinishCurrentActionLocked(EngineEventTypeV2::kActionFailed,
-                              LogActionFailedV2(LogActionV2::kBundle));
+                              LogPrimaryDirectorMissingV2(mCurrentLogAction));
+    return;
+  }
+
+  switch (mActiveTask->Disposition()) {
+    case TaskDispositionV2::kRunning:
+      return;
+    case TaskDispositionV2::kCompleted:
+      FinishCurrentActionLocked(EngineEventTypeV2::kActionCompleted,
+                                LogActionCompletedV2(mCurrentLogAction));
+      return;
+    case TaskDispositionV2::kFailed:
+      FinishCurrentActionLocked(EngineEventTypeV2::kActionFailed,
+                                LogActionFailedV2(mCurrentLogAction));
+      return;
+    case TaskDispositionV2::kCanceled:
+      FinishCurrentActionLocked(EngineEventTypeV2::kActionCanceled,
+                                LogActionCanceledV2(mCurrentLogAction));
+      return;
   }
 }
 
-void ArchiverEngine::AcceptBundleLocked(const BundleRequestV2& pRequest) {
-  const BundleRequestV2 aResolvedRequest = ResolveBundleRequestPaths(pRequest);
-  const LaunchDecisionV2 aDecision = CheckBundleLaunch(aResolvedRequest);
+void ArchiverEngineBase::PrimeActionStateLocked(EnginePrimaryActionV2 pPrimaryAction,
+                                                LogActionV2 pLogAction,
+                                                const std::string& pSourcePath,
+                                                const std::string& pDestinationPath) {
+  mLastTerminalState.reset();
+  mCurrentPrimaryAction = pPrimaryAction;
+  mCurrentLogAction = pLogAction;
+  mCurrentSourcePath = pSourcePath;
+  mCurrentDestinationPath = pDestinationPath;
+  mIsUiLocked = true;
+  mIsCancelPending = false;
+  mActiveTask.reset();
+  mActiveRuntime.reset();
+  mPendingBundlePromptRequest.reset();
+  mPendingDecodePromptRequest.reset();
+  mPendingPromptId.reset();
+  mPendingCheckpointRequest.reset();
+}
+
+void ArchiverEngineBase::EmitActionAcceptedLocked(LogActionV2 pLogAction) {
+  EngineEventV2 aAccepted;
+  aAccepted.mType = EngineEventTypeV2::kActionAccepted;
+  aAccepted.mSnapshot = BuildSnapshotLocked();
+  aAccepted.mMessage = LogActionAcceptedV2(pLogAction);
+  PushEventLocked(std::move(aAccepted));
+}
+
+void ArchiverEngineBase::EmitActionStartLocked(LogActionV2 pLogAction,
+                                               const std::string& pSourcePath,
+                                               const std::string& pDestinationPath) {
+  EmitLogLocked(LogLevelV2::kInfo,
+                LogActionStartDetailV2(pLogAction,
+                                       pSourcePath,
+                                       pDestinationPath));
+
+  UiEffectV2 aShowLoading;
+  aShowLoading.mType = UiEffectTypeV2::kShowLoading;
+  aShowLoading.mLabel = LogPreparingActionV2(pLogAction);
+  EmitUiEffectLocked(aShowLoading, EngineEventTypeV2::kUiStateChanged,
+                     LogUiLockedForActionV2(pLogAction));
+}
+
+void ArchiverEngineBase::EmitErrorDialogLocked(const std::string& pTitle,
+                                                const std::string& pMessage) {
+  UiEffectV2 aShowDialog;
+  aShowDialog.mType = UiEffectTypeV2::kShowDialog;
+  aShowDialog.mDialog.mKind = UiDialogKindV2::kError;
+  aShowDialog.mDialog.mTitle = pTitle;
+  aShowDialog.mDialog.mMessage = pMessage;
+  EmitUiEffectLocked(aShowDialog, EngineEventTypeV2::kUiStateChanged, pMessage);
+}
+
+void ArchiverEngineBase::EmitDestinationPromptLocked(const std::string& pTitle,
+                                                      const std::string& pMessage) {
+  if (!mPendingPromptId.has_value()) {
+    return;
+  }
+
+  UiEffectV2 aShowPrompt;
+  aShowPrompt.mType = UiEffectTypeV2::kShowPrompt;
+  aShowPrompt.mPrompt.mPromptId = *mPendingPromptId;
+  aShowPrompt.mPrompt.mKind = UiPromptKindV2::kDestinationAction;
+  aShowPrompt.mPrompt.mTitle = pTitle;
+  aShowPrompt.mPrompt.mMessage = pMessage;
+  aShowPrompt.mPrompt.mPrimaryLabel = "Clear";
+  aShowPrompt.mPrompt.mSecondaryLabel = "Merge";
+  aShowPrompt.mPrompt.mCancelLabel = "Cancel";
+  EmitUiEffectLocked(aShowPrompt, EngineEventTypeV2::kUiStateChanged, pMessage);
+}
+
+void ArchiverEngineBase::AcceptBundleLocked(const BundleRequestV2& pRequest) {
+  mLastTerminalState.reset();
+  const BundleRequestV2 aResolvedRequest =
+      ResolveBundleRequestPaths(pRequest, *mFileSystem);
+  const LaunchDecisionV2 aDecision = CheckBundleLaunch(aResolvedRequest, *mFileSystem);
   if (aDecision.mSignal == LaunchSignalV2::kRed) {
     RejectPrimaryActionLocked(aDecision.mMessage);
-    UiEffectV2 aShowDialog;
-    aShowDialog.mType = UiEffectTypeV2::kShowDialog;
-    aShowDialog.mDialog.mKind = UiDialogKindV2::kError;
-    aShowDialog.mDialog.mTitle = aDecision.mTitle;
-    aShowDialog.mDialog.mMessage = aDecision.mMessage;
-    EmitUiEffectLocked(aShowDialog, EngineEventTypeV2::kUiStateChanged,
-                       aDecision.mMessage);
+    EmitErrorDialogLocked(aDecision.mTitle, aDecision.mMessage);
     return;
   }
 
   if (aDecision.mSignal == LaunchSignalV2::kYellow) {
-    mCurrentPrimaryAction = EnginePrimaryActionV2::kBundle;
-    mIsUiLocked = true;
-    mIsCancelPending = false;
-    mBundleDirector.reset();
-    mDecodeDirector.reset();
-    mRepairDirector.reset();
-    mManifestDirector.reset();
-    mSanityDirector.reset();
-    mActiveRuntime.reset();
+    PrimeActionStateLocked(EnginePrimaryActionV2::kBundle,
+                           LogActionV2::kBundle,
+                           std::string{},
+                           std::string{});
     mPendingBundlePromptRequest = aResolvedRequest;
     mPendingPromptId = mNextPromptId++;
-
-    EngineEventV2 aAccepted;
-    aAccepted.mType = EngineEventTypeV2::kActionAccepted;
-    aAccepted.mSnapshot = BuildSnapshotLocked();
-    aAccepted.mMessage = LogActionAcceptedV2(LogActionV2::kBundle);
-    PushEventLocked(std::move(aAccepted));
-
-    UiEffectV2 aShowPrompt;
-    aShowPrompt.mType = UiEffectTypeV2::kShowPrompt;
-    aShowPrompt.mPrompt.mPromptId = *mPendingPromptId;
-    aShowPrompt.mPrompt.mKind = UiPromptKindV2::kDestinationAction;
-    aShowPrompt.mPrompt.mTitle = aDecision.mTitle;
-    aShowPrompt.mPrompt.mMessage = aDecision.mMessage;
-    aShowPrompt.mPrompt.mPrimaryLabel = "Clear";
-    aShowPrompt.mPrompt.mSecondaryLabel = "Merge";
-    aShowPrompt.mPrompt.mCancelLabel = "Cancel";
-    EmitUiEffectLocked(aShowPrompt, EngineEventTypeV2::kUiStateChanged,
-                       aDecision.mMessage);
+    EmitActionAcceptedLocked(LogActionV2::kBundle);
+    EmitDestinationPromptLocked(aDecision.mTitle, aDecision.mMessage);
     return;
   }
 
   StartBundleExecutionLocked(aResolvedRequest, true);
 }
 
-void ArchiverEngine::StartBundleExecutionLocked(const BundleRequestV2& pRequest,
-                                                bool pEmitAccepted) {
-  mCurrentPrimaryAction = EnginePrimaryActionV2::kBundle;
-  mCurrentLogAction = LogActionV2::kBundle;
-  mCurrentSourcePath = pRequest.mSourceDirectory;
-  mCurrentDestinationPath = pRequest.mDestinationDirectory;
-  mIsUiLocked = true;
-  mIsCancelPending = false;
-  mPendingBundlePromptRequest.reset();
-  mPendingPromptId.reset();
-  mDecodeDirector.reset();
-  mRepairDirector.reset();
-  mManifestDirector.reset();
-  mSanityDirector.reset();
+void ArchiverEngineBase::StartBundleExecutionLocked(const BundleRequestV2& pRequest,
+                                                    bool pEmitAccepted) {
+  PrimeActionStateLocked(EnginePrimaryActionV2::kBundle,
+                         LogActionV2::kBundle,
+                         pRequest.mSourceDirectory,
+                         pRequest.mDestinationDirectory);
   mActiveRuntime = std::make_unique<ActiveRuntimeV2>(this);
-  mBundleDirector =
-      std::make_unique<BundleDirector>(pRequest, mActiveRuntime.get());
+  mActiveTask = std::make_unique<BundleTaskV2>(pRequest,
+                                                mActiveRuntime.get(),
+                                                mFileSystem,
+                                                mLayout);
 
   if (pEmitAccepted) {
-    EngineEventV2 aAccepted;
-    aAccepted.mType = EngineEventTypeV2::kActionAccepted;
-    aAccepted.mSnapshot = BuildSnapshotLocked();
-    aAccepted.mMessage = LogActionAcceptedV2(LogActionV2::kBundle);
-    PushEventLocked(std::move(aAccepted));
+    EmitActionAcceptedLocked(LogActionV2::kBundle);
+  }
+  EmitActionStartLocked(LogActionV2::kBundle,
+                        pRequest.mSourceDirectory,
+                        pRequest.mDestinationDirectory);
+}
+
+void ArchiverEngineBase::AcceptDecodeLocked(const DecodeRequestV2& pRequest) {
+  mLastTerminalState.reset();
+  const LaunchDecisionV2 aDecision = CheckDecodeLaunch(pRequest, *mFileSystem);
+  if (aDecision.mSignal == LaunchSignalV2::kRed) {
+    RejectPrimaryActionLocked(aDecision.mMessage);
+    EmitErrorDialogLocked(aDecision.mTitle, aDecision.mMessage);
+    return;
   }
 
-  EmitLogLocked(LogLevelV2::kInfo,
-                LogActionStartDetailV2(LogActionV2::kBundle,
-                                       pRequest.mSourceDirectory,
-                                       pRequest.mDestinationDirectory));
+  if (aDecision.mSignal == LaunchSignalV2::kYellow) {
+    PrimeActionStateLocked(EnginePrimaryActionV2::kDecode,
+                           LogActionV2::kDecode,
+                           std::string{},
+                           std::string{});
+    mPendingDecodePromptRequest = pRequest;
+    mPendingPromptId = mNextPromptId++;
+    EmitActionAcceptedLocked(LogActionV2::kDecode);
+    EmitDestinationPromptLocked(aDecision.mTitle, aDecision.mMessage);
+    return;
+  }
 
-  UiEffectV2 aShowLoading;
-  aShowLoading.mType = UiEffectTypeV2::kShowLoading;
-  aShowLoading.mLabel = LogPreparingActionV2(LogActionV2::kBundle);
-  EmitUiEffectLocked(aShowLoading, EngineEventTypeV2::kUiStateChanged,
-                     LogUiLockedForActionV2(LogActionV2::kBundle));
+  StartDecodeExecutionLocked(pRequest, true);
 }
 
-void ArchiverEngine::AcceptDecodeLocked(const DecodeRequestV2& pRequest) {
+void ArchiverEngineBase::StartDecodeExecutionLocked(const DecodeRequestV2& pRequest,
+                                                    bool pEmitAccepted) {
   DecodeRequestV2 aDecodeRequest = pRequest;
-  mCurrentPrimaryAction = EnginePrimaryActionV2::kDecode;
-  mCurrentLogAction = LogActionV2::kDecode;
-  mCurrentSourcePath = aDecodeRequest.mSourcePath;
-  mCurrentDestinationPath = aDecodeRequest.mDestinationDirectory;
-  mIsUiLocked = true;
-  mIsCancelPending = false;
-  mBundleDirector.reset();
-  mRepairDirector.reset();
-  mManifestDirector.reset();
-  mSanityDirector.reset();
+  PrimeActionStateLocked(EnginePrimaryActionV2::kDecode,
+                         LogActionV2::kDecode,
+                         aDecodeRequest.mSourcePath,
+                         aDecodeRequest.mDestinationDirectory);
   mActiveRuntime = std::make_unique<ActiveRuntimeV2>(this);
-  mDecodeDirector =
-      std::make_unique<DecodeDirector>(aDecodeRequest, mActiveRuntime.get());
+  mActiveTask = std::make_unique<DecodeTaskV2>(aDecodeRequest,
+                                                mActiveRuntime.get(),
+                                                mFileSystem,
+                                                mLayout);
 
-  EngineEventV2 aAccepted;
-  aAccepted.mType = EngineEventTypeV2::kActionAccepted;
-  aAccepted.mSnapshot = BuildSnapshotLocked();
-  aAccepted.mMessage = LogActionAcceptedV2(LogActionV2::kDecode);
-  PushEventLocked(std::move(aAccepted));
-
-  EmitLogLocked(LogLevelV2::kInfo,
-                LogActionStartDetailV2(LogActionV2::kDecode,
-                                       aDecodeRequest.mSourcePath,
-                                       aDecodeRequest.mDestinationDirectory));
-
-  UiEffectV2 aShowLoading;
-  aShowLoading.mType = UiEffectTypeV2::kShowLoading;
-  aShowLoading.mLabel = LogPreparingActionV2(LogActionV2::kDecode);
-  EmitUiEffectLocked(aShowLoading, EngineEventTypeV2::kUiStateChanged,
-                     LogUiLockedForActionV2(LogActionV2::kDecode));
+  if (pEmitAccepted) {
+    EmitActionAcceptedLocked(LogActionV2::kDecode);
+  }
+  EmitActionStartLocked(LogActionV2::kDecode,
+                        aDecodeRequest.mSourcePath,
+                        aDecodeRequest.mDestinationDirectory);
 }
 
-void ArchiverEngine::AcceptManifestLocked(const DecodeRequestV2& pRequest) {
+void ArchiverEngineBase::AcceptManifestLocked(const DecodeRequestV2& pRequest) {
   DecodeRequestV2 aManifestRequest = pRequest;
   aManifestRequest.mIntent = DecodeIntentV2::kManifest;
-  mCurrentPrimaryAction = EnginePrimaryActionV2::kManifest;
-  mCurrentLogAction = LogActionV2::kManifest;
-  mCurrentSourcePath = aManifestRequest.mSourcePath;
-  mCurrentDestinationPath = aManifestRequest.mDestinationDirectory;
-  mIsUiLocked = true;
-  mIsCancelPending = false;
-  mBundleDirector.reset();
-  mDecodeDirector.reset();
-  mRepairDirector.reset();
-  mManifestDirector.reset();
-  mSanityDirector.reset();
+  PrimeActionStateLocked(EnginePrimaryActionV2::kManifest,
+                         LogActionV2::kManifest,
+                         aManifestRequest.mSourcePath,
+                         aManifestRequest.mDestinationDirectory);
   mActiveRuntime = std::make_unique<ActiveRuntimeV2>(this);
-  mManifestDirector =
-      std::make_unique<ManifestDirector>(aManifestRequest, mActiveRuntime.get());
+  mActiveTask = std::make_unique<ManifestTaskV2>(aManifestRequest,
+                                                  mActiveRuntime.get(),
+                                                  mFileSystem,
+                                                  mLayout);
 
-  EngineEventV2 aAccepted;
-  aAccepted.mType = EngineEventTypeV2::kActionAccepted;
-  aAccepted.mSnapshot = BuildSnapshotLocked();
-  aAccepted.mMessage = LogActionAcceptedV2(LogActionV2::kManifest);
-  PushEventLocked(std::move(aAccepted));
-
-  EmitLogLocked(LogLevelV2::kInfo,
-                LogActionStartDetailV2(LogActionV2::kManifest,
-                                       aManifestRequest.mSourcePath,
-                                       aManifestRequest.mDestinationDirectory));
-
-  UiEffectV2 aShowLoading;
-  aShowLoading.mType = UiEffectTypeV2::kShowLoading;
-  aShowLoading.mLabel = LogPreparingActionV2(LogActionV2::kManifest);
-  EmitUiEffectLocked(aShowLoading, EngineEventTypeV2::kUiStateChanged,
-                     LogUiLockedForActionV2(LogActionV2::kManifest));
+  EmitActionAcceptedLocked(LogActionV2::kManifest);
+  EmitActionStartLocked(LogActionV2::kManifest,
+                        aManifestRequest.mSourcePath,
+                        aManifestRequest.mDestinationDirectory);
 }
 
-void ArchiverEngine::AcceptRepairLocked(const RepairRequestV2& pRequest) {
-  mCurrentPrimaryAction = EnginePrimaryActionV2::kRepair;
-  mCurrentLogAction = LogActionV2::kRepair;
-  mCurrentSourcePath = pRequest.mSourcePath;
-  mCurrentDestinationPath = pRequest.mDestinationDirectory;
-  mIsUiLocked = true;
-  mIsCancelPending = false;
-  mBundleDirector.reset();
-  mDecodeDirector.reset();
-  mManifestDirector.reset();
-  mSanityDirector.reset();
+void ArchiverEngineBase::AcceptRepairLocked(const RepairRequestV2& pRequest) {
+  PrimeActionStateLocked(EnginePrimaryActionV2::kRepair,
+                         LogActionV2::kRepair,
+                         pRequest.mSourcePath,
+                         pRequest.mDestinationDirectory);
   mActiveRuntime = std::make_unique<ActiveRuntimeV2>(this);
-  mRepairDirector =
-      std::make_unique<RepairDirector>(pRequest, mActiveRuntime.get());
+  mActiveTask = std::make_unique<RepairTaskV2>(pRequest,
+                                                mActiveRuntime.get(),
+                                                mFileSystem,
+                                                mLayout);
 
-  EngineEventV2 aAccepted;
-  aAccepted.mType = EngineEventTypeV2::kActionAccepted;
-  aAccepted.mSnapshot = BuildSnapshotLocked();
-  aAccepted.mMessage = LogActionAcceptedV2(LogActionV2::kRepair);
-  PushEventLocked(std::move(aAccepted));
-
-  EmitLogLocked(LogLevelV2::kInfo,
-                LogActionStartDetailV2(LogActionV2::kRepair,
-                                       pRequest.mSourcePath,
-                                       pRequest.mDestinationDirectory));
-
-  UiEffectV2 aShowLoading;
-  aShowLoading.mType = UiEffectTypeV2::kShowLoading;
-  aShowLoading.mLabel = LogPreparingActionV2(LogActionV2::kRepair);
-  EmitUiEffectLocked(aShowLoading, EngineEventTypeV2::kUiStateChanged,
-                     LogUiLockedForActionV2(LogActionV2::kRepair));
+  EmitActionAcceptedLocked(LogActionV2::kRepair);
+  EmitActionStartLocked(LogActionV2::kRepair,
+                        pRequest.mSourcePath,
+                        pRequest.mDestinationDirectory);
 }
 
-void ArchiverEngine::AcceptSanityLocked(const SanityRequestV2& pRequest) {
-  mCurrentPrimaryAction = EnginePrimaryActionV2::kSanity;
-  mCurrentLogAction = LogActionV2::kSanity;
-  mCurrentSourcePath = pRequest.mLeftDirectory;
-  mCurrentDestinationPath = pRequest.mRightDirectory;
-  mIsUiLocked = true;
-  mIsCancelPending = false;
-  mBundleDirector.reset();
-  mDecodeDirector.reset();
-  mRepairDirector.reset();
-  mManifestDirector.reset();
+void ArchiverEngineBase::AcceptSanityLocked(const SanityRequestV2& pRequest) {
+  PrimeActionStateLocked(EnginePrimaryActionV2::kSanity,
+                         LogActionV2::kSanity,
+                         pRequest.mLeftDirectory,
+                         pRequest.mRightDirectory);
   mActiveRuntime = std::make_unique<ActiveRuntimeV2>(this);
-  mSanityDirector =
-      std::make_unique<SanityDirector>(pRequest, mActiveRuntime.get());
+  mActiveTask = std::make_unique<SanityTaskV2>(pRequest, mActiveRuntime.get());
 
-  EngineEventV2 aAccepted;
-  aAccepted.mType = EngineEventTypeV2::kActionAccepted;
-  aAccepted.mSnapshot = BuildSnapshotLocked();
-  aAccepted.mMessage = LogActionAcceptedV2(LogActionV2::kSanity);
-  PushEventLocked(std::move(aAccepted));
-
-  EmitLogLocked(LogLevelV2::kInfo,
-                LogActionStartDetailV2(LogActionV2::kSanity,
-                                       pRequest.mLeftDirectory,
-                                       pRequest.mRightDirectory));
-
-  UiEffectV2 aShowLoading;
-  aShowLoading.mType = UiEffectTypeV2::kShowLoading;
-  aShowLoading.mLabel = LogPreparingActionV2(LogActionV2::kSanity);
-  EmitUiEffectLocked(aShowLoading, EngineEventTypeV2::kUiStateChanged,
-                     LogUiLockedForActionV2(LogActionV2::kSanity));
+  EmitActionAcceptedLocked(LogActionV2::kSanity);
+  EmitActionStartLocked(LogActionV2::kSanity,
+                        pRequest.mLeftDirectory,
+                        pRequest.mRightDirectory);
 }
 
-void ArchiverEngine::HandlePromptResponseLocked(const UiPromptResponseV2& pResponse) {
-  if (!mPendingPromptId.has_value() || !mPendingBundlePromptRequest.has_value()) {
+void ArchiverEngineBase::HandlePromptResponseLocked(const UiPromptResponseV2& pResponse) {
+  if (!mPendingPromptId.has_value() ||
+      (!mPendingBundlePromptRequest.has_value() &&
+       !mPendingDecodePromptRequest.has_value())) {
     return;
   }
   if (pResponse.mPromptId != *mPendingPromptId ||
@@ -909,19 +1008,51 @@ void ArchiverEngine::HandlePromptResponseLocked(const UiPromptResponseV2& pRespo
     return;
   }
 
-  if (pResponse.mChoice == UiPromptChoiceV2::kCancel) {
-    FinishCurrentActionLocked(EngineEventTypeV2::kActionCanceled,
-                              LogActionCanceledV2(LogActionV2::kBundle));
+  if (mPendingBundlePromptRequest.has_value()) {
+    if (pResponse.mChoice == UiPromptChoiceV2::kCancel) {
+      FinishCurrentActionLocked(EngineEventTypeV2::kActionCanceled,
+                                LogActionCanceledV2(LogActionV2::kBundle));
+      return;
+    }
+
+    BundleRequestV2 aRequest = *mPendingBundlePromptRequest;
+    aRequest.mClearDestinationBeforeWrite =
+        (pResponse.mChoice == UiPromptChoiceV2::kClear);
+    StartBundleExecutionLocked(aRequest, false);
     return;
   }
 
-  BundleRequestV2 aRequest = *mPendingBundlePromptRequest;
+  if (!mPendingDecodePromptRequest.has_value()) {
+    return;
+  }
+
+  if (pResponse.mChoice == UiPromptChoiceV2::kCancel) {
+    FinishCurrentActionLocked(EngineEventTypeV2::kActionCanceled,
+                              LogActionCanceledV2(LogActionV2::kDecode));
+    return;
+  }
+
+  DecodeRequestV2 aRequest = *mPendingDecodePromptRequest;
   aRequest.mClearDestinationBeforeWrite =
       (pResponse.mChoice == UiPromptChoiceV2::kClear);
-  StartBundleExecutionLocked(aRequest, false);
+  StartDecodeExecutionLocked(aRequest, false);
 }
 
-void ArchiverEngine::RejectPrimaryActionLocked(const std::string& pReason) {
+void ArchiverEngineBase::HandleCheckpointDecisionLocked(
+    const EngineCheckpointDecisionV2& pDecision) {
+  if (!mPendingCheckpointRequest.has_value() ||
+      pDecision.mCheckpointId != mPendingCheckpointRequest->mCheckpointId) {
+    return;
+  }
+
+  mPendingCheckpointRequest.reset();
+  if (pDecision.mKind == EngineCheckpointDecisionKindV2::kCancel &&
+      !mIsCancelPending) {
+    AcceptCancelLocked();
+  }
+}
+
+void ArchiverEngineBase::RejectPrimaryActionLocked(const std::string& pReason) {
   EngineEventV2 aRejected;
   aRejected.mType = EngineEventTypeV2::kActionRejected;
   aRejected.mSnapshot = BuildSnapshotLocked();
@@ -929,7 +1060,8 @@ void ArchiverEngine::RejectPrimaryActionLocked(const std::string& pReason) {
   PushEventLocked(std::move(aRejected));
 }
 
-void ArchiverEngine::AcceptCancelLocked() {
+void ArchiverEngineBase::AcceptCancelLocked() {
+  mPendingCheckpointRequest.reset();
   mIsCancelPending = true;
 
   EngineEventV2 aAccepted;
@@ -941,7 +1073,7 @@ void ArchiverEngine::AcceptCancelLocked() {
   EmitLogLocked(LogLevelV2::kWarning, LogCancelRequestedV2());
 }
 
-void ArchiverEngine::RejectCancelLocked(const std::string& pReason) {
+void ArchiverEngineBase::RejectCancelLocked(const std::string& pReason) {
   EngineEventV2 aRejected;
   aRejected.mType = EngineEventTypeV2::kCancelRejected;
   aRejected.mSnapshot = BuildSnapshotLocked();
@@ -949,7 +1081,7 @@ void ArchiverEngine::RejectCancelLocked(const std::string& pReason) {
   PushEventLocked(std::move(aRejected));
 }
 
-void ArchiverEngine::FinishCurrentActionLocked(EngineEventTypeV2 pType,
+void ArchiverEngineBase::FinishCurrentActionLocked(EngineEventTypeV2 pType,
                                                const std::string& pMessage) {
   std::string aOutcome = "finished";
   switch (pType) {
@@ -972,6 +1104,34 @@ void ArchiverEngine::FinishCurrentActionLocked(EngineEventTypeV2 pType,
                                        mCurrentDestinationPath));
   }
 
+  EngineTerminalStateV2 aTerminal;
+  aTerminal.mAction = mCurrentPrimaryAction;
+  aTerminal.mTerminalType = pType;
+  if (mActiveTask != nullptr) {
+    const EngineTaskTerminalSnapshotV2 aTaskTerminal =
+        mActiveTask->BuildTerminalSnapshot();
+    aTerminal.mBundleState = aTaskTerminal.mBundleState;
+    aTerminal.mDecodeState = aTaskTerminal.mDecodeState;
+    aTerminal.mSanityState = aTaskTerminal.mSanityState;
+    aTerminal.mFailureMessage = aTaskTerminal.mFailureMessage;
+    aTerminal.mFailure = aTaskTerminal.mFailure;
+  }
+  if (pType == EngineEventTypeV2::kActionCanceled &&
+      !aTerminal.mFailure.HasFailure()) {
+    aTerminal.mFailure.mFamily = FailureFamilyV2::kCanceled;
+    aTerminal.mFailure.mMessage = pMessage;
+  }
+  if (aTerminal.mFailureMessage.empty() &&
+      pType == EngineEventTypeV2::kActionFailed) {
+    aTerminal.mFailureMessage = pMessage;
+  }
+  if (pType == EngineEventTypeV2::kActionFailed &&
+      !aTerminal.mFailure.HasFailure()) {
+    aTerminal.mFailure.mFamily = FailureFamilyV2::kInternal;
+    aTerminal.mFailure.mMessage = aTerminal.mFailureMessage;
+  }
+  mLastTerminalState = std::move(aTerminal);
+
   EngineEventV2 aFinished;
   aFinished.mType = pType;
   aFinished.mMessage = pMessage;
@@ -979,14 +1139,12 @@ void ArchiverEngine::FinishCurrentActionLocked(EngineEventTypeV2 pType,
   mCurrentPrimaryAction = EnginePrimaryActionV2::kNone;
   mIsUiLocked = false;
   mIsCancelPending = false;
-  mBundleDirector.reset();
-  mDecodeDirector.reset();
-  mRepairDirector.reset();
-  mManifestDirector.reset();
-  mSanityDirector.reset();
+  mActiveTask.reset();
   mActiveRuntime.reset();
   mPendingPromptId.reset();
   mPendingBundlePromptRequest.reset();
+  mPendingDecodePromptRequest.reset();
+  mPendingCheckpointRequest.reset();
   mCurrentSourcePath.clear();
   mCurrentDestinationPath.clear();
 
@@ -999,51 +1157,101 @@ void ArchiverEngine::FinishCurrentActionLocked(EngineEventTypeV2 pType,
                      LogUiUnlockedV2());
 }
 
-void ArchiverEngine::EmitUiEffectLocked(const UiEffectV2& pEffect,
+void ArchiverEngineBase::EmitUiEffectLocked(const UiEffectV2& pEffect,
                                         EngineEventTypeV2 pType,
                                         const std::string& pMessage) {
-  std::lock_guard<std::recursive_mutex> aLock(mMutex);
   EngineEventV2 aEvent;
   aEvent.mType = pType;
-  aEvent.mSnapshot = BuildSnapshotLocked();
   aEvent.mMessage = pMessage;
   aEvent.mUiEffect = pEffect;
   PushEventLocked(std::move(aEvent));
 }
 
-void ArchiverEngine::EmitLogLocked(LogLevelV2 pLevel,
+void ArchiverEngineBase::EmitLogLocked(LogLevelV2 pLevel,
                                    const std::string& pMessage) {
-  std::lock_guard<std::recursive_mutex> aLock(mMutex);
+  LogEntryV2 aEntry;
+  aEntry.mLevel = pLevel;
+  aEntry.mMessage = pMessage;
   EngineEventV2 aEvent;
   aEvent.mType = EngineEventTypeV2::kLog;
-  aEvent.mSnapshot = BuildSnapshotLocked();
   aEvent.mMessage = pMessage;
-  aEvent.mLogEntry.mLevel = pLevel;
-  aEvent.mLogEntry.mMessage = pMessage;
+  aEvent.mLogEntry = aEntry;
   PushEventLocked(std::move(aEvent));
 }
 
-void ArchiverEngine::EmitProgressLocked(const ProgressSnapshotV2& pSnapshot) {
-  std::lock_guard<std::recursive_mutex> aLock(mMutex);
+void ArchiverEngineBase::EmitProgressLocked(const ProgressSnapshotV2& pSnapshot) {
   EngineEventV2 aEvent;
   aEvent.mType = EngineEventTypeV2::kProgress;
-  aEvent.mSnapshot = BuildSnapshotLocked();
   aEvent.mMessage = pSnapshot.mLabel;
   aEvent.mProgress = pSnapshot;
   PushEventLocked(std::move(aEvent));
 }
 
-void ArchiverEngine::PushEventLocked(EngineEventV2 pEvent) {
-  std::lock_guard<std::recursive_mutex> aLock(mMutex);
+void ArchiverEngineBase::PushEventLocked(EngineEventV2 pEvent) {
+  PrefixEventMessageWithClockIfEnabled(pEvent);
   pEvent.mSnapshot = BuildSnapshotLocked();
-  mPendingEvents.push_back(std::move(pEvent));
+  mCommandBus->PublishEvent(pEvent);
 }
 
-EngineSnapshotV2 ArchiverEngine::BuildSnapshotLocked() const {
+bool ArchiverEngineBase::EmitRuntimeEventLocked(const RuntimeEventV2& pEvent) {
+  EngineEventV2 aEvent;
+  aEvent.mType = EngineEventTypeV2::kRuntimeEvent;
+  aEvent.mMessage = pEvent.mLabel.empty() ? RuntimeEventKindLabelV2(pEvent.mKind)
+                                          : pEvent.mLabel;
+  aEvent.mRuntimeEvent = pEvent;
+  PushEventLocked(std::move(aEvent));
+
+  if (!IsBlockingCheckpointKindLocked(pEvent.mKind) ||
+      mCurrentPrimaryAction == EnginePrimaryActionV2::kNone ||
+      mIsCancelPending || mPendingCheckpointRequest.has_value()) {
+    return true;
+  }
+
+  EngineCheckpointRequestV2 aRequest;
+  aRequest.mCheckpointId = mNextCheckpointId++;
+  aRequest.mRuntimeEvent = pEvent;
+  mPendingCheckpointRequest = aRequest;
+
+  EngineEventV2 aCheckpoint;
+  aCheckpoint.mType = EngineEventTypeV2::kCheckpointRequested;
+  aCheckpoint.mCheckpointRequest = *mPendingCheckpointRequest;
+  aCheckpoint.mMessage =
+      "Checkpoint requested after " +
+      std::string(pEvent.mLabel.empty() ? RuntimeEventKindLabelV2(pEvent.mKind)
+                                        : pEvent.mLabel);
+  PushEventLocked(std::move(aCheckpoint));
+  return false;
+}
+
+bool ArchiverEngineBase::WantsRuntimeEventKindLocked(RuntimeEventKindV2 pKind) const {
+  if (IsBlockingCheckpointKindLocked(pKind)) {
+    return true;
+  }
+  if (mCaptureVerboseRuntimeEvents) {
+    return true;
+  }
+  if (knobs::kEngineEmitRuntimeEventsByDefaultV2) {
+    return !RuntimeEventKindIsVerboseV2(pKind);
+  }
+  return false;
+}
+
+bool ArchiverEngineBase::IsBlockingCheckpointKindLocked(RuntimeEventKindV2 pKind) const {
+  return std::find(mBlockingCheckpointKinds.begin(),
+                   mBlockingCheckpointKinds.end(),
+                   pKind) != mBlockingCheckpointKinds.end();
+}
+
+EngineSnapshotV2 ArchiverEngineBase::BuildSnapshotLocked() const {
   EngineSnapshotV2 aSnapshot;
   aSnapshot.mIsBusy = mCurrentPrimaryAction != EnginePrimaryActionV2::kNone;
   aSnapshot.mIsUiLocked = mIsUiLocked;
   aSnapshot.mIsCancelPending = mIsCancelPending;
+  aSnapshot.mIsAwaitingCheckpointDecision = mPendingCheckpointRequest.has_value();
+  aSnapshot.mPendingCheckpointId =
+      mPendingCheckpointRequest.has_value()
+          ? mPendingCheckpointRequest->mCheckpointId
+          : 0u;
   aSnapshot.mCurrentPrimaryAction = mCurrentPrimaryAction;
   return aSnapshot;
 }

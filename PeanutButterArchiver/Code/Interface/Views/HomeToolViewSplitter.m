@@ -6,6 +6,7 @@
 
 @synthesize clearLogsButton = _clearLogsButton;
 @synthesize scrollToBottomButton = _scrollToBottomButton;
+@synthesize verboseEventsCheckbox = _verboseEventsCheckbox;
 
 - (instancetype)initWithFrame:(NSRect)frameRect {
     self = [super initWithFrame:frameRect];
@@ -19,8 +20,10 @@
 
     _clearLogsButton = [NSButton buttonWithTitle:@"Clear Logs" target:nil action:nil];
     _scrollToBottomButton = [NSButton buttonWithTitle:@"Scroll To Bottom" target:nil action:nil];
+    _verboseEventsCheckbox = [NSButton checkboxWithTitle:@"Verbose events" target:nil action:nil];
+    _verboseEventsCheckbox.state = NSControlStateValueOff;
 
-    for (NSButton *button in @[_clearLogsButton, _scrollToBottomButton]) {
+    for (NSButton *button in @[_clearLogsButton, _scrollToBottomButton, _verboseEventsCheckbox]) {
         button.translatesAutoresizingMaskIntoConstraints = NO;
         [self addSubview:button];
         [button.centerYAnchor constraintEqualToAnchor:self.centerYAnchor].active = YES;
@@ -34,6 +37,8 @@
         [_scrollToBottomButton.leadingAnchor constraintEqualToAnchor:_clearLogsButton.trailingAnchor constant:kMiddleToolbarSpacingH],
         [_scrollToBottomButton.widthAnchor constraintEqualToConstant:kScrollToBottomButtonWidth],
         [_scrollToBottomButton.heightAnchor constraintEqualToConstant:kScrollToBottomButtonHeight],
+
+        [_verboseEventsCheckbox.leadingAnchor constraintEqualToAnchor:_scrollToBottomButton.trailingAnchor constant:kMiddleToolbarSpacingH],
     ]];
     return self;
 }

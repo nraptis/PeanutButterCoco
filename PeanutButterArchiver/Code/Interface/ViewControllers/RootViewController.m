@@ -2,7 +2,6 @@
 
 #import "../Application/AppConfigStore.hpp"
 #import "../Application/AppShell.hpp"
-#import "../Application/MockAppShell.hpp"
 #import "../Views/HomeToolViewTop.hpp"
 #import "../Views/HomeActiveModeContainerView.hpp"
 #import "../Views/HomeHeaderView.hpp"
@@ -13,7 +12,6 @@
 
 @implementation RootViewController {
     AppShell *_appShell;
-    MockAppShell *_mockAppShell;
 }
 
 - (void)loadView {
@@ -41,7 +39,6 @@
         [childView.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor],
     ]];
 
-    self.homeContainerViewController.homeHeaderView.delegate = self;
     [self.homeContainerViewController.homeActiveModeContainerView
         applyBundleDefaultsWithSource:self.bundleSourceDefault
                           destination:self.bundleDestinationDefault];
@@ -84,6 +81,8 @@
     self.homeContainerViewController.homeToolViewSplitter.clearLogsButton.action = @selector(handleClearLogsButtonPress:);
     self.homeContainerViewController.homeToolViewSplitter.scrollToBottomButton.target = self;
     self.homeContainerViewController.homeToolViewSplitter.scrollToBottomButton.action = @selector(handleScrollToBottomButtonPress:);
+    self.homeContainerViewController.homeToolViewSplitter.verboseEventsCheckbox.target = self;
+    self.homeContainerViewController.homeToolViewSplitter.verboseEventsCheckbox.action = @selector(handleVerboseEventsCheckboxChanged:);
     self.homeContainerViewController.homeActiveModeContainerView.progressCancelButton.target = self;
     self.homeContainerViewController.homeActiveModeContainerView.progressCancelButton.action = @selector(handleCancelButtonPress:);
     __weak typeof(self) weakSelf = self;
@@ -106,36 +105,9 @@
     }];
 
     _appShell = [[AppShell alloc] initWithHomeContainerViewController:self.homeContainerViewController];
+    [_appShell setVerboseRuntimeEventsEnabled:
+        (self.homeContainerViewController.homeToolViewSplitter.verboseEventsCheckbox.state == NSControlStateValueOn)];
     [_appShell startPolling];
-    _mockAppShell = [[MockAppShell alloc] initWithHomeContainerViewController:self.homeContainerViewController];
-    [_mockAppShell startPolling];
-}
-
-- (void)homeHeaderView:(HomeHeaderView *)homeHeaderView didTriggerAction:(HomeHeaderActionV2)action {
-    (void)homeHeaderView;
-    if (![self.homeContainerViewController canStartPrimaryAction]) {
-        return;
-    }
-    [self.homeContainerViewController transitionToGhostStateWithTitle:@"Mock Engine"
-                                                               detail:@"Preparing..."];
-
-    switch (action) {
-        case HomeHeaderActionV2GreenDelaySucceed:
-            [_mockAppShell enqueueGreenDelaySucceed];
-            break;
-        case HomeHeaderActionV2GreenDelayFail:
-            [_mockAppShell enqueueGreenDelayFail];
-            break;
-        case HomeHeaderActionV2YellowDelaySucceed:
-            [_mockAppShell enqueueYellowDelaySucceed];
-            break;
-        case HomeHeaderActionV2YellowDelayFail:
-            [_mockAppShell enqueueYellowDelayFail];
-            break;
-        case HomeHeaderActionV2Red:
-            [_mockAppShell enqueueRed];
-            break;
-    }
 }
 
 - (void)handleBundleButtonPress:(id)sender {
@@ -167,6 +139,7 @@
         case 2:
             [_appShell enqueueRepairRequestWithSourcePath:activeView.unbundleSourceTextField.stringValue
                                      destinationDirectory:activeView.unbundleDestinationTextField.stringValue
+                                         aggressiveEnabled:(activeView.unbundleRecoverCheckbox.state == NSControlStateValueOn)
                                                  password:activeView.unbundlePasswordTextField.stringValue];
             break;
         case 3:
@@ -180,7 +153,7 @@
                                           destinationDirectory:activeView.bundleDestinationTextField.stringValue
                                                     filePrefix:activeView.bundleFilePrefixTextField.stringValue
                                                  repairEnabled:(activeView.bundleRepairCheckbox.state == NSControlStateValueOn)
-                                                   safeEnabled:(activeView.bundleSafeCheckbox.state == NSControlStateValueOn)
+                                                   safeEnabled:YES
                                              encryptionEnabled:(activeView.bundleEncryptCheckbox.state == NSControlStateValueOn)
                                            includePreviewEnabled:(activeView.bundleIncludePreviewCheckbox.state == NSControlStateValueOn)
                                                       password:activeView.bundlePasswordTextField.stringValue
@@ -216,12 +189,13 @@
     [self.homeContainerViewController.homeLogContainerView.homeLogView scrollToBottom];
 }
 
+- (void)handleVerboseEventsCheckboxChanged:(id)sender {
+    NSButton *checkBox = (NSButton *)sender;
+    [_appShell setVerboseRuntimeEventsEnabled:(checkBox.state == NSControlStateValueOn)];
+}
+
 - (void)handleCancelButtonPress:(id)sender {
     (void)sender;
-    if ([_mockAppShell hasActivePrimaryAction]) {
-        [_mockAppShell enqueueCancelRequest];
-        return;
-    }
     [_appShell enqueueCancelRequest];
 }
 
@@ -351,17 +325,24 @@
     activeView.bundlePasswordTextField.stringValue = self.bundlePasswordDefault ?: @"";
     activeView.unbundlePasswordTextField.stringValue = self.unbundlePasswordDefault ?: @"";
     activeView.bundleRepairCheckbox.state = self.bundleRepairDefault ? NSControlStateValueOn : NSControlStateValueOff;
-    activeView.bundleSafeCheckbox.state = self.bundleSafeDefault ? NSControlStateValueOn : NSControlStateValueOff;
     activeView.bundleEncryptCheckbox.state = self.bundleEncryptDefault ? NSControlStateValueOn : NSControlStateValueOff;
     activeView.bundleIncludePreviewCheckbox.state = self.bundleIncludePreviewDefault ? NSControlStateValueOn : NSControlStateValueOff;
 
-    [activeView.bundleBlockCountCombo selectItemWithTitle:(self.bundleBlockCountDefault.length > 0 ? self.bundleBlockCountDefault : @"4 blocks")];
+    NSString *blockCountTitle =
+        (self.bundleBlockCountDefault.length > 0) ? self.bundleBlockCountDefault : @"5 blocks";
+    if ([activeView.bundleBlockCountCombo indexOfItemWithTitle:blockCountTitle] < 0) {
+        blockCountTitle = @"5 blocks";
+    }
+    [activeView.bundleBlockCountCombo selectItemWithTitle:blockCountTitle];
     [activeView.bundleEncryptionStrengthCombo selectItemWithTitle:(self.bundleEncryptionStrengthDefault.length > 0 ? self.bundleEncryptionStrengthDefault : @"Encryption: High")];
     [activeView.bundleTableStrengthCombo selectItemWithTitle:(self.bundleTableStrengthDefault.length > 0 ? self.bundleTableStrengthDefault : @"Tables: High")];
     NSString *repairPercentTitle =
         (self.bundleRepairSizeDefault.length > 0 && [self.bundleRepairSizeDefault containsString:@"%"])
             ? self.bundleRepairSizeDefault
-            : @"25%";
+            : @"20%";
+    if ([activeView.bundleRepairSizeCombo indexOfItemWithTitle:repairPercentTitle] < 0) {
+        repairPercentTitle = @"20%";
+    }
     [activeView.bundleRepairSizeCombo selectItemWithTitle:repairPercentTitle];
 
     NSInteger safeHomeTab = self.homeTabDefault;
@@ -384,7 +365,6 @@
 
     for (NSControl *control in @[
             activeView.bundleRepairCheckbox,
-            activeView.bundleSafeCheckbox,
             activeView.bundleEncryptCheckbox,
             activeView.bundleIncludePreviewCheckbox,
             activeView.bundleRepairSizeCombo,
@@ -413,7 +393,7 @@
                                            destination:activeView.bundleDestinationTextField.stringValue
                                             filePrefix:activeView.bundleFilePrefixTextField.stringValue
                                           repairEnabled:(activeView.bundleRepairCheckbox.state == NSControlStateValueOn)
-                                            safeEnabled:(activeView.bundleSafeCheckbox.state == NSControlStateValueOn)
+                                            safeEnabled:YES
                                       encryptionEnabled:(activeView.bundleEncryptCheckbox.state == NSControlStateValueOn)
                                  includePreviewEnabled:(activeView.bundleIncludePreviewCheckbox.state == NSControlStateValueOn)
                                          blockCountTitle:activeView.bundleBlockCountCombo.titleOfSelectedItem

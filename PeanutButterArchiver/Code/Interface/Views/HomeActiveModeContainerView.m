@@ -170,6 +170,7 @@ static CGFloat RequiredUnbundlePanelHeight(void) {
     ToolBarCheckBoxRightAlignedChunkView *_unbundleRecoverChunkView;
     MainActionButton *_unbundleActionView;
     BOOL _unbundleRecoverEnabled;
+    BOOL _repairAggressiveEnabled;
     BOOL _folderCompareIgnoreHiddenEnabled;
 }
 
@@ -183,7 +184,6 @@ static CGFloat RequiredUnbundlePanelHeight(void) {
 @synthesize bundleSourceBrowseButton = _bundleSourceBrowseButton;
 @synthesize bundleDestinationBrowseButton = _bundleDestinationBrowseButton;
 @synthesize bundleRepairCheckbox = _bundleRepairCheckbox;
-@synthesize bundleSafeCheckbox = _bundleSafeCheckbox;
 @synthesize bundleIncludePreviewCheckbox = _bundleIncludePreviewCheckbox;
 @synthesize bundleRepairSizeCombo = _bundleRepairSizeCombo;
 @synthesize bundleEncryptCheckbox = _bundleEncryptCheckbox;
@@ -272,7 +272,18 @@ static CGFloat RequiredUnbundlePanelHeight(void) {
     ToolBarButtonChunkView *prefixClearChunk =
         [[ToolBarButtonChunkView alloc] initWithTitle:@"Clear"];
     ToolBarComboBoxChunkView *blockCountChunk =
-        [[ToolBarComboBoxChunkView alloc] initWithItems:@[@"1 block", @"4 blocks", @"8 blocks", @"16 blocks"]];
+        [[ToolBarComboBoxChunkView alloc] initWithItems:@[
+            @"1 block",
+            @"5 blocks",
+            @"10 blocks",
+            @"25 blocks",
+            @"50 blocks",
+            @"100 blocks",
+            @"250 blocks",
+            @"500 blocks",
+            @"1000 blocks",
+            @"2000 blocks",
+        ]];
 
     _bundleSourceChunkView = sourceChunk;
     _bundleDestinationChunkView = destinationChunk;
@@ -483,32 +494,17 @@ static CGFloat RequiredUnbundlePanelHeight(void) {
 
     ToolBarCheckBoxChunkView *repairChunk =
         [[ToolBarCheckBoxChunkView alloc] initWithTitle:@"Repair Sector" state:YES];
-    ToolBarCheckBoxChunkView *safeChunk =
-        [[ToolBarCheckBoxChunkView alloc] initWithTitle:@"Safe Packing" state:YES];
     ToolBarCheckBoxChunkView *includePreviewChunk =
         [[ToolBarCheckBoxChunkView alloc] initWithTitle:@"Include Preview" state:YES];
     ToolBarComboBoxChunkView *repairSizeChunk =
-        [[ToolBarComboBoxChunkView alloc] initWithItems:@[@"25%", @"50%", @"75%", @"100%"]];
+        [[ToolBarComboBoxChunkView alloc] initWithItems:@[@"20%", @"40%", @"60%", @"80%"]];
 
     _bundleRepairCheckbox = repairChunk.checkBox;
-    _bundleSafeCheckbox = safeChunk.checkBox;
     _bundleIncludePreviewCheckbox = includePreviewChunk.checkBox;
     _bundleRepairSizeCombo = repairSizeChunk.comboBox;
 
-    NSStackView *resilienceRowOne = MakeEqualWidthStackView(@[repairChunk, safeChunk]);
-    NSView *resilienceRowTwo = [[NSView alloc] initWithFrame:NSZeroRect];
-    resilienceRowTwo.translatesAutoresizingMaskIntoConstraints = NO;
-    [resilienceRowTwo addSubview:repairSizeChunk];
-    [resilienceRowTwo addSubview:includePreviewChunk];
-    [NSLayoutConstraint activateConstraints:@[
-        [repairSizeChunk.leadingAnchor constraintEqualToAnchor:resilienceRowTwo.leadingAnchor],
-        [repairSizeChunk.topAnchor constraintEqualToAnchor:resilienceRowTwo.topAnchor],
-        [repairSizeChunk.bottomAnchor constraintEqualToAnchor:resilienceRowTwo.bottomAnchor],
-        [repairSizeChunk.trailingAnchor constraintEqualToAnchor:includePreviewChunk.leadingAnchor constant:-kUIItemSpacingH],
-        [includePreviewChunk.trailingAnchor constraintEqualToAnchor:resilienceRowTwo.trailingAnchor],
-        [includePreviewChunk.topAnchor constraintEqualToAnchor:resilienceRowTwo.topAnchor],
-        [includePreviewChunk.bottomAnchor constraintEqualToAnchor:resilienceRowTwo.bottomAnchor],
-    ]];
+    NSStackView *resilienceRowOne = MakeEqualWidthStackView(@[repairChunk, includePreviewChunk]);
+    NSView *resilienceRowTwo = MakeSingleFillRow(repairSizeChunk);
     ToolPanelView *resiliencePanel =
         [[ToolPanelView alloc] initWithBackgroundColor:[NSColor colorWithRed:0.96 green:0.92 blue:0.82 alpha:1.0]];
     [resiliencePanel addRowViews:@[resilienceRowOne, resilienceRowTwo]];
@@ -607,6 +603,9 @@ static CGFloat RequiredUnbundlePanelHeight(void) {
     if (_activeHomeTabIndex == 1) {
         _unbundleRecoverEnabled =
             (self.unbundleRecoverCheckbox.state == NSControlStateValueOn);
+    } else if (_activeHomeTabIndex == 2) {
+        _repairAggressiveEnabled =
+            (self.unbundleRecoverCheckbox.state == NSControlStateValueOn);
     } else if (_activeHomeTabIndex == 3) {
         _folderCompareIgnoreHiddenEnabled =
             (self.unbundleRecoverCheckbox.state == NSControlStateValueOn);
@@ -615,7 +614,7 @@ static CGFloat RequiredUnbundlePanelHeight(void) {
     _activeHomeTabIndex = activeHomeTabIndex;
     BOOL showsBundlePanel = (activeHomeTabIndex == 0);
     BOOL showsUnbundlePanel = (activeHomeTabIndex == 1 || activeHomeTabIndex == 2 || activeHomeTabIndex == 3);
-    BOOL showsOptionControls = (activeHomeTabIndex == 1 || activeHomeTabIndex == 3);
+    BOOL showsOptionControls = (activeHomeTabIndex == 1 || activeHomeTabIndex == 2 || activeHomeTabIndex == 3);
     BOOL showsSourceBrowseFiles = (activeHomeTabIndex == 1);
 
     _bundlePanelView.hidden = !showsBundlePanel || self.showsProgressPanel;
@@ -626,6 +625,10 @@ static CGFloat RequiredUnbundlePanelHeight(void) {
         [self.unbundleRecoverCheckbox setTitle:@"Ignore hidden"];
         self.unbundleRecoverCheckbox.state =
             _folderCompareIgnoreHiddenEnabled ? NSControlStateValueOn : NSControlStateValueOff;
+    } else if (activeHomeTabIndex == 2) {
+        [self.unbundleRecoverCheckbox setTitle:@"Aggressive"];
+        self.unbundleRecoverCheckbox.state =
+            _repairAggressiveEnabled ? NSControlStateValueOn : NSControlStateValueOff;
     } else {
         [self.unbundleRecoverCheckbox setTitle:@"Recover"];
         self.unbundleRecoverCheckbox.state =
@@ -659,7 +662,6 @@ static CGFloat RequiredUnbundlePanelHeight(void) {
             self.bundleSourceBrowseButton,
             self.bundleDestinationBrowseButton,
             self.bundleRepairCheckbox,
-            self.bundleSafeCheckbox,
             self.bundleIncludePreviewCheckbox,
             self.bundleRepairSizeCombo,
             self.bundleEncryptCheckbox,
@@ -687,8 +689,8 @@ static CGFloat RequiredUnbundlePanelHeight(void) {
 - (void)updateProgressTitle:(NSString *)title
                      detail:(NSString *)detail
                    fraction:(double)fraction {
+    (void)detail;
     _progressPanelView.titleLabel.stringValue = title ?: @"Working";
-    _progressPanelView.detailLabel.stringValue = detail ?: @"";
     _progressPanelView.progressIndicator.doubleValue =
         MAX(0.0, MIN(100.0, fraction * 100.0));
 }

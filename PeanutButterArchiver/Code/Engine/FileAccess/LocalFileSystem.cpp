@@ -6,9 +6,14 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <limits.h>
 #include <memory>
 #include <string>
 #include <utility>
+
+#if defined(__APPLE__)
+#include <CoreFoundation/CoreFoundation.h>
+#endif
 
 namespace peanutbutter {
 namespace {
@@ -25,29 +30,6 @@ std::string JoinLocalPath(const std::string& pLeft, const std::string& pRight) {
       .generic_string();
 }
 
-std::string RelativeLocalPath(const std::string& pBasePath, const std::string& pPath) {
-  if (pPath.empty()) {
-    return {};
-  }
-
-  if (pBasePath.empty()) {
-    return std::filesystem::path(pPath).lexically_normal().generic_string();
-  }
-
-  const std::filesystem::path aBase = std::filesystem::path(pBasePath).lexically_normal();
-  const std::filesystem::path aPath = std::filesystem::path(pPath).lexically_normal();
-
-  std::error_code aError;
-  std::filesystem::path aRelative = std::filesystem::relative(aPath, aBase, aError);
-  if (aError || aRelative.empty()) {
-    aRelative = aPath.lexically_relative(aBase);
-  }
-  if (aRelative.empty()) {
-    return aPath.generic_string();
-  }
-  return aRelative.generic_string();
-}
-
 std::string ParentLocalPath(const std::string& pPath) {
   return std::filesystem::path(pPath).parent_path().lexically_normal().generic_string();
 }
@@ -58,9 +40,9 @@ std::string LocalFileName(const std::string& pPath) {
 
 std::string LocalStemName(const std::string& pPath) {
   std::filesystem::path aPath(pPath);
-  std::filesystem::path aStem = aPath.filename();
+  std::filesystem::path aStem = aPath.stem();
   if (aStem.empty()) {
-    aStem = aPath.stem();
+    aStem = aPath.filename();
   }
   return aStem.empty() ? "archive" : aStem.generic_string();
 }
@@ -87,6 +69,119 @@ bool RelativePathLess(const DirectoryEntryV2& pLeft,
   }
   return pLeft.mPath < pRight.mPath;
 }
+
+#if defined(__APPLE__)
+
+CFURLRef CreateFileURLForPath(const std::string& pPath) {
+  return CFURLCreateFromFileSystemRepresentation(
+      kCFAllocatorDefault,
+      reinterpret_cast<const UInt8*>(pPath.data()),
+      static_cast<CFIndex>(pPath.size()),
+      false);
+}
+
+bool TryResolveBookmarkFileTarget(const std::string& pBookmarkPath,
+                                  std::string& pOutTargetPath) {
+  pOutTargetPath.clear();
+  if (pBookmarkPath.empty()) {
+    return false;
+  }
+
+  CFURLRef aBookmarkFileUrl = CreateFileURLForPath(pBookmarkPath);
+  if (aBookmarkFileUrl == nullptr) {
+    return false;
+  }
+
+  CFDataRef aBookmarkData =
+      CFURLCreateBookmarkDataFromFile(kCFAllocatorDefault, aBookmarkFileUrl, nullptr);
+  CFRelease(aBookmarkFileUrl);
+  if (aBookmarkData == nullptr) {
+    return false;
+  }
+
+  Boolean aIsStale = false;
+  CFURLRef aResolvedUrl = CFURLCreateByResolvingBookmarkData(kCFAllocatorDefault,
+                                                             aBookmarkData,
+                                                             0,
+                                                             nullptr,
+                                                             nullptr,
+                                                             &aIsStale,
+                                                             nullptr);
+  CFRelease(aBookmarkData);
+  if (aResolvedUrl == nullptr) {
+    return false;
+  }
+
+  char aResolvedPath[PATH_MAX];
+  const bool aOk = CFURLGetFileSystemRepresentation(
+      aResolvedUrl, true, reinterpret_cast<UInt8*>(aResolvedPath), sizeof(aResolvedPath));
+  CFRelease(aResolvedUrl);
+  if (!aOk || aResolvedPath[0] == '\0') {
+    return false;
+  }
+
+  pOutTargetPath.assign(aResolvedPath);
+  return true;
+}
+
+bool TryWriteBookmarkAliasFile(const std::string& pAliasPath,
+                               const std::string& pTargetPath) {
+  if (pAliasPath.empty() || pTargetPath.empty()) {
+    return false;
+  }
+
+  const std::filesystem::path aTargetAbsolutePath =
+      std::filesystem::path(pTargetPath).is_absolute()
+          ? std::filesystem::path(pTargetPath)
+          : (std::filesystem::path(ParentLocalPath(pAliasPath)) /
+             std::filesystem::path(pTargetPath))
+                .lexically_normal();
+  const std::string aTargetText = aTargetAbsolutePath.generic_string();
+  if (aTargetText.empty()) {
+    return false;
+  }
+
+  CFURLRef aTargetUrl = CreateFileURLForPath(aTargetText);
+  if (aTargetUrl == nullptr) {
+    return false;
+  }
+
+  CFDataRef aBookmarkData = nullptr;
+  const CFOptionFlags aBookmarkOptions[] = {
+      kCFURLBookmarkCreationSuitableForBookmarkFile,
+      static_cast<CFOptionFlags>(kCFURLBookmarkCreationSuitableForBookmarkFile |
+                                 kCFURLBookmarkCreationMinimalBookmarkMask),
+      kCFURLBookmarkCreationMinimalBookmarkMask,
+  };
+  for (CFOptionFlags aOption : aBookmarkOptions) {
+    aBookmarkData = CFURLCreateBookmarkData(kCFAllocatorDefault,
+                                            aTargetUrl,
+                                            aOption,
+                                            nullptr,
+                                            nullptr,
+                                            nullptr);
+    if (aBookmarkData != nullptr) {
+      break;
+    }
+  }
+  CFRelease(aTargetUrl);
+  if (aBookmarkData == nullptr) {
+    return false;
+  }
+
+  CFURLRef aAliasUrl = CreateFileURLForPath(pAliasPath);
+  if (aAliasUrl == nullptr) {
+    CFRelease(aBookmarkData);
+    return false;
+  }
+  const bool aWritten =
+      CFURLWriteBookmarkDataToFile(aBookmarkData, aAliasUrl, 0, nullptr);
+  CFRelease(aAliasUrl);
+  CFRelease(aBookmarkData);
+  return aWritten;
+}
+
+#endif
 
 class LocalFileReadStreamV2 final : public FileReadStreamV2 {
  public:
@@ -247,25 +342,64 @@ class LocalFileWriteStreamV2 final : public FileWriteStreamV2 {
 }  // namespace
 
 std::string LocalFileSystemV2::CurrentWorkingDirectory() const {
-  return std::filesystem::current_path().lexically_normal().generic_string();
+  std::error_code aError;
+  const std::filesystem::path aPath = std::filesystem::current_path(aError);
+  if (aError) {
+    return ".";
+  }
+  return aPath.lexically_normal().generic_string();
 }
 
 bool LocalFileSystemV2::Exists(const std::string& pPath) const {
-  return std::filesystem::exists(std::filesystem::path(pPath));
+  std::error_code aError;
+  const bool aExists = std::filesystem::exists(std::filesystem::path(pPath), aError);
+  return !aError && aExists;
 }
 
 bool LocalFileSystemV2::IsDirectory(const std::string& pPath) const {
-  return std::filesystem::is_directory(std::filesystem::path(pPath));
+  std::error_code aError;
+  const bool aIsDirectory =
+      std::filesystem::is_directory(std::filesystem::path(pPath), aError);
+  return !aError && aIsDirectory;
 }
 
 bool LocalFileSystemV2::IsFile(const std::string& pPath) const {
-  return std::filesystem::is_regular_file(std::filesystem::path(pPath));
+  std::error_code aError;
+  const bool aIsFile =
+      std::filesystem::is_regular_file(std::filesystem::path(pPath), aError);
+  return !aError && aIsFile;
+}
+
+bool LocalFileSystemV2::IsSymlink(const std::string& pPath) const {
+  std::error_code aError;
+  const std::filesystem::file_status aStatus =
+      std::filesystem::symlink_status(std::filesystem::path(pPath), aError);
+  return !aError && std::filesystem::is_symlink(aStatus);
+}
+
+bool LocalFileSystemV2::IsAlias(const std::string& pPath) const {
+#if defined(__APPLE__)
+  if (!IsFile(pPath) || IsSymlink(pPath)) {
+    return false;
+  }
+  std::string aResolvedTargetPath;
+  return TryResolveBookmarkFileTarget(pPath, aResolvedTargetPath);
+#else
+  (void)pPath;
+  return false;
+#endif
 }
 
 bool LocalFileSystemV2::EnsureDirectory(const std::string& pPath) {
   std::error_code aError;
   std::filesystem::create_directories(std::filesystem::path(pPath), aError);
-  return !aError && std::filesystem::is_directory(std::filesystem::path(pPath));
+  if (aError) {
+    return false;
+  }
+  std::error_code aIsDirectoryError;
+  return std::filesystem::is_directory(std::filesystem::path(pPath),
+                                       aIsDirectoryError) &&
+         !aIsDirectoryError;
 }
 
 bool LocalFileSystemV2::ClearDirectory(const std::string& pPath) {
@@ -278,11 +412,16 @@ bool LocalFileSystemV2::ClearDirectory(const std::string& pPath) {
 }
 
 bool LocalFileSystemV2::DirectoryHasEntries(const std::string& pPath) const {
-  if (!std::filesystem::is_directory(std::filesystem::path(pPath))) {
+  std::error_code aDirectoryError;
+  if (!std::filesystem::is_directory(std::filesystem::path(pPath),
+                                     aDirectoryError) ||
+      aDirectoryError) {
     return false;
   }
-  return std::filesystem::directory_iterator(std::filesystem::path(pPath)) !=
-         std::filesystem::directory_iterator();
+  std::error_code aIteratorError;
+  std::filesystem::directory_iterator aIterator(std::filesystem::path(pPath),
+                                                aIteratorError);
+  return !aIteratorError && aIterator != std::filesystem::directory_iterator();
 }
 
 std::vector<DirectoryEntryV2> LocalFileSystemV2::ListFilesRecursive(
@@ -381,18 +520,62 @@ std::vector<DirectoryEntryV2> LocalFileSystemV2::ListFiles(
     const std::string& pRootPath) const {
   std::vector<DirectoryEntryV2> aEntries;
   const std::filesystem::path aRoot(pRootPath);
-  if (!std::filesystem::is_directory(aRoot)) {
+  std::error_code aRootError;
+  if (!std::filesystem::is_directory(aRoot, aRootError) || aRootError) {
     return aEntries;
   }
 
-  for (const auto& aEntry : std::filesystem::directory_iterator(aRoot)) {
-    if (!aEntry.is_regular_file()) {
+  std::error_code aIteratorError;
+  std::filesystem::directory_iterator aIterator(
+      aRoot,
+      std::filesystem::directory_options::skip_permission_denied,
+      aIteratorError);
+  std::filesystem::directory_iterator aEnd;
+  while (!aIteratorError && aIterator != aEnd) {
+    const std::filesystem::directory_entry aEntry = *aIterator;
+    std::error_code aTypeError;
+    if (!aEntry.is_regular_file(aTypeError) || aTypeError) {
+      aIterator.increment(aIteratorError);
       continue;
     }
     aEntries.push_back(
         {aEntry.path().lexically_normal().generic_string(),
          aEntry.path().filename().generic_string(),
          false});
+    aIterator.increment(aIteratorError);
+  }
+
+  std::sort(aEntries.begin(), aEntries.end(), &RelativePathLess);
+  return aEntries;
+}
+
+std::vector<DirectoryEntryV2> LocalFileSystemV2::ListDirectoryEntries(
+    const std::string& pRootPath) const {
+  std::vector<DirectoryEntryV2> aEntries;
+  const std::filesystem::path aRoot(pRootPath);
+  std::error_code aRootError;
+  if (!std::filesystem::is_directory(aRoot, aRootError) || aRootError) {
+    return aEntries;
+  }
+
+  std::error_code aIteratorError;
+  std::filesystem::directory_iterator aIterator(
+      aRoot,
+      std::filesystem::directory_options::skip_permission_denied,
+      aIteratorError);
+  std::filesystem::directory_iterator aEnd;
+  while (!aIteratorError && aIterator != aEnd) {
+    const std::filesystem::directory_entry aEntry = *aIterator;
+    std::error_code aTypeError;
+    const bool aIsDirectory = aEntry.is_directory(aTypeError);
+    const bool aIsRegularFile = !aTypeError && aEntry.is_regular_file(aTypeError);
+    if (!aTypeError && (aIsDirectory || aIsRegularFile)) {
+      aEntries.push_back(
+          {aEntry.path().lexically_normal().generic_string(),
+           aEntry.path().filename().generic_string(),
+           aIsDirectory});
+    }
+    aIterator.increment(aIteratorError);
   }
 
   std::sort(aEntries.begin(), aEntries.end(), &RelativePathLess);
@@ -481,20 +664,68 @@ bool LocalFileSystemV2::RenamePath(const std::string& pOldPath,
   return !aError;
 }
 
-bool LocalFileSystemV2::RemovePath(const std::string& pPath) {
+bool LocalFileSystemV2::TryReadSymlinkTarget(
+    const std::string& pPath,
+    std::string& pOutTargetPath) const {
+  pOutTargetPath.clear();
   std::error_code aError;
-  std::filesystem::remove_all(std::filesystem::path(pPath), aError);
+  const std::filesystem::path aTarget =
+      std::filesystem::read_symlink(std::filesystem::path(pPath), aError);
+  if (aError) {
+    return false;
+  }
+  pOutTargetPath = aTarget.lexically_normal().generic_string();
+  return !pOutTargetPath.empty();
+}
+
+bool LocalFileSystemV2::TryReadAliasTarget(
+    const std::string& pPath,
+    std::string& pOutTargetPath) const {
+#if defined(__APPLE__)
+  return TryResolveBookmarkFileTarget(pPath, pOutTargetPath);
+#else
+  (void)pPath;
+  pOutTargetPath.clear();
+  return false;
+#endif
+}
+
+bool LocalFileSystemV2::CreateSymlink(const std::string& pLinkPath,
+                                      const std::string& pTargetPath,
+                                      bool pTargetIsDirectory) {
+  (void)pTargetIsDirectory;
+  const std::string aParent = ParentLocalPath(pLinkPath);
+  if (!aParent.empty() && !EnsureDirectory(aParent)) {
+    return false;
+  }
+
+  std::error_code aError;
+  std::filesystem::create_symlink(std::filesystem::path(pTargetPath),
+                                  std::filesystem::path(pLinkPath),
+                                  aError);
   return !aError;
+}
+
+bool LocalFileSystemV2::CreateAlias(const std::string& pAliasPath,
+                                    const std::string& pTargetPath,
+                                    bool pTargetIsDirectory) {
+  (void)pTargetIsDirectory;
+  const std::string aParent = ParentLocalPath(pAliasPath);
+  if (!aParent.empty() && !EnsureDirectory(aParent)) {
+    return false;
+  }
+#if defined(__APPLE__)
+  return TryWriteBookmarkAliasFile(pAliasPath, pTargetPath);
+#else
+  (void)pAliasPath;
+  (void)pTargetPath;
+  return false;
+#endif
 }
 
 std::string LocalFileSystemV2::JoinPath(const std::string& pLeft,
                                         const std::string& pRight) const {
   return JoinLocalPath(pLeft, pRight);
-}
-
-std::string LocalFileSystemV2::RelativePathFrom(const std::string& pBasePath,
-                                                const std::string& pPath) const {
-  return RelativeLocalPath(pBasePath, pPath);
 }
 
 std::string LocalFileSystemV2::ParentPath(const std::string& pPath) const {

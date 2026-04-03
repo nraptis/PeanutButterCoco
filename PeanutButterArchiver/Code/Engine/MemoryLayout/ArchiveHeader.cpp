@@ -1,5 +1,7 @@
 #include "ArchiveHeader.hpp"
 
+#include <cstring>
+
 namespace peanutbutter::memory_layout {
 namespace {
 
@@ -111,14 +113,16 @@ bool ReadArchiveHeader(const unsigned char* pBytes,
   pOutHeader.mExpanderProfile = pBytes[14u];
   pOutHeader.mReserved0 = pBytes[15u];
 
-  for (std::size_t aIndex = 0u; aIndex < kPackedUint48BytesV2; ++aIndex) {
-    pOutHeader.mArchiveIndex.mBytes[aIndex] = static_cast<std::uint8_t>(pBytes[16u + aIndex]);
-    pOutHeader.mArchiveCount.mBytes[aIndex] = static_cast<std::uint8_t>(pBytes[22u + aIndex]);
-    pOutHeader.mArchiveDataBlockCount.mBytes[aIndex] = static_cast<std::uint8_t>(pBytes[28u + aIndex]);
-    pOutHeader.mEmptyFolderBlockCount.mBytes[aIndex] = static_cast<std::uint8_t>(pBytes[34u + aIndex]);
-    pOutHeader.mPreviewManifestBlockCount.mBytes[aIndex] = static_cast<std::uint8_t>(pBytes[40u + aIndex]);
-    pOutHeader.mRepairSectorBlockCount.mBytes[aIndex] = static_cast<std::uint8_t>(pBytes[46u + aIndex]);
-  }
+  std::memcpy(pOutHeader.mArchiveIndex.mBytes.data(), pBytes + 16u, kPackedUint48BytesV2);
+  std::memcpy(pOutHeader.mArchiveCount.mBytes.data(), pBytes + 22u, kPackedUint48BytesV2);
+  std::memcpy(
+      pOutHeader.mArchiveDataBlockCount.mBytes.data(), pBytes + 28u, kPackedUint48BytesV2);
+  std::memcpy(
+      pOutHeader.mEmptyFolderBlockCount.mBytes.data(), pBytes + 34u, kPackedUint48BytesV2);
+  std::memcpy(
+      pOutHeader.mPreviewManifestBlockCount.mBytes.data(), pBytes + 40u, kPackedUint48BytesV2);
+  std::memcpy(
+      pOutHeader.mRepairSectorBlockCount.mBytes.data(), pBytes + 46u, kPackedUint48BytesV2);
 
   pOutHeader.mArchiveFamilyId = ReadUint64LE(pBytes + 52u);
   pOutHeader.mReserved1 = ReadUint32LE(pBytes + 60u);
@@ -169,18 +173,16 @@ bool WriteArchiveHeader(const ArchiveHeaderV2& pHeader,
   pOutBytes[14u] = static_cast<unsigned char>(pHeader.mExpanderProfile);
   pOutBytes[15u] = static_cast<unsigned char>(pHeader.mReserved0);
 
-  for (std::size_t aIndex = 0u; aIndex < kPackedUint48BytesV2; ++aIndex) {
-    pOutBytes[16u + aIndex] = static_cast<unsigned char>(pHeader.mArchiveIndex.mBytes[aIndex]);
-    pOutBytes[22u + aIndex] = static_cast<unsigned char>(pHeader.mArchiveCount.mBytes[aIndex]);
-    pOutBytes[28u + aIndex] =
-        static_cast<unsigned char>(pHeader.mArchiveDataBlockCount.mBytes[aIndex]);
-    pOutBytes[34u + aIndex] =
-        static_cast<unsigned char>(pHeader.mEmptyFolderBlockCount.mBytes[aIndex]);
-    pOutBytes[40u + aIndex] =
-        static_cast<unsigned char>(pHeader.mPreviewManifestBlockCount.mBytes[aIndex]);
-    pOutBytes[46u + aIndex] =
-        static_cast<unsigned char>(pHeader.mRepairSectorBlockCount.mBytes[aIndex]);
-  }
+  std::memcpy(pOutBytes + 16u, pHeader.mArchiveIndex.mBytes.data(), kPackedUint48BytesV2);
+  std::memcpy(pOutBytes + 22u, pHeader.mArchiveCount.mBytes.data(), kPackedUint48BytesV2);
+  std::memcpy(
+      pOutBytes + 28u, pHeader.mArchiveDataBlockCount.mBytes.data(), kPackedUint48BytesV2);
+  std::memcpy(
+      pOutBytes + 34u, pHeader.mEmptyFolderBlockCount.mBytes.data(), kPackedUint48BytesV2);
+  std::memcpy(
+      pOutBytes + 40u, pHeader.mPreviewManifestBlockCount.mBytes.data(), kPackedUint48BytesV2);
+  std::memcpy(
+      pOutBytes + 46u, pHeader.mRepairSectorBlockCount.mBytes.data(), kPackedUint48BytesV2);
 
   WriteUint64LE(pHeader.mArchiveFamilyId, pOutBytes + 52u);
   WriteUint32LE(pHeader.mReserved1, pOutBytes + 60u);

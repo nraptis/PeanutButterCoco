@@ -12,6 +12,8 @@ std::string BoolLabel(bool value) {
 
 }
 
+//BundleStageContextV2
+
 bool BundlePreflightV2::Run(BundleStageContextV2& pContext) {
   std::string aLayoutError;
   if (!pContext.Layout().IsValid(&aLayoutError)) {

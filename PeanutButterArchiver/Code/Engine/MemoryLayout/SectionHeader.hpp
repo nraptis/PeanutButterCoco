@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "../../Knobs.hpp"
 #include "CheckSum.hpp"
 #include "MemoryLayoutError.hpp"
 #include "RepairRecord.hpp"
@@ -10,7 +11,7 @@
 
 namespace peanutbutter::memory_layout {
 
-inline constexpr std::size_t kSectionHeaderBytesV2 = 96u;
+inline constexpr std::size_t kSectionHeaderBytesV2 = knobs::kSectionHeaderBytesV2;
 
 enum class SectionTypeV2 : std::uint8_t {
   kArchiveData = 0u,
@@ -24,6 +25,7 @@ struct SectionHeaderV2 {
   CheckSumV2 mCheckSum{};
   SkipRecordV2 mSkipRecord{};
   RepairRecordV2 mRepairRecord{};
+  std::uint8_t mCheckSumKind = specs_verified::kSectionCheckSumKindSha256V2;
   std::uint8_t mSectionType = static_cast<std::uint8_t>(SectionTypeV2::kArchiveData);
   std::uint8_t mSectionFlags = 0u;
   std::uint32_t mPayloadBytesUsed = 0u;
@@ -36,7 +38,7 @@ struct SectionHeaderV2 {
   std::uint32_t mFolderManifestBlockCount = 0u;
   std::uint32_t mRepairDataBlockCount = 0u;
   std::uint64_t mArchiveFamilyId = 0u;
-  std::uint8_t mReserved[3] = {};
+  std::uint8_t mReserved[specs_verified::kSectionReservedBytesV2] = {};
 };
 #pragma pack(pop)
 

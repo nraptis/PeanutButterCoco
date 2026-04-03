@@ -1,11 +1,12 @@
 #pragma once
 
 #include <cstddef>
-#include <vector>
+#include <string>
 
 #include "../../Common/DecodeRequest.hpp"
 #include "../../Common/RepairRequest.hpp"
-#include "Decode_Context.hpp"
+#include "../Repair/Repair_Workflow.hpp"
+#include "Decode_Workflow.hpp"
 
 namespace peanutbutter {
 
@@ -21,23 +22,17 @@ class DecodeDirector final {
   bool HasFailed() const;
   bool WasCanceled() const;
   const DecodeWorkStateV2& State() const;
+  const std::string& FailureMessage() const;
 
  private:
-  using PhaseRunner = bool (*)(DecodeStageContextV2&);
-
-  struct PhaseEntry {
-    ProgressStageV2 mStage = ProgressStageV2::kIdle;
-    PhaseRunner mRun = nullptr;
-  };
-
   void BuildPhaseList();
   bool RunCurrentPhase();
   bool ShouldDeferCancelForCurrentPhase() const;
   std::size_t FindPhaseIndex(ProgressStageV2 pStage) const;
 
- private:
+private:
   DecodeStageContextV2 mContext;
-  std::vector<PhaseEntry> mPhases;
+  decode_workflow::DecodePhaseListViewV2 mPhases;
   std::size_t mCurrentPhaseIndex = 0u;
   bool mIsFinished = false;
   bool mHasFailed = false;
@@ -56,23 +51,17 @@ class RepairDirector final {
   bool HasFailed() const;
   bool WasCanceled() const;
   const DecodeWorkStateV2& State() const;
+  const std::string& FailureMessage() const;
 
  private:
-  using PhaseRunner = bool (*)(DecodeStageContextV2&);
-
-  struct PhaseEntry {
-    ProgressStageV2 mStage = ProgressStageV2::kIdle;
-    PhaseRunner mRun = nullptr;
-  };
-
   void BuildPhaseList();
   bool RunCurrentPhase();
   bool ShouldDeferCancelForCurrentPhase() const;
   std::size_t FindPhaseIndex(ProgressStageV2 pStage) const;
 
- private:
+private:
   DecodeStageContextV2 mContext;
-  std::vector<PhaseEntry> mPhases;
+  repair_workflow::RepairPhaseListViewV2 mPhases;
   std::size_t mCurrentPhaseIndex = 0u;
   bool mIsFinished = false;
   bool mHasFailed = false;
@@ -91,21 +80,15 @@ class ManifestDirector final {
   bool HasFailed() const;
   bool WasCanceled() const;
   const DecodeWorkStateV2& State() const;
+  const std::string& FailureMessage() const;
 
  private:
-  using PhaseRunner = bool (*)(DecodeStageContextV2&);
-
-  struct PhaseEntry {
-    ProgressStageV2 mStage = ProgressStageV2::kIdle;
-    PhaseRunner mRun = nullptr;
-  };
-
   void BuildPhaseList();
   bool RunCurrentPhase();
 
  private:
   DecodeStageContextV2 mContext;
-  std::vector<PhaseEntry> mPhases;
+  decode_workflow::DecodePhaseListViewV2 mPhases;
   std::size_t mCurrentPhaseIndex = 0u;
   bool mIsFinished = false;
   bool mHasFailed = false;

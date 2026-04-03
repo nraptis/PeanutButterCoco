@@ -28,10 +28,12 @@
                                     password:(NSString *)password;
 - (void)enqueueRepairRequestWithSourcePath:(NSString *)sourcePath
                       destinationDirectory:(NSString *)destinationDirectory
+                          aggressiveEnabled:(BOOL)aggressiveEnabled
                                   password:(NSString *)password;
 - (void)enqueueSanityRequestWithLeftDirectory:(NSString *)leftDirectory
                                rightDirectory:(NSString *)rightDirectory
                                  ignoreHidden:(BOOL)ignoreHidden;
 - (void)enqueueCancelRequest;
+- (void)setVerboseRuntimeEventsEnabled:(BOOL)enabled;
 
 @end

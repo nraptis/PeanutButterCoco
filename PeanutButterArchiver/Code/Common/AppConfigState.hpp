@@ -2,6 +2,8 @@
 
 #include <string>
 
+#include "../Knobs.hpp"
+
 namespace peanutbutter {
 
 enum class HomeTabV2 {
@@ -21,10 +23,10 @@ struct AppConfigStateV2 {
   bool mBundleSafe = true;
   bool mBundleEncrypt = true;
   bool mBundleIncludePreview = true;
-  std::string mBundleBlockCount = "4 blocks";
+  std::string mBundleBlockCount = knobs::kDefaultBundleBlockCountTitleV2;
   std::string mBundleEncryptionStrength = "Encryption: High";
   std::string mBundleTableStrength = "Tables: High";
-  std::string mBundleRepairSize = "25%";
+  std::string mBundleRepairSize = "20%";
   std::string mBundlePassword;
 
   std::string mUnbundleDirectorySource;

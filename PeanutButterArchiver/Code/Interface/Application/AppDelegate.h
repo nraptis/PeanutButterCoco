@@ -2,6 +2,6 @@
 
 @interface AppDelegate : NSObject <NSApplicationDelegate>
 
-@property (strong) IBOutlet NSWindow *window;
+@property (strong) NSWindow *window;
 
 @end

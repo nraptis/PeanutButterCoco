@@ -20,10 +20,11 @@
     self.titleLabel.translatesAutoresizingMaskIntoConstraints = NO;
     self.titleLabel.font = [NSFont boldSystemFontOfSize:24.0];
 
-    self.detailLabel = [NSTextField labelWithString:@"This panel can replace the whole active mode container while a long-running operation is in flight."];
+    self.detailLabel = [NSTextField labelWithString:@""];
     self.detailLabel.translatesAutoresizingMaskIntoConstraints = NO;
     self.detailLabel.font = [NSFont systemFontOfSize:14.0];
     self.detailLabel.maximumNumberOfLines = 2;
+    self.detailLabel.hidden = YES;
 
     self.progressIndicator = [[NSProgressIndicator alloc] initWithFrame:NSZeroRect];
     self.progressIndicator.translatesAutoresizingMaskIntoConstraints = NO;
@@ -47,14 +48,11 @@
     [NSLayoutConstraint activateConstraints:@[
         [self.titleLabel.leadingAnchor constraintEqualToAnchor:self.leadingAnchor constant:kUIMakeArchiveContentInset],
         [self.titleLabel.topAnchor constraintEqualToAnchor:self.topAnchor constant:kUIMakeArchiveContentInset],
-        [self.detailLabel.leadingAnchor constraintEqualToAnchor:self.titleLabel.leadingAnchor],
-        [self.detailLabel.trailingAnchor constraintEqualToAnchor:self.trailingAnchor constant:-kUIMakeArchiveContentInset],
-        [self.detailLabel.topAnchor constraintEqualToAnchor:self.titleLabel.bottomAnchor constant:kUIGroupVerticalSpacing],
         [self.progressIndicator.leadingAnchor constraintEqualToAnchor:self.titleLabel.leadingAnchor],
         [self.progressIndicator.trailingAnchor constraintEqualToAnchor:_cancelButton.leadingAnchor constant:-kMiddleToolbarSpacingH],
-        [self.progressIndicator.topAnchor constraintEqualToAnchor:self.detailLabel.bottomAnchor constant:18.0],
+        [self.progressIndicator.topAnchor constraintEqualToAnchor:self.titleLabel.bottomAnchor constant:18.0],
         [self.progressIndicator.heightAnchor constraintEqualToConstant:28.0],
-        [_cancelButton.trailingAnchor constraintEqualToAnchor:self.detailLabel.trailingAnchor],
+        [_cancelButton.trailingAnchor constraintEqualToAnchor:self.trailingAnchor constant:-kUIMakeArchiveContentInset],
         [_cancelButton.centerYAnchor constraintEqualToAnchor:self.progressIndicator.centerYAnchor],
         [_cancelButton.widthAnchor constraintEqualToConstant:kCancelButtonWidth],
         [_cancelButton.heightAnchor constraintEqualToConstant:kCancelButtonHeight],

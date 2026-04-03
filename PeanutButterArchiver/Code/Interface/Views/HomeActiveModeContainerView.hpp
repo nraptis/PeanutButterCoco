@@ -16,7 +16,6 @@
 @property (strong, nonatomic, readonly) NSButton *bundleSourceBrowseButton;
 @property (strong, nonatomic, readonly) NSButton *bundleDestinationBrowseButton;
 @property (strong, nonatomic, readonly) NSButton *bundleRepairCheckbox;
-@property (strong, nonatomic, readonly) NSButton *bundleSafeCheckbox;
 @property (strong, nonatomic, readonly) NSButton *bundleIncludePreviewCheckbox;
 @property (strong, nonatomic, readonly) NSPopUpButton *bundleRepairSizeCombo;
 @property (strong, nonatomic, readonly) NSButton *bundleEncryptCheckbox;

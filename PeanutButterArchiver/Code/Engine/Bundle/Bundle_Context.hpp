@@ -1,31 +1,39 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "../../Common/BundleRequest.hpp"
+#include "../../Common/EngineFailure.hpp"
 #include "../../Common/Logging.hpp"
 #include "../../Common/Progress.hpp"
+#include "../../Common/RuntimeEvent.hpp"
+#include "../../Common/TransferTracking.hpp"
+#include "../ArchiveBox/ArchiveBoxes.hpp"
 #include "../Crypto/RotationMaskCipher.hpp"
 #include "../FileAccess/LocalFileSystem.hpp"
 #include "../MemoryLayout/ArchiveLayoutConfig.hpp"
 
 namespace peanutbutter {
 
+class BundleDiscoveryCursorV2;
+class BundleArchivePackingCursorV2;
+class BundleRepairPackingCursorV2;
+class BundleFinalizingHeadersCursorV2;
+
 struct BundleRecordEntryV2 {
   std::string mSourcePath;
   std::string mRelativePath;
   std::uint64_t mContentLength = 0u;
   bool mIsDirectory = false;
+  bool mIsReference = false;
+  std::uint8_t mReferenceKind = 1u;
+  std::string mReferenceTargetRelativePath;
 };
 
-struct PlannedArchiveFileV2 {
-  std::string mPath;
-  std::uint64_t mArchiveIndex = 0u;
-  std::uint64_t mFamilyBlockStart = 0u;
-  std::uint32_t mBlockCount = 0u;
-};
+using PlannedArchiveFileV2 = ArchiveBox_BundleV2;
 
 struct BundleDiscoveryStateV2 {
   bool mSourceExists = false;
@@ -48,8 +56,11 @@ struct BundleMemoryPlanV2 {
   std::uint64_t mTotalFamilyBlockCount = 0u;
   std::uint64_t mArchiveCount = 0u;
   std::uint64_t mArchiveFamilyId = 0u;
+  std::uint8_t mFileCountMod256 = 0u;
+  std::uint8_t mFolderCountMod256 = 0u;
   std::vector<std::uint32_t> mSourceArchiveBlockCounts;
   std::vector<std::uint32_t> mRepairCopyBlockCounts;
+  std::vector<std::vector<std::uint32_t>> mRepairCopySourceLocalBlocks;
   std::vector<PlannedArchiveFileV2> mArchives;
 };
 
@@ -65,6 +76,7 @@ struct BundleCipherStateV2 {
   bool mDerived = false;
   bool mAssembled = false;
   RotationMaskCipherV2 mCipher{};
+  FixedBlockBufferV2 mWorkerBuffer{};
 };
 
 struct BundlePackingStateV2 {
@@ -76,13 +88,18 @@ struct BundlePackingStateV2 {
 struct BundleCancelStateV2 {
   bool mObserved = false;
   bool mShouldFinalizeAfterCancel = false;
-  bool mBudgetExceeded = false;
-  std::uint64_t mCancelBlocksWritten = 0u;
   std::string mCancelFileReference;
 };
 
 struct BundleFinalizeStateV2 {
   bool mHeadersFinalized = false;
+};
+
+struct BundleCursorStateV2 {
+  std::shared_ptr<BundleDiscoveryCursorV2> mDiscovery;
+  std::shared_ptr<BundleArchivePackingCursorV2> mArchivePacking;
+  std::shared_ptr<BundleRepairPackingCursorV2> mRepairPacking;
+  std::shared_ptr<BundleFinalizingHeadersCursorV2> mFinalizingHeaders;
 };
 
 struct BundleWorkStateV2 {
@@ -92,7 +109,11 @@ struct BundleWorkStateV2 {
   BundleCipherStateV2 mCipher{};
   BundlePackingStateV2 mPacking{};
   BundleCancelStateV2 mCancel{};
+  TransferTrackingStateV2 mTransfers{};
   BundleFinalizeStateV2 mFinalize{};
+  BundleCursorStateV2 mCursor{};
+  std::uint64_t mWorkUnitsProcessed = 0u;
+  FailureInfoV2 mFailure{};
 };
 
 class BundleRuntimeV2 {
@@ -104,6 +125,11 @@ class BundleRuntimeV2 {
                             double pLocalFraction,
                             double pOverallFraction,
                             const std::string& pLabel) = 0;
+  virtual bool WantsRuntimeEvent(RuntimeEventKindV2 pKind) const {
+    (void)pKind;
+    return true;
+  }
+  virtual bool EmitRuntimeEvent(const RuntimeEventV2& pEvent) = 0;
 };
 
 class BundleStageContextV2 {
@@ -122,9 +148,14 @@ class BundleStageContextV2 {
 
   bool IsCancelRequested() const;
   void EmitLog(LogLevelV2 pLevel, const std::string& pMessage) const;
+  bool WantsRuntimeEvent(RuntimeEventKindV2 pKind) const;
+  bool EmitRuntimeEvent(const RuntimeEventV2& pEvent) const;
   void SetActivePhase(ProgressStageV2 pStage,
                       std::size_t pPhaseIndex,
                       std::size_t pPhaseCount);
+  void BeginWorkUnit();
+  void ContinuePhaseOnNextHeartbeat();
+  bool ActivePhaseNeedsMoreHeartbeats() const;
   void EmitPhaseProgress(double pLocalFraction,
                          const std::string& pLabel) const;
   void EmitProgress(ProgressStageV2 pStage,
@@ -133,6 +164,7 @@ class BundleStageContextV2 {
                     const std::string& pLabel) const;
   bool ActivePhaseHasError() const;
   const std::string& LastErrorLog() const;
+  const FailureInfoV2& Failure() const;
 
  private:
   BundleRequestV2 mRequest;
@@ -144,6 +176,7 @@ class BundleStageContextV2 {
   ProgressStageV2 mActiveStage = ProgressStageV2::kIdle;
   std::size_t mActivePhaseIndex = 0u;
   std::size_t mActivePhaseCount = 1u;
+  bool mActivePhaseNeedsMoreHeartbeats = false;
   bool mActivePhaseHasError = false;
   std::string mLastErrorLog;
 };

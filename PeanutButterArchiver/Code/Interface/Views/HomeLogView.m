@@ -2,8 +2,14 @@
 
 #import "../UIConstants.hpp"
 
+static const NSUInteger kLogCharacterHardLimit = 220000;
+static const NSUInteger kLogCharacterSoftLimit = 180000;
+
 @implementation HomeLogView {
     NSScrollView *_scrollView;
+    BOOL _autoScrollPinnedToBottom;
+    BOOL _isPerformingProgrammaticScroll;
+    BOOL _hasDeferredScrollRequest;
 }
 
 - (instancetype)initWithFrame:(NSRect)frameRect {
@@ -22,6 +28,9 @@
     _scrollView.hasVerticalScroller = YES;
     _scrollView.drawsBackground = NO;
     _scrollView.borderType = NSNoBorder;
+    _autoScrollPinnedToBottom = YES;
+    _isPerformingProgrammaticScroll = NO;
+    _hasDeferredScrollRequest = NO;
 
     NSTextStorage *textStorage = [[NSTextStorage alloc] init];
     NSLayoutManager *layoutManager = [[NSLayoutManager alloc] init];
@@ -53,6 +62,11 @@
     _textView.string = @"";
 
     _scrollView.documentView = _textView;
+    _scrollView.contentView.postsBoundsChangedNotifications = YES;
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(handleClipViewBoundsDidChange:)
+                                                 name:NSViewBoundsDidChangeNotification
+                                               object:_scrollView.contentView];
     [self addSubview:_scrollView];
 
     [NSLayoutConstraint activateConstraints:@[
@@ -65,6 +79,53 @@
     return self;
 }
 
+- (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self
+                                                    name:NSViewBoundsDidChangeNotification
+                                                  object:_scrollView.contentView];
+}
+
+- (void)handleClipViewBoundsDidChange:(NSNotification *)notification {
+    (void)notification;
+    if (_isPerformingProgrammaticScroll) {
+        return;
+    }
+    _autoScrollPinnedToBottom = [self isNearBottom];
+}
+
+- (BOOL)isNearBottom {
+    NSClipView *clipView = _scrollView.contentView;
+    NSView *documentView = _scrollView.documentView;
+    if (clipView == nil || documentView == nil) {
+        return YES;
+    }
+
+    NSRect visibleRect = clipView.documentVisibleRect;
+    NSRect documentRect = documentView.bounds;
+    const CGFloat distanceFromBottom = NSMaxY(documentRect) - NSMaxY(visibleRect);
+    return distanceFromBottom <= 12.0;
+}
+
+- (void)scheduleDeferredScrollToBottomIfNeeded {
+    if (_hasDeferredScrollRequest) {
+        return;
+    }
+
+    _hasDeferredScrollRequest = YES;
+    __weak typeof(self) weakSelf = self;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        HomeLogView *strongSelf = weakSelf;
+        if (strongSelf == nil) {
+            return;
+        }
+        strongSelf->_hasDeferredScrollRequest = NO;
+        if (!strongSelf->_autoScrollPinnedToBottom) {
+            return;
+        }
+        [strongSelf scrollToBottom];
+    });
+}
+
 - (void)appendLine:(NSString *)line {
     if (line.length == 0) {
         return;
@@ -75,10 +136,7 @@
         return;
     }
 
-    NSClipView *clipView = _scrollView.contentView;
-    NSRect visibleRect = clipView.documentVisibleRect;
-    NSRect boundsRect = self.textView.bounds;
-    BOOL wasPinnedToBottom = NSMaxY(visibleRect) >= (NSMaxY(boundsRect) - 8.0);
+    BOOL shouldStickToBottom = _autoScrollPinnedToBottom || [self isNearBottom];
 
     NSMutableAttributedString *appendString = [[NSMutableAttributedString alloc] init];
     if (textStorage.length > 0) {
@@ -94,17 +152,39 @@
 
     [textStorage beginEditing];
     [textStorage appendAttributedString:appendString];
+    if (textStorage.length > kLogCharacterHardLimit) {
+        NSString *fullText = textStorage.string ?: @"";
+        NSUInteger trimStart = textStorage.length - kLogCharacterSoftLimit;
+        if (trimStart > fullText.length) {
+            trimStart = fullText.length;
+        }
+        NSRange searchRange = NSMakeRange(trimStart, fullText.length - trimStart);
+        NSRange newlineRange = [fullText rangeOfString:@"\n"
+                                               options:0
+                                                 range:searchRange];
+        NSUInteger removeLength = (newlineRange.location != NSNotFound)
+            ? NSMaxRange(newlineRange)
+            : trimStart;
+        if (removeLength > textStorage.length) {
+            removeLength = textStorage.length;
+        }
+        if (removeLength > 0) {
+            [textStorage deleteCharactersInRange:NSMakeRange(0, removeLength)];
+        }
+    }
     [textStorage endEditing];
 
     [self.textView.layoutManager ensureLayoutForTextContainer:self.textView.textContainer];
 
-    if (wasPinnedToBottom) {
+    if (shouldStickToBottom) {
         [self scrollToBottom];
+        [self scheduleDeferredScrollToBottomIfNeeded];
     }
 }
 
 - (void)clearAll {
     self.textView.string = @"";
+    _autoScrollPinnedToBottom = YES;
 }
 
 - (void)scrollToBottom {
@@ -112,7 +192,11 @@
     if (textStorage == nil) {
         return;
     }
+    _isPerformingProgrammaticScroll = YES;
     [self.textView scrollRangeToVisible:NSMakeRange(textStorage.length, 0)];
+    [_scrollView reflectScrolledClipView:_scrollView.contentView];
+    _isPerformingProgrammaticScroll = NO;
+    _autoScrollPinnedToBottom = YES;
 }
 
 @end

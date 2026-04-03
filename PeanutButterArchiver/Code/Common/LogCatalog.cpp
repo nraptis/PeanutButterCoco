@@ -55,7 +55,7 @@ std::string ProgressStageLabelV2(ProgressStageV2 pStage) {
     case ProgressStageV2::kDeriveCipherMaterial: return "Derive Cipher Material";
     case ProgressStageV2::kAssembleCipherStack: return "Assemble Cipher Stack";
     case ProgressStageV2::kArchiveManifest: return "Archive Manifest";
-    case ProgressStageV2::kFolderPacking: return "Folder Packing";
+    case ProgressStageV2::kFolderPacking: return "Folder Packing (Legacy)";
     case ProgressStageV2::kManifestDiscovery: return "Manifest Discovery";
     case ProgressStageV2::kArchivePacking: return "Archive Packing";
     case ProgressStageV2::kArchiveDecode: return "Archive Decode";
@@ -168,6 +168,7 @@ std::string FormatPathRelativeToRootV2(const std::string& pRootPath,
       std::filesystem::path(pRootPath).lexically_normal();
   const std::filesystem::path aPath =
       std::filesystem::path(pPath).lexically_normal();
+  const std::string aAbsoluteDisplay = FormatPathForLogV2(aPath.generic_string());
   std::error_code aError;
   std::filesystem::path aRelative = std::filesystem::relative(aPath, aRoot, aError);
   if (aError) {
@@ -177,10 +178,13 @@ std::string FormatPathRelativeToRootV2(const std::string& pRootPath,
   const std::string aRelativeString = aRelative.generic_string();
   if (!aRelativeString.empty() && aRelativeString != "." &&
       aRelativeString != ".." && aRelativeString.rfind("../", 0u) != 0u) {
-    return aRelativeString;
+    if (aRelativeString == aAbsoluteDisplay) {
+      return aRelativeString;
+    }
+    return aRelativeString + " (" + aAbsoluteDisplay + ")";
   }
 
-  return FormatPathForLogV2(aPath.generic_string());
+  return aAbsoluteDisplay;
 }
 
 std::string BuildStatSummaryV2(const LoggingStatV2& pStat) {
@@ -329,8 +333,29 @@ std::string LogSanityCompareEndV2(const LoggingStatV2& pStat) {
   return "[Folder Compare][Compare] " + BuildStatSummaryV2(pStat) + " DONE.";
 }
 
-std::string LogSanityDiscoverySliceV2(const LoggingStatV2& pStat) {
-  return "[Folder Compare][Discovery] " + BuildStatSummaryV2(pStat) + ".";
+std::string LogSanityDiscoverySliceV2(std::uint64_t pItemCount) {
+  return "[Folder Compare][Discovery] Found " + std::to_string(pItemCount) +
+         " items.";
+}
+
+std::string LogBundleDiscoverySliceV2(std::uint64_t pFileCount,
+                                      std::uint64_t pFolderCount,
+                                      std::uint64_t pItemsScanned) {
+  return "[Bundle][Discovery] Scanned " + std::to_string(pItemsScanned) +
+         " items (" + std::to_string(pFileCount) + " files, " +
+         std::to_string(pFolderCount) + " empty folders).";
+}
+
+std::string LogDecodeDiscoverySliceV2(LogActionV2 pAction,
+                                      std::uint64_t pArchiveFilesScanned,
+                                      std::uint64_t pNonArchiveFilesScanned) {
+  if (pNonArchiveFilesScanned > 0u) {
+    return "[" + LogActionLabelV2(pAction) + "][Discovery] Scanned " +
+           std::to_string(pArchiveFilesScanned) + " archive files and " +
+           std::to_string(pNonArchiveFilesScanned) + " non-archive files.";
+  }
+  return "[" + LogActionLabelV2(pAction) + "][Discovery] Scanned " +
+         std::to_string(pArchiveFilesScanned) + " archive files.";
 }
 
 std::string LogSanitySummaryHealthyV2(const LoggingStatV2& pStat) {
@@ -420,6 +445,8 @@ std::string LogPessimisticSwitchV2(LogActionV2 pAction,
 LogActionV2 LogActionFromDecodeIntentV2(DecodeIntentV2 pIntent) {
   switch (pIntent) {
     case DecodeIntentV2::kRecover:
+      return LogActionV2::kDecode;
+    case DecodeIntentV2::kRepair:
       return LogActionV2::kRepair;
     case DecodeIntentV2::kManifest:
       return LogActionV2::kManifest;

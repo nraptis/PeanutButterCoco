@@ -1,7 +1,9 @@
 #include "FormatUtilities.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
+#include <cstring>
 #include <iomanip>
 #include <limits>
 #include <sstream>
@@ -9,38 +11,199 @@
 namespace peanutbutter::memory_layout {
 namespace {
 
-constexpr std::uint64_t kFnvOffsetBasis64 = 1469598103934665603ULL;
-constexpr std::uint64_t kFnvPrime64 = 1099511628211ULL;
+constexpr std::array<std::uint32_t, 64u> kSha256RoundConstantsV2 = {
+    0x428a2f98u, 0x71374491u, 0xb5c0fbcfu, 0xe9b5dba5u, 0x3956c25bu, 0x59f111f1u,
+    0x923f82a4u, 0xab1c5ed5u, 0xd807aa98u, 0x12835b01u, 0x243185beu, 0x550c7dc3u,
+    0x72be5d74u, 0x80deb1feu, 0x9bdc06a7u, 0xc19bf174u, 0xe49b69c1u, 0xefbe4786u,
+    0x0fc19dc6u, 0x240ca1ccu, 0x2de92c6fu, 0x4a7484aau, 0x5cb0a9dcu, 0x76f988dau,
+    0x983e5152u, 0xa831c66du, 0xb00327c8u, 0xbf597fc7u, 0xc6e00bf3u, 0xd5a79147u,
+    0x06ca6351u, 0x14292967u, 0x27b70a85u, 0x2e1b2138u, 0x4d2c6dfcu, 0x53380d13u,
+    0x650a7354u, 0x766a0abbu, 0x81c2c92eu, 0x92722c85u, 0xa2bfe8a1u, 0xa81a664bu,
+    0xc24b8b70u, 0xc76c51a3u, 0xd192e819u, 0xd6990624u, 0xf40e3585u, 0x106aa070u,
+    0x19a4c116u, 0x1e376c08u, 0x2748774cu, 0x34b0bcb5u, 0x391c0cb3u, 0x4ed8aa4au,
+    0x5b9cca4fu, 0x682e6ff3u, 0x748f82eeu, 0x78a5636fu, 0x84c87814u, 0x8cc70208u,
+    0x90befffau, 0xa4506cebu, 0xbef9a3f7u, 0xc67178f2u,
+};
 
-inline std::uint64_t Fnv1aUpdate(std::uint64_t pState,
-                                 unsigned char pByte) {
-  pState ^= static_cast<std::uint64_t>(pByte);
-  pState *= kFnvPrime64;
-  return pState;
+inline std::uint32_t RotateRight32V2(std::uint32_t pValue, std::uint32_t pBits) {
+  return (pValue >> pBits) | (pValue << (32u - pBits));
 }
 
-inline std::uint64_t HashBytes(const unsigned char* pData,
-                               std::size_t pLength,
-                               std::uint64_t pSeed,
-                               unsigned char pTag) {
-  std::uint64_t aState = pSeed;
-  aState = Fnv1aUpdate(aState, pTag);
-  if (pData == nullptr) {
-    return aState;
-  }
-  for (std::size_t aIndex = 0u; aIndex < pLength; ++aIndex) {
-    aState = Fnv1aUpdate(aState, pData[aIndex]);
-  }
-  return aState;
+inline std::uint32_t Sha256ChoiceV2(std::uint32_t pX,
+                                    std::uint32_t pY,
+                                    std::uint32_t pZ) {
+  return (pX & pY) ^ ((~pX) & pZ);
 }
 
-inline std::uint64_t MixU64(std::uint64_t pValue) {
-  pValue ^= (pValue >> 33u);
-  pValue *= 0xff51afd7ed558ccdULL;
-  pValue ^= (pValue >> 33u);
-  pValue *= 0xc4ceb9fe1a85ec53ULL;
-  pValue ^= (pValue >> 33u);
-  return pValue;
+inline std::uint32_t Sha256MajorityV2(std::uint32_t pX,
+                                      std::uint32_t pY,
+                                      std::uint32_t pZ) {
+  return (pX & pY) ^ (pX & pZ) ^ (pY & pZ);
+}
+
+inline std::uint32_t Sha256BigSigma0V2(std::uint32_t pValue) {
+  return RotateRight32V2(pValue, 2u) ^ RotateRight32V2(pValue, 13u) ^
+         RotateRight32V2(pValue, 22u);
+}
+
+inline std::uint32_t Sha256BigSigma1V2(std::uint32_t pValue) {
+  return RotateRight32V2(pValue, 6u) ^ RotateRight32V2(pValue, 11u) ^
+         RotateRight32V2(pValue, 25u);
+}
+
+inline std::uint32_t Sha256SmallSigma0V2(std::uint32_t pValue) {
+  return RotateRight32V2(pValue, 7u) ^ RotateRight32V2(pValue, 18u) ^
+         (pValue >> 3u);
+}
+
+inline std::uint32_t Sha256SmallSigma1V2(std::uint32_t pValue) {
+  return RotateRight32V2(pValue, 17u) ^ RotateRight32V2(pValue, 19u) ^
+         (pValue >> 10u);
+}
+
+inline std::uint32_t ReadUint32BEV2(const std::uint8_t* pBytes) {
+  return (static_cast<std::uint32_t>(pBytes[0u]) << 24u) |
+         (static_cast<std::uint32_t>(pBytes[1u]) << 16u) |
+         (static_cast<std::uint32_t>(pBytes[2u]) << 8u) |
+         static_cast<std::uint32_t>(pBytes[3u]);
+}
+
+inline void WriteUint32BEV2(std::uint32_t pValue, std::uint8_t* pOutBytes) {
+  pOutBytes[0u] = static_cast<std::uint8_t>((pValue >> 24u) & 0xffu);
+  pOutBytes[1u] = static_cast<std::uint8_t>((pValue >> 16u) & 0xffu);
+  pOutBytes[2u] = static_cast<std::uint8_t>((pValue >> 8u) & 0xffu);
+  pOutBytes[3u] = static_cast<std::uint8_t>(pValue & 0xffu);
+}
+
+struct Sha256StateV2 {
+  std::array<std::uint32_t, 8u> mHash = {
+      0x6a09e667u,
+      0xbb67ae85u,
+      0x3c6ef372u,
+      0xa54ff53au,
+      0x510e527fu,
+      0x9b05688cu,
+      0x1f83d9abu,
+      0x5be0cd19u,
+  };
+  std::array<std::uint8_t, 64u> mBuffer = {};
+  std::size_t mBufferBytes = 0u;
+  std::uint64_t mTotalBytes = 0u;
+};
+
+void Sha256ProcessBlockV2(Sha256StateV2& pState, const std::uint8_t* pBlock) {
+  std::array<std::uint32_t, 64u> aSchedule = {};
+  for (std::size_t aIndex = 0u; aIndex < 16u; ++aIndex) {
+    aSchedule[aIndex] = ReadUint32BEV2(pBlock + (aIndex * 4u));
+  }
+  for (std::size_t aIndex = 16u; aIndex < 64u; ++aIndex) {
+    aSchedule[aIndex] = Sha256SmallSigma1V2(aSchedule[aIndex - 2u]) +
+                        aSchedule[aIndex - 7u] +
+                        Sha256SmallSigma0V2(aSchedule[aIndex - 15u]) +
+                        aSchedule[aIndex - 16u];
+  }
+
+  std::uint32_t aA = pState.mHash[0u];
+  std::uint32_t aB = pState.mHash[1u];
+  std::uint32_t aC = pState.mHash[2u];
+  std::uint32_t aD = pState.mHash[3u];
+  std::uint32_t aE = pState.mHash[4u];
+  std::uint32_t aF = pState.mHash[5u];
+  std::uint32_t aG = pState.mHash[6u];
+  std::uint32_t aH = pState.mHash[7u];
+
+  for (std::size_t aRound = 0u; aRound < 64u; ++aRound) {
+    const std::uint32_t aTemp1 = aH + Sha256BigSigma1V2(aE) +
+                                 Sha256ChoiceV2(aE, aF, aG) +
+                                 kSha256RoundConstantsV2[aRound] + aSchedule[aRound];
+    const std::uint32_t aTemp2 =
+        Sha256BigSigma0V2(aA) + Sha256MajorityV2(aA, aB, aC);
+    aH = aG;
+    aG = aF;
+    aF = aE;
+    aE = aD + aTemp1;
+    aD = aC;
+    aC = aB;
+    aB = aA;
+    aA = aTemp1 + aTemp2;
+  }
+
+  pState.mHash[0u] += aA;
+  pState.mHash[1u] += aB;
+  pState.mHash[2u] += aC;
+  pState.mHash[3u] += aD;
+  pState.mHash[4u] += aE;
+  pState.mHash[5u] += aF;
+  pState.mHash[6u] += aG;
+  pState.mHash[7u] += aH;
+}
+
+void Sha256UpdateV2(Sha256StateV2& pState,
+                    const unsigned char* pBytes,
+                    std::size_t pByteCount) {
+  if (pBytes == nullptr || pByteCount == 0u) {
+    return;
+  }
+
+  pState.mTotalBytes += static_cast<std::uint64_t>(pByteCount);
+  std::size_t aOffset = 0u;
+  if (pState.mBufferBytes > 0u) {
+    const std::size_t aCopyBytes = std::min(
+        pState.mBuffer.size() - pState.mBufferBytes, pByteCount);
+    std::memcpy(pState.mBuffer.data() + pState.mBufferBytes, pBytes, aCopyBytes);
+    pState.mBufferBytes += aCopyBytes;
+    aOffset += aCopyBytes;
+    if (pState.mBufferBytes == pState.mBuffer.size()) {
+      Sha256ProcessBlockV2(pState, pState.mBuffer.data());
+      pState.mBufferBytes = 0u;
+    }
+  }
+
+  while ((aOffset + pState.mBuffer.size()) <= pByteCount) {
+    Sha256ProcessBlockV2(pState, pBytes + aOffset);
+    aOffset += pState.mBuffer.size();
+  }
+
+  const std::size_t aRemainder = pByteCount - aOffset;
+  if (aRemainder > 0u) {
+    std::memcpy(pState.mBuffer.data(), pBytes + aOffset, aRemainder);
+    pState.mBufferBytes = aRemainder;
+  }
+}
+
+void Sha256FinalizeV2(Sha256StateV2& pState,
+                      std::uint8_t* pOutBytes,
+                      std::size_t pOutByteCount) {
+  if (pOutBytes == nullptr || pOutByteCount < 32u) {
+    return;
+  }
+
+  const std::uint64_t aBitLength = pState.mTotalBytes * 8u;
+  pState.mBuffer[pState.mBufferBytes++] = 0x80u;
+  if (pState.mBufferBytes > 56u) {
+    std::memset(pState.mBuffer.data() + pState.mBufferBytes,
+                0,
+                pState.mBuffer.size() - pState.mBufferBytes);
+    Sha256ProcessBlockV2(pState, pState.mBuffer.data());
+    pState.mBufferBytes = 0u;
+  }
+
+  std::memset(
+      pState.mBuffer.data() + pState.mBufferBytes, 0, 56u - pState.mBufferBytes);
+  pState.mBuffer[56u] = static_cast<std::uint8_t>((aBitLength >> 56u) & 0xffu);
+  pState.mBuffer[57u] = static_cast<std::uint8_t>((aBitLength >> 48u) & 0xffu);
+  pState.mBuffer[58u] = static_cast<std::uint8_t>((aBitLength >> 40u) & 0xffu);
+  pState.mBuffer[59u] = static_cast<std::uint8_t>((aBitLength >> 32u) & 0xffu);
+  pState.mBuffer[60u] = static_cast<std::uint8_t>((aBitLength >> 24u) & 0xffu);
+  pState.mBuffer[61u] = static_cast<std::uint8_t>((aBitLength >> 16u) & 0xffu);
+  pState.mBuffer[62u] = static_cast<std::uint8_t>((aBitLength >> 8u) & 0xffu);
+  pState.mBuffer[63u] = static_cast<std::uint8_t>(aBitLength & 0xffu);
+  Sha256ProcessBlockV2(pState, pState.mBuffer.data());
+  pState.mBufferBytes = 0u;
+
+  for (std::size_t aIndex = 0u; aIndex < pState.mHash.size(); ++aIndex) {
+    WriteUint32BEV2(pState.mHash[aIndex], pOutBytes + (aIndex * 4u));
+  }
 }
 
 }  // namespace
@@ -48,54 +211,35 @@ inline std::uint64_t MixU64(std::uint64_t pValue) {
 CheckSumV2 ComputeSectionCheckSum(const unsigned char* pPayloadBytes,
                                   std::size_t pPayloadLength,
                                   const SectionHeaderV2& pHeader) {
+  static_assert(kCheckSumBytesV2 == 32u,
+                "ComputeSectionCheckSum expects a 32-byte SHA-256 digest.");
   CheckSumV2 aCheckSum{};
   if (pPayloadBytes == nullptr || pPayloadLength == 0u) {
     return aCheckSum;
   }
 
-  std::uint64_t aState0 = kFnvOffsetBasis64 ^ 0x1020304050607080ULL;
-  std::uint64_t aState1 = kFnvOffsetBasis64 ^ 0x8877665544332211ULL;
-  std::uint64_t aState2 = kFnvOffsetBasis64 ^ 0xA5A5A5A5A5A5A5A5ULL;
-  std::uint64_t aState3 = kFnvOffsetBasis64 ^ 0x5A5A5A5A5A5A5A5AULL;
-
-  for (std::size_t aIndex = 0u; aIndex < pPayloadLength; ++aIndex) {
-    const unsigned char aByte = pPayloadBytes[aIndex];
-    aState0 = Fnv1aUpdate(aState0, aByte);
-    aState1 = Fnv1aUpdate(aState1, static_cast<unsigned char>(aByte ^ 0x5Au));
-    aState2 = Fnv1aUpdate(
-        aState2,
-        static_cast<unsigned char>(aByte + static_cast<unsigned char>(aIndex & 0xFFu)));
-    aState3 = Fnv1aUpdate(
-        aState3,
-        static_cast<unsigned char>(aByte ^ static_cast<unsigned char>((aIndex * 131u) & 0xFFu)));
-  }
-
-  unsigned char aMetaBytes[61] = {};
+  unsigned char aMetaBytes[62] = {};
   WriteSkipRecord(pHeader.mSkipRecord, aMetaBytes + 0u, kSkipRecordBytesV2, nullptr);
   WriteRepairRecord(
       pHeader.mRepairRecord, aMetaBytes + kSkipRecordBytesV2, kRepairRecordBytesV2, nullptr);
-  aMetaBytes[15u] = pHeader.mSectionType;
-  aMetaBytes[16u] = pHeader.mSectionFlags;
-  WriteUint32LE(pHeader.mPayloadBytesUsed, aMetaBytes + 17u);
-  WriteUint32LE(pHeader.mArchiveFileCount, aMetaBytes + 21u);
-  WriteUint32LE(pHeader.mArchiveBlockCount, aMetaBytes + 25u);
-  WriteUint32LE(pHeader.mArchiveIndex, aMetaBytes + 29u);
-  WriteUint32LE(pHeader.mBlockIndex, aMetaBytes + 33u);
-  WriteUint32LE(pHeader.mArchiveDataBlockCount, aMetaBytes + 37u);
-  WriteUint32LE(pHeader.mPreviewManifestBlockCount, aMetaBytes + 41u);
-  WriteUint32LE(pHeader.mFolderManifestBlockCount, aMetaBytes + 45u);
-  WriteUint32LE(pHeader.mRepairDataBlockCount, aMetaBytes + 49u);
-  WriteUint64LE(pHeader.mArchiveFamilyId, aMetaBytes + 53u);
+  aMetaBytes[15u] = pHeader.mCheckSumKind;
+  aMetaBytes[16u] = pHeader.mSectionType;
+  aMetaBytes[17u] = pHeader.mSectionFlags;
+  WriteUint32LE(pHeader.mPayloadBytesUsed, aMetaBytes + 18u);
+  WriteUint32LE(pHeader.mArchiveFileCount, aMetaBytes + 22u);
+  WriteUint32LE(pHeader.mArchiveBlockCount, aMetaBytes + 26u);
+  WriteUint32LE(pHeader.mArchiveIndex, aMetaBytes + 30u);
+  WriteUint32LE(pHeader.mBlockIndex, aMetaBytes + 34u);
+  WriteUint32LE(pHeader.mArchiveDataBlockCount, aMetaBytes + 38u);
+  WriteUint32LE(pHeader.mPreviewManifestBlockCount, aMetaBytes + 42u);
+  WriteUint32LE(pHeader.mFolderManifestBlockCount, aMetaBytes + 46u);
+  WriteUint32LE(pHeader.mRepairDataBlockCount, aMetaBytes + 50u);
+  WriteUint64LE(pHeader.mArchiveFamilyId, aMetaBytes + 54u);
 
-  aState0 = HashBytes(aMetaBytes, sizeof(aMetaBytes), aState0, 1u);
-  aState1 = HashBytes(aMetaBytes, sizeof(aMetaBytes), aState1, 2u);
-  aState2 = HashBytes(aMetaBytes, sizeof(aMetaBytes), aState2, 3u);
-  aState3 = HashBytes(aMetaBytes, sizeof(aMetaBytes), aState3, 4u);
-
-  WriteUint64LE(MixU64(aState0), aCheckSum.mBytes.data() + 0u);
-  WriteUint64LE(MixU64(aState1), aCheckSum.mBytes.data() + 8u);
-  WriteUint64LE(MixU64(aState2), aCheckSum.mBytes.data() + 16u);
-  WriteUint64LE(MixU64(aState3), aCheckSum.mBytes.data() + 24u);
+  Sha256StateV2 aState;
+  Sha256UpdateV2(aState, pPayloadBytes, pPayloadLength);
+  Sha256UpdateV2(aState, aMetaBytes, sizeof(aMetaBytes));
+  Sha256FinalizeV2(aState, aCheckSum.mBytes.data(), aCheckSum.mBytes.size());
   return aCheckSum;
 }
 
@@ -106,34 +250,19 @@ bool ValidateSectionCheckSum(const SectionHeaderV2& pHeader,
   return CheckSumsEqual(aExpected, pHeader.mCheckSum);
 }
 
-RepairRecordV2 MakeIgnoredRepairRecord(std::uint64_t pArchiveFamilyId,
-                                       std::uint64_t pArchiveIndex,
-                                       std::uint64_t pBlockIndex) {
-  const std::uint64_t aSeed =
-      MixU64((pArchiveFamilyId << 1u) ^ (pArchiveIndex * 1315423911ULL) ^
-             (pBlockIndex * 2654435761ULL));
-  RepairRecordV2 aRecord;
-  aRecord.mRepairPointerArchive =
-      static_cast<std::uint32_t>((aSeed & 0xFFFFFFFFULL) ^ 0xA5A5A5A5u);
-  aRecord.mRepairPointerBlock =
-      static_cast<std::uint32_t>(((aSeed >> 32u) & 0xFFFFFFFFULL) ^ 0x5A5A5A5Au);
-  return aRecord;
-}
-
 std::string MakeArchiveFileNameV2(const std::string& pPrefix,
-                                  const std::string& pSourceStem,
                                   std::size_t pArchiveOrdinal,
                                   std::size_t pArchiveCount,
                                   const std::string& pSuffix) {
   std::size_t aDigits = 1u;
-  std::size_t aMax = pArchiveCount > 0u ? (pArchiveCount - 1u) : 0u;
+  std::size_t aMax = pArchiveCount > 0u ? pArchiveCount : 1u;
   while (aMax >= 10u) {
     ++aDigits;
     aMax /= 10u;
   }
 
   std::ostringstream aStream;
-  aStream << pPrefix << pSourceStem << "_" << std::setw(static_cast<int>(aDigits))
+  aStream << pPrefix << std::setw(static_cast<int>(aDigits))
           << std::setfill('0') << pArchiveOrdinal;
   if (!pSuffix.empty()) {
     if (pSuffix[0] == '.') {

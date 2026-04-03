@@ -1,5 +1,7 @@
 #include "RotationMaskCipher.hpp"
 
+#include <cstring>
+
 #include "../MemoryLayout/FormatUtilities.hpp"
 
 namespace peanutbutter {
@@ -68,20 +70,41 @@ bool RotationMaskCipherV2::IsConfigured() const {
 }
 
 bool RotationMaskCipherV2::Seal(const unsigned char* pSource,
+                                unsigned char* pWorker,
                                 unsigned char* pDestination,
                                 std::size_t pLength,
                                 std::string* pOutError) const {
-  return Apply(pSource, pDestination, pLength, mShift, pOutError);
+  return Apply(pSource, pWorker, pDestination, pLength, mShift, pOutError);
+}
+
+bool RotationMaskCipherV2::Seal(const unsigned char* pSource,
+                                unsigned char* pDestination,
+                                std::size_t pLength,
+                                std::string* pOutError) const {
+  return Apply(pSource, nullptr, pDestination, pLength, mShift, pOutError);
+}
+
+bool RotationMaskCipherV2::Unseal(const unsigned char* pSource,
+                                  unsigned char* pWorker,
+                                  unsigned char* pDestination,
+                                  std::size_t pLength,
+                                  std::string* pOutError) const {
+  return Apply(pSource, pWorker, pDestination, pLength, -mShift, pOutError);
 }
 
 bool RotationMaskCipherV2::Unseal(const unsigned char* pSource,
                                   unsigned char* pDestination,
                                   std::size_t pLength,
                                   std::string* pOutError) const {
-  return Apply(pSource, pDestination, pLength, -mShift, pOutError);
+  return Apply(pSource, nullptr, pDestination, pLength, -mShift, pOutError);
+}
+
+std::size_t RotationMaskCipherV2::WorkerBufferBytes() {
+  return kCipherTileBytesV2;
 }
 
 bool RotationMaskCipherV2::Apply(const unsigned char* pSource,
+                                 unsigned char* pWorker,
                                  unsigned char* pDestination,
                                  std::size_t pLength,
                                  int pSignedShift,
@@ -95,9 +118,6 @@ bool RotationMaskCipherV2::Apply(const unsigned char* pSource,
   if (pSource == nullptr || pDestination == nullptr) {
     return AssignCipherError(pOutError, "rotation mask cipher received null buffer.");
   }
-  if (pSource == pDestination) {
-    return AssignCipherError(pOutError, "rotation mask cipher requires distinct source and destination buffers.");
-  }
   if ((pLength % kCipherTileBytesV2) != 0u) {
     return AssignCipherError(pOutError, "rotation mask cipher length must be divisible by 48.");
   }
@@ -105,17 +125,26 @@ bool RotationMaskCipherV2::Apply(const unsigned char* pSource,
   const std::size_t aRotation = static_cast<std::size_t>(NormalizeShift(pSignedShift));
   const unsigned char aAntiMask = static_cast<unsigned char>(~mMask);
   const std::size_t aBlockCount = pLength / kCipherTileBytesV2;
+  const bool aInPlace = pSource == pDestination;
+  if (aInPlace && pWorker == nullptr) {
+    return AssignCipherError(pOutError, "rotation mask cipher requires a worker buffer for in-place operations.");
+  }
   for (std::size_t aBlock = 0u; aBlock < aBlockCount; ++aBlock) {
     const std::size_t aBase = aBlock * kCipherTileBytesV2;
+    const unsigned char* aSourceBlock = pSource + aBase;
+    if (aInPlace) {
+      std::memcpy(pWorker, aSourceBlock, kCipherTileBytesV2);
+      aSourceBlock = pWorker;
+    }
     for (std::size_t aIndex = 0u; aIndex < kCipherTileBytesV2; ++aIndex) {
       const std::size_t aSourceIndex =
           (aIndex + aRotation < kCipherTileBytesV2)
               ? (aIndex + aRotation)
               : (aIndex + aRotation - kCipherTileBytesV2);
       const unsigned char aBaseByte =
-          static_cast<unsigned char>(pSource[aBase + aIndex] & aAntiMask);
+          static_cast<unsigned char>(aSourceBlock[aIndex] & aAntiMask);
       const unsigned char aMasked =
-          static_cast<unsigned char>(pSource[aBase + aSourceIndex] & mMask);
+          static_cast<unsigned char>(aSourceBlock[aSourceIndex] & mMask);
       pDestination[aBase + aIndex] =
           static_cast<unsigned char>(aBaseByte | aMasked);
     }

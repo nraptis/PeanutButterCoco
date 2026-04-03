@@ -1,15 +1,20 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
+#include "../../Common/EngineFailure.hpp"
 #include "../../Common/Logging.hpp"
 #include "../../Common/Progress.hpp"
 #include "../../Common/SanityRequest.hpp"
 #include "../FileAccess/LocalFileSystem.hpp"
 
 namespace peanutbutter {
+
+class SanityDiscoveryCursorV2;
+class SanityCompareCursorV2;
 
 struct SanityEntryV2 {
   std::string mPath;
@@ -50,9 +55,17 @@ struct SanityCompareStateV2 {
   std::vector<std::string> mNormalInequalFiles;
 };
 
+struct SanityCursorStateV2 {
+  std::shared_ptr<SanityDiscoveryCursorV2> mDiscovery;
+  std::shared_ptr<SanityCompareCursorV2> mCompare;
+};
+
 struct SanityWorkStateV2 {
   SanityDiscoveryStateV2 mDiscovery{};
   SanityCompareStateV2 mCompare{};
+  SanityCursorStateV2 mCursor{};
+  std::uint64_t mWorkUnitsProcessed = 0u;
+  FailureInfoV2 mFailure{};
 };
 
 class SanityRuntimeV2 {
@@ -81,8 +94,14 @@ class SanityStageContextV2 {
   void SetActivePhase(ProgressStageV2 pStage,
                       std::size_t pPhaseIndex,
                       std::size_t pPhaseCount);
+  void BeginWorkUnit();
+  void ContinuePhaseOnNextHeartbeat();
+  bool ActivePhaseNeedsMoreHeartbeats() const;
   void EmitPhaseProgress(double pLocalFraction,
                          const std::string& pLabel) const;
+  bool ActivePhaseHasError() const;
+  const std::string& LastErrorLog() const;
+  const FailureInfoV2& Failure() const;
 
  private:
   SanityRequestV2 mRequest;
@@ -92,6 +111,9 @@ class SanityStageContextV2 {
   ProgressStageV2 mActiveStage = ProgressStageV2::kIdle;
   std::size_t mActivePhaseIndex = 0u;
   std::size_t mActivePhaseCount = 1u;
+  bool mActivePhaseNeedsMoreHeartbeats = false;
+  bool mActivePhaseHasError = false;
+  std::string mLastErrorLog;
 };
 
 }  // namespace peanutbutter

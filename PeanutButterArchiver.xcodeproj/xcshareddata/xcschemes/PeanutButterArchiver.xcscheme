@@ -32,18 +32,7 @@
       <Testables>
          <TestableReference
             skipped = "NO"
-            parallelizable = "YES">
-            <BuildableReference
-               BuildableIdentifier = "primary"
-               BlueprintIdentifier = "776586332F70E42A00735D5C"
-               BuildableName = "IgnorantTests.xctest"
-               BlueprintName = "IgnorantTests"
-               ReferencedContainer = "container:PeanutButterArchiver.xcodeproj">
-            </BuildableReference>
-         </TestableReference>
-         <TestableReference
-            skipped = "NO"
-            parallelizable = "YES">
+            parallelizable = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "776586402F70ED3500735D5C"

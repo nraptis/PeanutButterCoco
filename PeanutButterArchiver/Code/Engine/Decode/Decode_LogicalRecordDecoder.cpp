@@ -2,19 +2,128 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 #include <cstring>
+#include <filesystem>
+
+#include "../FileAccess/ConflictNamePolicy.hpp"
 
 namespace peanutbutter {
+namespace {
+
+bool IsAbsolutePathLikeV2(const std::string& pPath) {
+  if (pPath.empty()) {
+    return false;
+  }
+  if (pPath[0] == '/' || pPath[0] == '\\') {
+    return true;
+  }
+  return pPath.size() > 1u &&
+         std::isalpha(static_cast<unsigned char>(pPath[0])) != 0 &&
+         pPath[1] == ':';
+}
+
+bool IsSafeSymlinkTargetPathV2(const std::string& pPath) {
+  if (pPath.empty() || IsAbsolutePathLikeV2(pPath)) {
+    return false;
+  }
+  for (char aChar : pPath) {
+    const unsigned char aByte = static_cast<unsigned char>(aChar);
+    if (aByte < 32u || aByte == 127u || aByte == 0u) {
+      return false;
+    }
+  }
+  return true;
+}
+
+std::string JoinAndNormalizePathV2(const std::string& pLeft,
+                                   const std::string& pRight) {
+  if (pRight.empty()) {
+    return std::filesystem::path(pLeft).lexically_normal().generic_string();
+  }
+  return (std::filesystem::path(pLeft) / std::filesystem::path(pRight))
+      .lexically_normal()
+      .generic_string();
+}
+
+bool TryResolveAliasTargetDescriptorV2(const std::string& pEncodedTarget,
+                                       const std::string& pDestinationDirectory,
+                                       std::string& pOutResolvedTargetPath,
+                                       std::string& pOutErrorMessage) {
+  pOutResolvedTargetPath.clear();
+  pOutErrorMessage.clear();
+  if (pEncodedTarget.empty()) {
+    pOutErrorMessage = "alias target descriptor is empty.";
+    return false;
+  }
+
+  auto BuildAbsoluteFromDescriptor =
+      [&](char pDescriptor, const std::string& pRestPath) -> bool {
+    switch (pDescriptor) {
+      case 'r': {
+        pOutResolvedTargetPath =
+            pRestPath.empty()
+                ? std::filesystem::path(pDestinationDirectory)
+                      .lexically_normal()
+                      .generic_string()
+                : JoinAndNormalizePathV2(pDestinationDirectory, pRestPath);
+        return true;
+      }
+      case 'h': {
+        const char* aHomeValue = std::getenv("HOME");
+        if (aHomeValue == nullptr || aHomeValue[0] == '\0') {
+          pOutErrorMessage = "HOME is unavailable for alias target mapping.";
+          return false;
+        }
+        const std::string aHomePath(aHomeValue);
+        pOutResolvedTargetPath =
+            pRestPath.empty() ? aHomePath : JoinAndNormalizePathV2(aHomePath, pRestPath);
+        return true;
+      }
+      case 'a': {
+        pOutResolvedTargetPath =
+            pRestPath.empty() ? "/" : (std::string("/") + pRestPath);
+        return true;
+      }
+      default:
+        return false;
+    }
+  };
+
+  if (pEncodedTarget.size() == 1u) {
+    if (BuildAbsoluteFromDescriptor(pEncodedTarget[0], "")) {
+      return true;
+    }
+  } else if (pEncodedTarget.size() > 2u && pEncodedTarget[1] == '/') {
+    if (BuildAbsoluteFromDescriptor(pEncodedTarget[0], pEncodedTarget.substr(2u))) {
+      return true;
+    }
+  }
+
+  // Backward compatibility with earlier alias payloads that were root-relative.
+  pOutResolvedTargetPath = JoinAndNormalizePathV2(pDestinationDirectory, pEncodedTarget);
+  return true;
+}
+
+}  // namespace
 
 DecodeLogicalRecordDecoderV2::DecodeLogicalRecordDecoderV2(
     const std::string& pDestinationDirectory,
     FileSystemV2& pFileSystem,
     const memory_layout::ArchiveLayoutConfigV2& pLayout,
-    DecodeLogicalZoneV2 pZone)
+    DecodeLogicalZoneV2 pZone,
+    ProgressStageV2 pStage,
+    RuntimeEventKindV2 pStartEventKind,
+    RuntimeEventKindV2 pFinishEventKind,
+    DecodeLogicalRecordObserverV2 pObserver)
     : mDestinationDirectory(pDestinationDirectory),
       mFileSystem(pFileSystem),
       mLayout(pLayout),
-      mZone(pZone) {}
+      mZone(pZone),
+      mRuntimeStage(pStage),
+      mStartEventKind(pStartEventKind),
+      mFinishEventKind(pFinishEventKind),
+      mObserver(std::move(pObserver)) {}
 
 bool DecodeLogicalRecordDecoderV2::Consume(const unsigned char* pData,
                                            std::size_t pStart,
@@ -24,13 +133,19 @@ bool DecodeLogicalRecordDecoderV2::Consume(const unsigned char* pData,
                                            bool& pOutStoppedAtPadding,
                                            bool& pOutParseError,
                                            std::string& pOutParseErrorMessage,
-                                           std::uint64_t& pOutDataBytesWritten) {
+                                           std::uint64_t& pOutDataBytesWritten,
+                                           bool& pOutPausedAtBoundary,
+                                           std::size_t& pOutResumeOffset,
+                                           std::string& pOutPausedRecordReference) {
   (void)pTreatZeroLengthAsPadding;
   pOutTerminated = false;
   pOutStoppedAtPadding = false;
   pOutParseError = false;
   pOutParseErrorMessage.clear();
   pOutDataBytesWritten = 0u;
+  pOutPausedAtBoundary = false;
+  pOutResumeOffset = pStart;
+  pOutPausedRecordReference.clear();
 
   if (pData == nullptr || pStart > pEnd || pEnd > mLayout.SectionPayloadBytes()) {
     pOutParseError = true;
@@ -107,10 +222,25 @@ bool DecodeLogicalRecordDecoderV2::Consume(const unsigned char* pData,
           pOutParseErrorMessage = "record type is not allowed in this section.";
           return false;
         }
+        if (memory_layout::TypedRecordTypeIsReferenceV2(mCurrentTypeFlag)) {
+          mStage = Stage::kReferenceKind;
+          break;
+        }
+        if (mZone == DecodeLogicalZoneV2::kPreviewManifest) {
+          mStage = Stage::kPreviewPlaceholder;
+          break;
+        }
         if (memory_layout::TypedRecordTypeIsFolderV2(mCurrentTypeFlag)) {
+          EmitRecordStartEvent();
           if (ShouldMaterializeFolder(mCurrentTypeFlag)) {
             const std::string aDirPath =
                 mFileSystem.JoinPath(mDestinationDirectory, mCurrentPath);
+            if (!IsOutputPathInsideDestination(aDirPath)) {
+              pOutParseError = true;
+              pOutParseErrorMessage =
+                  "decoded folder path escapes destination directory.";
+              return false;
+            }
             if (!mFileSystem.EnsureDirectory(aDirPath)) {
               pOutParseError = true;
               pOutParseErrorMessage = "failed creating directory: " + aDirPath;
@@ -118,9 +248,144 @@ bool DecodeLogicalRecordDecoderV2::Consume(const unsigned char* pData,
             }
             ++mFoldersCreated;
           }
+          const std::string aFinishedReference = mCurrentPath;
+          const bool aShouldContinue = EmitRecordFinishEvent();
           ResetRecordState();
+          if (!aShouldContinue) {
+            pOutPausedAtBoundary = true;
+            pOutResumeOffset = aOffset;
+            pOutPausedRecordReference = aFinishedReference;
+            return true;
+          }
           break;
         }
+        mFileSizeBytesUsed = 0u;
+        std::memset(mFileSizeLe, 0, sizeof(mFileSizeLe));
+        mStage = Stage::kFileSize;
+        break;
+      }
+
+      case Stage::kReferenceKind: {
+        if (aOffset >= pEnd) {
+          break;
+        }
+        mCurrentReferenceKind = pData[aOffset++];
+        if (!memory_layout::IsKnownReferenceRecordKindV2(mCurrentReferenceKind)) {
+          pOutParseError = true;
+          pOutParseErrorMessage = "reference record kind is unknown.";
+          return false;
+        }
+        mReferenceTargetLengthBytesUsed = 0u;
+        std::memset(mReferenceTargetLengthLe, 0, sizeof(mReferenceTargetLengthLe));
+        mStage = Stage::kReferenceTargetLength;
+        break;
+      }
+
+      case Stage::kReferenceTargetLength: {
+        while (mReferenceTargetLengthBytesUsed < sizeof(mReferenceTargetLengthLe) &&
+               aOffset < pEnd) {
+          mReferenceTargetLengthLe[mReferenceTargetLengthBytesUsed++] = pData[aOffset++];
+        }
+        if (mReferenceTargetLengthBytesUsed < sizeof(mReferenceTargetLengthLe)) {
+          break;
+        }
+
+        mCurrentReferenceTargetLength = static_cast<std::uint16_t>(
+            static_cast<std::uint16_t>(mReferenceTargetLengthLe[0]) |
+            (static_cast<std::uint16_t>(mReferenceTargetLengthLe[1]) << 8u));
+        if (mCurrentReferenceTargetLength == 0u ||
+            mCurrentReferenceTargetLength > mLayout.mMaxPathLength) {
+          pOutParseError = true;
+          pOutParseErrorMessage =
+              "reference target path length exceeds supported maximum.";
+          return false;
+        }
+
+        mCurrentReferenceTargetPath.clear();
+        mCurrentReferenceTargetPath.reserve(mCurrentReferenceTargetLength);
+        mReferenceTargetBytesUsed = 0u;
+        mStage = Stage::kReferenceTargetBytes;
+        break;
+      }
+
+      case Stage::kReferenceTargetBytes: {
+        const std::size_t aRemaining =
+            mCurrentReferenceTargetLength - mReferenceTargetBytesUsed;
+        const std::size_t aChunk = std::min<std::size_t>(aRemaining, pEnd - aOffset);
+        if (aChunk == 0u) {
+          break;
+        }
+        mCurrentReferenceTargetPath.append(
+            reinterpret_cast<const char*>(pData + aOffset), aChunk);
+        mReferenceTargetBytesUsed += aChunk;
+        aOffset += aChunk;
+        if (mReferenceTargetBytesUsed < mCurrentReferenceTargetLength) {
+          break;
+        }
+        if (!IsSafeRelativePath(mCurrentReferenceTargetPath)) {
+          pOutParseError = true;
+          pOutParseErrorMessage =
+              "reference target path failed safety validation.";
+          return false;
+        }
+
+        bool aShouldContinue = true;
+        std::string aFinishedReference;
+        if (!FinishReferenceRecord(
+                aShouldContinue, aFinishedReference, pOutParseErrorMessage)) {
+          pOutParseError = true;
+          return false;
+        }
+        if (!aShouldContinue) {
+          pOutPausedAtBoundary = true;
+          pOutResumeOffset = aOffset;
+          pOutPausedRecordReference = aFinishedReference;
+          return true;
+        }
+        break;
+      }
+
+      case Stage::kPreviewPlaceholder: {
+        if (aOffset >= pEnd) {
+          break;
+        }
+        if (pData[aOffset++] !=
+            memory_layout::specs_verified::kPreviewRecordPlaceholderValueV2) {
+          pOutParseError = true;
+          pOutParseErrorMessage = "preview placeholder byte was non-zero.";
+          return false;
+        }
+
+        if (memory_layout::TypedRecordTypeIsFolderV2(mCurrentTypeFlag)) {
+          EmitRecordStartEvent();
+          if (ShouldMaterializeFolder(mCurrentTypeFlag)) {
+            const std::string aDirPath =
+                mFileSystem.JoinPath(mDestinationDirectory, mCurrentPath);
+            if (!IsOutputPathInsideDestination(aDirPath)) {
+              pOutParseError = true;
+              pOutParseErrorMessage =
+                  "decoded folder path escapes destination directory.";
+              return false;
+            }
+            if (!mFileSystem.EnsureDirectory(aDirPath)) {
+              pOutParseError = true;
+              pOutParseErrorMessage = "failed creating directory: " + aDirPath;
+              return false;
+            }
+            ++mFoldersCreated;
+          }
+          const std::string aFinishedReference = mCurrentPath;
+          const bool aShouldContinue = EmitRecordFinishEvent();
+          ResetRecordState();
+          if (!aShouldContinue) {
+            pOutPausedAtBoundary = true;
+            pOutResumeOffset = aOffset;
+            pOutPausedRecordReference = aFinishedReference;
+            return true;
+          }
+          break;
+        }
+
         mFileSizeBytesUsed = 0u;
         std::memset(mFileSizeLe, 0, sizeof(mFileSizeLe));
         mStage = Stage::kFileSize;
@@ -156,6 +421,14 @@ bool DecodeLogicalRecordDecoderV2::Consume(const unsigned char* pData,
             pOutParseErrorMessage = "failed reserving a visible output path.";
             return false;
           }
+          if (!IsOutputPathInsideDestination(aOutPath) ||
+              !IsOutputPathInsideDestination(aFinalPath) ||
+              !IsOutputPathInsideDestination(aPartialPath)) {
+            pOutParseError = true;
+            pOutParseErrorMessage =
+                "decoded file path escapes destination directory.";
+            return false;
+          }
           const std::string aOutParent = mFileSystem.ParentPath(aOutPath);
           if (!aOutParent.empty() && !mFileSystem.EnsureDirectory(aOutParent)) {
             pOutParseError = true;
@@ -174,6 +447,7 @@ bool DecodeLogicalRecordDecoderV2::Consume(const unsigned char* pData,
           mCurrentFinalPath = aFinalPath;
           mCurrentPartialPath = aPartialPath;
         }
+        EmitRecordStartEvent();
         mContentBytesRemaining = mCurrentFileSize;
         mStage = Stage::kContentBytes;
         break;
@@ -184,9 +458,18 @@ bool DecodeLogicalRecordDecoderV2::Consume(const unsigned char* pData,
             std::min<std::uint64_t>(mContentBytesRemaining,
                                     static_cast<std::uint64_t>(pEnd - aOffset)));
         if (aChunk == 0u) {
-          if (!FinishFileRecord(pOutParseErrorMessage)) {
+          bool aShouldContinue = true;
+          std::string aFinishedReference;
+          if (!FinishFileRecord(
+                  aShouldContinue, aFinishedReference, pOutParseErrorMessage)) {
             pOutParseError = true;
             return false;
+          }
+          if (!aShouldContinue) {
+            pOutPausedAtBoundary = true;
+            pOutResumeOffset = aOffset;
+            pOutPausedRecordReference = aFinishedReference;
+            return true;
           }
           break;
         }
@@ -204,20 +487,23 @@ bool DecodeLogicalRecordDecoderV2::Consume(const unsigned char* pData,
           pOutDataBytesWritten += static_cast<std::uint64_t>(aChunk);
         }
         if (mContentBytesRemaining == 0u) {
-          if (!FinishFileRecord(pOutParseErrorMessage)) {
+          bool aShouldContinue = true;
+          std::string aFinishedReference;
+          if (!FinishFileRecord(
+                  aShouldContinue, aFinishedReference, pOutParseErrorMessage)) {
             pOutParseError = true;
             return false;
+          }
+          if (!aShouldContinue) {
+            pOutPausedAtBoundary = true;
+            pOutResumeOffset = aOffset;
+            pOutPausedRecordReference = aFinishedReference;
+            return true;
           }
         }
         break;
       }
     }
-  }
-
-  if (IsAtIllegalPartialScalarBoundary()) {
-    pOutParseError = true;
-    pOutParseErrorMessage = "fixed-width scalar crossed a block boundary.";
-    return false;
   }
 
   return true;
@@ -246,7 +532,7 @@ bool DecodeLogicalRecordDecoderV2::IsInsideFile() const {
   return mStage == Stage::kContentBytes && mCurrentWrite != nullptr;
 }
 
-std::string DecodeLogicalRecordDecoderV2::CurrentFileReference() const {
+const std::string& DecodeLogicalRecordDecoderV2::CurrentFileReference() const {
   return mCurrentPath;
 }
 
@@ -265,6 +551,14 @@ bool DecodeLogicalRecordDecoderV2::AbortCurrentFile() {
   return aRenamed;
 }
 
+void DecodeLogicalRecordDecoderV2::ResetAfterParseError() {
+  if (mCurrentWrite != nullptr) {
+    (void)AbortCurrentFile();
+    return;
+  }
+  ResetRecordState();
+}
+
 std::uint64_t DecodeLogicalRecordDecoderV2::FilesWritten() const {
   return mFilesWritten;
 }
@@ -281,22 +575,33 @@ void DecodeLogicalRecordDecoderV2::ResetRecordState() {
   mStage = Stage::kPathLength;
   mPathLengthBytesUsed = 0u;
   mPathBytesUsed = 0u;
+  mReferenceTargetLengthBytesUsed = 0u;
+  mReferenceTargetBytesUsed = 0u;
   mFileSizeBytesUsed = 0u;
   mCurrentPathLength = 0u;
+  mCurrentReferenceTargetLength = 0u;
   mCurrentTypeFlag = 0u;
+  mCurrentReferenceKind = 0u;
   mCurrentFileSize = 0u;
   mContentBytesRemaining = 0u;
   mCurrentFileBytesWritten = 0u;
   std::memset(mPathLengthLe, 0, sizeof(mPathLengthLe));
+  std::memset(mReferenceTargetLengthLe, 0, sizeof(mReferenceTargetLengthLe));
   std::memset(mFileSizeLe, 0, sizeof(mFileSizeLe));
   mCurrentPath.clear();
+  mCurrentReferenceTargetPath.clear();
   mCurrentOutputPath.clear();
   mCurrentFinalPath.clear();
   mCurrentPartialPath.clear();
   mCurrentWrite.reset();
 }
 
-bool DecodeLogicalRecordDecoderV2::FinishFileRecord(std::string& pOutErrorMessage) {
+bool DecodeLogicalRecordDecoderV2::FinishFileRecord(
+    bool& pOutShouldContinue,
+    std::string& pOutFinishedReference,
+    std::string& pOutErrorMessage) {
+  pOutShouldContinue = true;
+  pOutFinishedReference.clear();
   if (mCurrentWrite != nullptr) {
     if (!mCurrentWrite->Close()) {
       pOutErrorMessage = "failed closing decoded output file.";
@@ -312,6 +617,8 @@ bool DecodeLogicalRecordDecoderV2::FinishFileRecord(std::string& pOutErrorMessag
   if (!mCurrentFinalPath.empty()) {
     ++mFilesWritten;
   }
+  pOutFinishedReference = mCurrentPath;
+  pOutShouldContinue = EmitRecordFinishEvent();
   ResetRecordState();
   return true;
 }
@@ -366,6 +673,8 @@ bool DecodeLogicalRecordDecoderV2::IsTypeAllowed(std::uint8_t pTypeFlag) const {
     case DecodeLogicalZoneV2::kData:
       return pTypeFlag ==
                  static_cast<std::uint8_t>(memory_layout::TypedRecordTypeV2::kDataFile) ||
+             pTypeFlag == static_cast<std::uint8_t>(
+                              memory_layout::TypedRecordTypeV2::kDataReference) ||
              pTypeFlag ==
                  static_cast<std::uint8_t>(memory_layout::TypedRecordTypeV2::kDataFolder);
   }
@@ -388,13 +697,146 @@ bool DecodeLogicalRecordDecoderV2::ShouldMaterializeFile(std::uint8_t pTypeFlag)
              static_cast<std::uint8_t>(memory_layout::TypedRecordTypeV2::kDataFile);
 }
 
+bool DecodeLogicalRecordDecoderV2::ShouldMaterializeReference(
+    std::uint8_t pTypeFlag) const {
+  return mZone == DecodeLogicalZoneV2::kData &&
+         pTypeFlag == static_cast<std::uint8_t>(
+                          memory_layout::TypedRecordTypeV2::kDataReference);
+}
+
+bool DecodeLogicalRecordDecoderV2::ResolveReferenceOutputPath(
+    const std::string& pRelativePath,
+    std::string& pOutFinalPath) const {
+  pOutFinalPath.clear();
+  if (pRelativePath.empty()) {
+    return false;
+  }
+
+  const std::string aRequestedFinalPath =
+      mFileSystem.JoinPath(mDestinationDirectory, pRelativePath);
+  const std::string aParentPath = mFileSystem.ParentPath(aRequestedFinalPath);
+  const std::string aLeafName = mFileSystem.FileName(aRequestedFinalPath);
+  std::string aPreferredLeaf = aLeafName;
+  if (aPreferredLeaf.empty()) {
+    aPreferredLeaf = "link";
+  }
+  return ResolveNoOverwritePathV2(
+      mFileSystem,
+      aParentPath,
+      aPreferredLeaf,
+      pOutFinalPath);
+}
+
+bool DecodeLogicalRecordDecoderV2::FinishReferenceRecord(
+    bool& pOutShouldContinue,
+    std::string& pOutFinishedReference,
+    std::string& pOutErrorMessage) {
+  pOutShouldContinue = true;
+  pOutFinishedReference.clear();
+
+  EmitRecordStartEvent();
+
+  if (ShouldMaterializeReference(mCurrentTypeFlag)) {
+    std::string aLinkPath;
+    if (!ResolveReferenceOutputPath(mCurrentPath, aLinkPath)) {
+      pOutErrorMessage = "failed reserving a visible output path for reference.";
+      return false;
+    }
+    if (!IsOutputPathInsideDestination(aLinkPath)) {
+      pOutErrorMessage = "decoded reference path escapes destination directory.";
+      return false;
+    }
+
+    const std::string aParentPath = mFileSystem.ParentPath(aLinkPath);
+    if (!aParentPath.empty() && !mFileSystem.EnsureDirectory(aParentPath)) {
+      pOutErrorMessage = "failed creating parent directory for output reference.";
+      return false;
+    }
+
+    mCurrentFinalPath = aLinkPath;
+    switch (static_cast<memory_layout::ReferenceRecordKindV2>(mCurrentReferenceKind)) {
+      case memory_layout::ReferenceRecordKindV2::kSymlink: {
+        const std::string aTargetDestinationPath =
+            mFileSystem.JoinPath(mDestinationDirectory, mCurrentReferenceTargetPath);
+        if (!IsOutputPathInsideDestination(aTargetDestinationPath)) {
+          pOutErrorMessage = "reference target escapes destination directory.";
+          return false;
+        }
+        std::error_code aRelativeError;
+        std::filesystem::path aRelativeTargetPath = std::filesystem::relative(
+            std::filesystem::path(aTargetDestinationPath),
+            std::filesystem::path(aParentPath.empty() ? mDestinationDirectory : aParentPath),
+            aRelativeError);
+        std::string aRelativeTarget =
+            aRelativeError
+                ? mCurrentReferenceTargetPath
+                : aRelativeTargetPath.lexically_normal().generic_string();
+        if (aRelativeTarget.empty()) {
+          aRelativeTarget = mCurrentReferenceTargetPath;
+        }
+        if (!IsSafeSymlinkTargetPathV2(aRelativeTarget)) {
+          pOutErrorMessage = "reference target path failed safety validation.";
+          return false;
+        }
+        if (!mFileSystem.CreateSymlink(mCurrentFinalPath, aRelativeTarget, false)) {
+          pOutErrorMessage = "failed creating decoded symbolic link.";
+          return false;
+        }
+        break;
+      }
+      case memory_layout::ReferenceRecordKindV2::kAlias: {
+        std::string aResolvedAliasTargetPath;
+        std::string aResolveError;
+        if (!TryResolveAliasTargetDescriptorV2(
+                mCurrentReferenceTargetPath,
+                mDestinationDirectory,
+                aResolvedAliasTargetPath,
+                aResolveError)) {
+          pOutErrorMessage = aResolveError.empty()
+                                 ? "failed resolving alias target descriptor."
+                                 : aResolveError;
+          return false;
+        }
+        if (!mFileSystem.CreateAlias(mCurrentFinalPath, aResolvedAliasTargetPath, false)) {
+          // Some Apple APIs refuse creating alias files when the target does not exist.
+          // Preserve reference intent with a symlink fallback instead of failing decode.
+          if (!mFileSystem.CreateSymlink(
+                  mCurrentFinalPath, aResolvedAliasTargetPath, false)) {
+            pOutErrorMessage =
+                "failed creating decoded alias file and symlink fallback.";
+            return false;
+          }
+        }
+        break;
+      }
+      case memory_layout::ReferenceRecordKindV2::kReparsePoint:
+      case memory_layout::ReferenceRecordKindV2::kHardlink:
+        pOutErrorMessage = "reference kind is unsupported for materialization.";
+        return false;
+    }
+    ++mFilesWritten;
+  }
+
+  pOutFinishedReference = mCurrentPath;
+  pOutShouldContinue = EmitRecordFinishEvent();
+  ResetRecordState();
+  return true;
+}
+
 bool DecodeLogicalRecordDecoderV2::IsAtIllegalPartialScalarBoundary() const {
   switch (mStage) {
     case Stage::kPathLength:
       return mPathLengthBytesUsed != 0u;
+    case Stage::kReferenceKind:
+      return false;
+    case Stage::kReferenceTargetLength:
+      return mReferenceTargetLengthBytesUsed != 0u;
+    case Stage::kReferenceTargetBytes:
+      return false;
     case Stage::kFileSize:
       return mFileSizeBytesUsed != 0u;
     case Stage::kTypeFlag:
+    case Stage::kPreviewPlaceholder:
     case Stage::kPathBytes:
     case Stage::kContentBytes:
       return false;
@@ -423,28 +865,91 @@ bool DecodeLogicalRecordDecoderV2::ResolveOutputPaths(
   if (aStem.empty()) {
     aStem = "output";
   }
+  const std::string aPreferredLeaf = aStem + aExtension;
+  return ResolveNoOverwritePathTripletV2(mFileSystem,
+                                         aParentPath,
+                                         aPreferredLeaf,
+                                         "$WRITING_",
+                                         "$PARTIAL_",
+                                         pOutWritingPath,
+                                         pOutFinalPath,
+                                         pOutPartialPath);
+}
 
-  for (std::uint32_t aOrdinal = 0u; aOrdinal < 1000000u; ++aOrdinal) {
-    const std::string aCandidateLeaf =
-        aOrdinal == 0u ? (aStem + aExtension)
-                       : (aStem + "_" + std::to_string(aOrdinal) + aExtension);
-    const std::string aWritingLeaf = "$WRITING_" + aCandidateLeaf;
-    const std::string aPartialLeaf = "$PARTIAL_" + aCandidateLeaf;
-    const std::string aFinalPath = mFileSystem.JoinPath(aParentPath, aCandidateLeaf);
-    const std::string aWritingPath = mFileSystem.JoinPath(aParentPath, aWritingLeaf);
-    const std::string aPartialPath = mFileSystem.JoinPath(aParentPath, aPartialLeaf);
+bool DecodeLogicalRecordDecoderV2::IsOutputPathInsideDestination(
+    const std::string& pOutputPath) const {
+  if (pOutputPath.empty() || !EnsureResolvedDestinationDirectory()) {
+    return false;
+  }
+  const std::string aParentPath = mFileSystem.ParentPath(pOutputPath);
+  const std::string aCheckPath = aParentPath.empty() ? pOutputPath : aParentPath;
+  std::string aResolvedPath;
+  if (!ResolveCanonicalOrAbsolutePath(aCheckPath, aResolvedPath)) {
+    return false;
+  }
+  return IsResolvedPathInsideResolvedDestination(aResolvedPath);
+}
 
-    if (!mFileSystem.Exists(aFinalPath) &&
-        !mFileSystem.Exists(aWritingPath) &&
-        !mFileSystem.Exists(aPartialPath)) {
-      pOutWritingPath = aWritingPath;
-      pOutFinalPath = aFinalPath;
-      pOutPartialPath = aPartialPath;
-      return true;
-    }
+bool DecodeLogicalRecordDecoderV2::ResolveCanonicalOrAbsolutePath(
+    const std::string& pPath,
+    std::string& pOutResolvedPath) const {
+  pOutResolvedPath.clear();
+  std::error_code aError;
+  const std::filesystem::path aCanonical =
+      std::filesystem::weakly_canonical(std::filesystem::path(pPath), aError);
+  if (!aError) {
+    pOutResolvedPath = aCanonical.lexically_normal().generic_string();
+    return !pOutResolvedPath.empty();
   }
 
+  aError.clear();
+  const std::filesystem::path aAbsolute =
+      std::filesystem::absolute(std::filesystem::path(pPath), aError);
+  if (!aError) {
+    pOutResolvedPath = aAbsolute.lexically_normal().generic_string();
+    return !pOutResolvedPath.empty();
+  }
   return false;
+}
+
+bool DecodeLogicalRecordDecoderV2::EnsureResolvedDestinationDirectory() const {
+  if (mResolvedDestinationDirectoryInitialized) {
+    return mResolvedDestinationDirectoryValid;
+  }
+  mResolvedDestinationDirectoryInitialized = true;
+  mResolvedDestinationDirectoryValid = ResolveCanonicalOrAbsolutePath(
+      mDestinationDirectory, mResolvedDestinationDirectory);
+  if (!mResolvedDestinationDirectoryValid) {
+    return false;
+  }
+  if (mResolvedDestinationDirectory.size() > 1u &&
+      mResolvedDestinationDirectory.back() == '/') {
+    mResolvedDestinationDirectory.pop_back();
+  }
+  return !mResolvedDestinationDirectory.empty();
+}
+
+bool DecodeLogicalRecordDecoderV2::IsResolvedPathInsideResolvedDestination(
+    const std::string& pResolvedPath) const {
+  if (!mResolvedDestinationDirectoryValid || pResolvedPath.empty()) {
+    return false;
+  }
+  std::string aPath = pResolvedPath;
+  if (aPath.size() > 1u && aPath.back() == '/') {
+    aPath.pop_back();
+  }
+  if (mResolvedDestinationDirectory == "/") {
+    return !aPath.empty() && aPath[0] == '/';
+  }
+  if (aPath == mResolvedDestinationDirectory) {
+    return true;
+  }
+  return aPath.size() > mResolvedDestinationDirectory.size() &&
+         aPath.compare(
+             0,
+             mResolvedDestinationDirectory.size(),
+             mResolvedDestinationDirectory) == 0 &&
+         aPath[mResolvedDestinationDirectory.size()] == '/';
 }
 
 bool DecodeLogicalRecordDecoderV2::PromoteCurrentOutputToPartial() {
@@ -455,6 +960,73 @@ bool DecodeLogicalRecordDecoderV2::PromoteCurrentOutputToPartial() {
     return false;
   }
   return mFileSystem.RenamePath(mCurrentOutputPath, mCurrentPartialPath);
+}
+
+void DecodeLogicalRecordDecoderV2::EmitRecordStartEvent() const {
+  if (!mObserver || mCurrentPath.empty()) {
+    return;
+  }
+
+  RuntimeEventV2 aEvent;
+  aEvent.mKind = mStartEventKind;
+  aEvent.mStage = mRuntimeStage;
+  aEvent.SetInfo("relative_path", mCurrentPath);
+  aEvent.SetInfo("file_name", mCurrentPath);
+  aEvent.SetInfo("output_path", mCurrentFinalPath.empty() ? mCurrentOutputPath
+                                                          : mCurrentFinalPath);
+  aEvent.SetInfo("is_directory", memory_layout::TypedRecordTypeIsFolderV2(mCurrentTypeFlag));
+  aEvent.SetInfo("content_length", mCurrentFileSize);
+
+  switch (mStartEventKind) {
+    case RuntimeEventKindV2::kDecodeFolderStarted:
+      aEvent.mLabel = "Decode started folder " + mCurrentPath;
+      break;
+    case RuntimeEventKindV2::kDecodeManifestItemStarted:
+      aEvent.mLabel = "Decode started manifest item " + mCurrentPath;
+      break;
+    case RuntimeEventKindV2::kDecodeFileStarted:
+      aEvent.mLabel = "Decode started file " + mCurrentPath;
+      break;
+    default:
+      aEvent.mLabel = RuntimeEventKindLabelV2(mStartEventKind);
+      break;
+  }
+
+  (void)mObserver(aEvent);
+}
+
+bool DecodeLogicalRecordDecoderV2::EmitRecordFinishEvent() const {
+  if (!mObserver || mCurrentPath.empty()) {
+    return true;
+  }
+
+  RuntimeEventV2 aEvent;
+  aEvent.mKind = mFinishEventKind;
+  aEvent.mStage = mRuntimeStage;
+  aEvent.SetInfo("relative_path", mCurrentPath);
+  aEvent.SetInfo("file_name", mCurrentPath);
+  aEvent.SetInfo("output_path", mCurrentFinalPath.empty() ? mCurrentOutputPath
+                                                          : mCurrentFinalPath);
+  aEvent.SetInfo("is_directory", memory_layout::TypedRecordTypeIsFolderV2(mCurrentTypeFlag));
+  aEvent.SetInfo("content_length", mCurrentFileSize);
+  aEvent.SetInfo("bytes_written", mCurrentFileBytesWritten);
+
+  switch (mFinishEventKind) {
+    case RuntimeEventKindV2::kDecodeFolderFinished:
+      aEvent.mLabel = "Decode finished folder " + mCurrentPath;
+      break;
+    case RuntimeEventKindV2::kDecodeManifestItemFinished:
+      aEvent.mLabel = "Decode finished manifest item " + mCurrentPath;
+      break;
+    case RuntimeEventKindV2::kDecodeFileFinished:
+      aEvent.mLabel = "Decode finished file " + mCurrentPath;
+      break;
+    default:
+      aEvent.mLabel = RuntimeEventKindLabelV2(mFinishEventKind);
+      break;
+  }
+
+  return mObserver(aEvent);
 }
 
 }  // namespace peanutbutter

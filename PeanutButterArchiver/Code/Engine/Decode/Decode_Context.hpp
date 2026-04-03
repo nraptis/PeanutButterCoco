@@ -1,12 +1,17 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "../../Common/DecodeRequest.hpp"
+#include "../../Common/EngineFailure.hpp"
 #include "../../Common/Logging.hpp"
 #include "../../Common/Progress.hpp"
+#include "../../Common/RuntimeEvent.hpp"
+#include "../../Common/TransferTracking.hpp"
+#include "../ArchiveBox/ArchiveBoxes.hpp"
 #include "../Crypto/RotationMaskCipher.hpp"
 #include "../FileAccess/LocalFileSystem.hpp"
 #include "../MemoryLayout/ArchiveLayoutConfig.hpp"
@@ -15,25 +20,18 @@
 
 namespace peanutbutter {
 
+class DecodeDiscoveryCursorV2;
+class DecodeHeaderBootstrapCursorV2;
+class DecodeInspectionCursorV2;
+class DecodeArchiveDecodeCursorV2;
+class DecodeRepairApplyCursorV2;
+
 enum class DecodeModeV2 {
   kOptimistic = 0,
   kPessimistic = 1,
 };
 
-struct DiscoveredArchiveFileV2 {
-  std::string mPath;
-  std::uint64_t mFileLength = 0u;
-  std::uint64_t mReadableBlockCount = 0u;
-  std::uint64_t mArchiveIndex = 0u;
-  std::uint64_t mArchiveBlockCount = 0u;
-  std::uint64_t mFilenameIndex = 0u;
-  std::uint64_t mHeaderIndex = 0u;
-  bool mIsPresent = true;
-  bool mHasReadableHeader = false;
-  bool mHasReadableSection = false;
-  memory_layout::ArchiveHeaderV2 mHeader{};
-  memory_layout::SectionHeaderV2 mFirstSectionHeader{};
-};
+using DiscoveredArchiveFileV2 = ArchiveBox_DecodeV2;
 
 struct DecodeBootstrapStateV2 {
   bool mHeaderRead = false;
@@ -71,6 +69,7 @@ struct DecodeCipherStateV2 {
   bool mDerived = false;
   bool mAssembled = false;
   RotationMaskCipherV2 mCipher{};
+  FixedBlockBufferV2 mWorkerBuffer{};
 };
 
 struct DecodeOutputStateV2 {
@@ -89,14 +88,22 @@ struct DecodeRepairStateV2 {
   std::uint64_t mPatchedBlocks = 0u;
   std::uint64_t mRepairableBytes = 0u;
   std::uint64_t mPatchedBytes = 0u;
+  std::uint64_t mRepairBlocksApplied = 0u;
+  std::uint64_t mRepairBlocksSkippedValidTarget = 0u;
 };
 
 struct DecodeCancelStateV2 {
   bool mObserved = false;
   bool mShouldFinalizeAfterCancel = false;
-  bool mBudgetExceeded = false;
-  std::uint64_t mCancelBlocksRead = 0u;
   std::string mCancelFileReference;
+};
+
+struct DecodeCursorStateV2 {
+  std::shared_ptr<DecodeDiscoveryCursorV2> mDiscovery;
+  std::shared_ptr<DecodeHeaderBootstrapCursorV2> mHeaderBootstrap;
+  std::shared_ptr<DecodeInspectionCursorV2> mInspection;
+  std::shared_ptr<DecodeArchiveDecodeCursorV2> mArchiveDecode;
+  std::shared_ptr<DecodeRepairApplyCursorV2> mRepairApply;
 };
 
 struct DecodeWorkStateV2 {
@@ -108,6 +115,10 @@ struct DecodeWorkStateV2 {
   DecodeOutputStateV2 mOutput{};
   DecodeRepairStateV2 mRepair{};
   DecodeCancelStateV2 mCancel{};
+  TransferTrackingStateV2 mTransfers{};
+  DecodeCursorStateV2 mCursor{};
+  std::uint64_t mWorkUnitsProcessed = 0u;
+  FailureInfoV2 mFailure{};
 };
 
 class DecodeRuntimeV2 {
@@ -119,6 +130,11 @@ class DecodeRuntimeV2 {
                             double pLocalFraction,
                             double pOverallFraction,
                             const std::string& pLabel) = 0;
+  virtual bool WantsRuntimeEvent(RuntimeEventKindV2 pKind) const {
+    (void)pKind;
+    return true;
+  }
+  virtual bool EmitRuntimeEvent(const RuntimeEventV2& pEvent) = 0;
 };
 
 class DecodeStageContextV2 {
@@ -137,15 +153,25 @@ class DecodeStageContextV2 {
 
   bool IsCancelRequested() const;
   void EmitLog(LogLevelV2 pLevel, const std::string& pMessage) const;
+  bool WantsRuntimeEvent(RuntimeEventKindV2 pKind) const;
+  bool EmitRuntimeEvent(const RuntimeEventV2& pEvent) const;
   void SetActivePhase(ProgressStageV2 pStage,
                       std::size_t pPhaseIndex,
                       std::size_t pPhaseCount);
+  void BeginWorkUnit();
+  void ContinuePhaseOnNextHeartbeat();
+  bool ActivePhaseNeedsMoreHeartbeats() const;
+  void RequestBatchYield();
+  bool ActivePhaseBatchYieldRequested() const;
   void EmitPhaseProgress(double pLocalFraction,
                          const std::string& pLabel) const;
   void EmitProgress(ProgressStageV2 pStage,
                     double pLocalFraction,
                     double pOverallFraction,
                     const std::string& pLabel) const;
+  bool ActivePhaseHasError() const;
+  const std::string& LastErrorLog() const;
+  const FailureInfoV2& Failure() const;
 
  private:
   DecodeRequestV2 mRequest;
@@ -157,6 +183,10 @@ class DecodeStageContextV2 {
   ProgressStageV2 mActiveStage = ProgressStageV2::kIdle;
   std::size_t mActivePhaseIndex = 0u;
   std::size_t mActivePhaseCount = 1u;
+  bool mActivePhaseNeedsMoreHeartbeats = false;
+  bool mActivePhaseBatchYieldRequested = false;
+  bool mActivePhaseHasError = false;
+  std::string mLastErrorLog;
 };
 
 }  // namespace peanutbutter
