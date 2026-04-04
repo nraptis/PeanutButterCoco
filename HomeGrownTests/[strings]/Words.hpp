@@ -10,6 +10,7 @@
 
 #include "namespaces.hpp"
 #include "ByteString.hpp"
+#include "FakeFile.hpp"
 
 class Words {
     
@@ -20,6 +21,9 @@ public:
     
     static ByteString           GetRandomFileContent(int pMinLength, int pMaxLength);
     static ByteString           GetRandomFileContent(int pLength);
+    
+    static vector<ByteString>   GetRandomFileNames(int pCount, int pMinLength, int pMaxLength);
+    static vector<FakeFile>     GetRandomFiles(int pCount, int pNameMinLength, int pNameMaxLength, int pContentMinLength, int pContentMaxLength);
     
 private:
     

@@ -206,14 +206,19 @@ bool MockHardDrive::OverwriteFileRegion(const std::string& pPath,
 
 std::string MockHardDrive::JoinPath(const std::string& pLeft,
                                     const std::string& pRight) const {
-  if (pRight.empty()) {
-    return Normalize(pLeft);
-  }
-  if (pRight[0] == '/' || pRight[0] == '\\') {
-    return Normalize(pRight);
-  }
-  const std::string aLeft = pLeft.empty() ? "/" : Normalize(pLeft);
-  return Normalize(aLeft + "/" + pRight);
+    if (pRight.empty()) {
+        return Normalize(pLeft);
+    }
+    if (pRight[0] == '/' || pRight[0] == '\\') {
+        return Normalize(pRight);
+    }
+    const std::string aLeft = pLeft.empty() ? "/" : Normalize(pLeft);
+    return Normalize(aLeft + "/" + pRight);
+}
+
+std::string MockHardDrive::JoinPath(const std::string& pLeft, const std::string& pMiddle, const std::string& pRight) const {
+    string aLeftAndMiddle = JoinPath(pLeft, pMiddle);
+    return JoinPath(aLeftAndMiddle, pRight);
 }
 
 std::string MockHardDrive::ParentPath(const std::string& pPath) const {

@@ -15,6 +15,7 @@
 #include "knobs.hpp"
 #include "BundleRequest.hpp"
 #include "Bundle_Workflow.hpp"
+#include "ArchiveHeader.hpp"
 
 // mMaxArchiveCount is same as mBlockCount, 2 sources
 // mCancelFinishBlocks is defunct
@@ -27,14 +28,21 @@ public:
     
     vector<FakeFile>                mFileList;
     
+    void                            SortFiles();
+    bool                            ContainsDuplicateFiles() const;
+    
+    void                            AddFile(string pName, string pContent);
+    void                            AddFile(ByteString pName, ByteString pContent);
+    
+    
     ByteString                      mSource;
     ByteString                      mDestination;
     
     ByteString                      mFilePrefix;
     
-    int                             mPayloadByteCount;
+    int                             mPayloadBytesPerBlock;
     int                             mBatchSize;
-    int                             mBlockCount;
+    int                             mBlocksPerArchive;
     
     int                             mMaxPathLength;
     int                             mMaxArchiveCount;

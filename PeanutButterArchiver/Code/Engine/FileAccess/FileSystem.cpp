@@ -49,7 +49,19 @@ bool FileSystemV2::WriteFile(const std::string& pPath,
     return false;
   }
 
-  const bool aSucceeded = aWrite->Write(pContents, pLength) && aWrite->Close();
+  bool aSucceeded = true;
+
+  if (pLength > 0) {
+    if (pContents == nullptr) {
+      return false; // invalid input
+    }
+    aSucceeded = aWrite->Write(pContents, pLength);
+  }
+
+  if (aSucceeded) {
+    aSucceeded = aWrite->Close();
+  }
+
   return aSucceeded;
 }
 

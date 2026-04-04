@@ -29,6 +29,8 @@ public:
     std::string Normalize(const std::string& pPath) const;
     
     std::string JoinPath(const std::string& pLeft, const std::string& pRight) const;
+    std::string JoinPath(const std::string& pLeft, const std::string& pMiddle, const std::string& pRight) const;
+    
     std::string ParentPath(const std::string& pPath) const;
     std::string FileName(const std::string& pPath) const;
     std::string StemName(const std::string& pPath) const;

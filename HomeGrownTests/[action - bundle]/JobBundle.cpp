@@ -6,16 +6,18 @@
 //
 
 #include "JobBundle.hpp"
+#include "ByteMap.hpp"
+#include <algorithm>
 
 JobBundle::JobBundle() {
-    mSource = "input";
-    mDestination = "archived";
+    mSource = "/root/input";
+    mDestination = "/root/archived";
     mFilePrefix = "bdl_";
-    mPayloadByteCount = 18;
+    mPayloadBytesPerBlock = 18;
     mMaxPathLength = 128;
     mMaxArchiveCount = 64000;
     mBatchSize = 4;
-    mBlockCount = 4;
+    mBlocksPerArchive = 4;
     mEncryptionEnabled = false;
     mRepairCoverage = 0;
     mPreviewEnabled = false;
@@ -24,6 +26,38 @@ JobBundle::JobBundle() {
 
 JobBundle::~JobBundle() {
     
+}
+
+void JobBundle::AddFile(string pName, string pContent) {
+    FakeFile aFile;
+    aFile.mName.Set(pName);
+    aFile.mContent.Set(pContent);
+    mFileList.push_back(aFile);
+}
+
+void JobBundle::AddFile(ByteString pName, ByteString pContent) {
+    FakeFile aFile;
+    aFile.mName.Set(pName);
+    aFile.mContent.Set(pContent);
+    mFileList.push_back(aFile);
+}
+
+void JobBundle::SortFiles() {
+    std::sort(mFileList.begin(), mFileList.end(), [](const FakeFile &pLeft, const FakeFile &pRight) {
+        return pLeft.mName.Compare(pRight.mName) < 0;
+    });
+}
+
+bool JobBundle::ContainsDuplicateFiles() const {
+    ByteMap aMap;
+    for (int i=0; i<((int)mFileList.size()); i++) {
+        const ByteString &aName = mFileList[i].mName;
+        if (aMap.Exists(aName)) {
+            return true;
+        }
+        aMap.Add(aName);
+    }
+    return false;
 }
 
 void JobBundle::SetRepairOff() {

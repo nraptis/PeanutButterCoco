@@ -8,11 +8,25 @@
 #ifndef Layout_hpp
 #define Layout_hpp
 
+#include "Primatives.hpp"
+
+using namespace std;
+using namespace peanutbutter::memory_layout;
+
 class Layout {
+    
+public:
     
     static int              ArchiveHeaderSize();
     static int              SectionHeaderSize();
     
+    static uint64_t         ToLong(const PackedUint24V2& pValue);
+    static uint64_t         ToLong(const PackedUint48V2& pValue);
+    
+    static int              ToInt(const PackedUint24V2& pValue);
+    static int              ToInt(const PackedUint48V2& pValue);
+    
+
 };
 
 #endif /* Layout_hpp */

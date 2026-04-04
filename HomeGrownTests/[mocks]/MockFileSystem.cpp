@@ -95,6 +95,23 @@ std::unique_ptr<FileWriteStreamV2> MockFileSystem::OpenWriteStream(const std::st
     return std::make_unique<MockFileWriteStream>(mDrive, pPath);
 }
 
+ByteString MockFileSystem::Load(const std::string& pPath) {
+    ByteString aResult;
+    
+    std::unique_ptr<FileReadStreamV2> aRead = OpenReadStream(pPath);
+    if (!aRead->IsReady()) {
+        printf("Fatal: Read stream not ready (%s)\n", pPath.c_str());
+        exit(0);
+    }
+    
+    size_t aLength = aRead->GetLength();
+    aResult.Size((int)aLength);
+    aRead->Read(0, aResult.mData, aLength);
+    aResult.mLength = (int)aLength;
+    return aResult;
+}
+
+
 bool MockFileSystem::AppendFile(const std::string& pPath,
                                 const unsigned char* pContents,
                                 std::size_t pLength) {

@@ -28,3 +28,4 @@ public:
 };
 
 #endif /* FakeFile_hpp */
+

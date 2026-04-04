@@ -8,6 +8,16 @@
 #ifndef FakeSectionHeader_hpp
 #define FakeSectionHeader_hpp
 
-#include <stdio.h>
+#include "FakeSkipRecord.hpp"
 
-#endif /* FakeSectionHeader_hpp */
+class FakeSectionHeader {
+public:
+    
+    FakeSectionHeader();
+    ~FakeSectionHeader();
+    
+    FakeSkipRecord                  mSkipRecord;
+    
+};
+
+#endif

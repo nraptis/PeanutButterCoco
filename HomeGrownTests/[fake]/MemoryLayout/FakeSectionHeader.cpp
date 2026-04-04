@@ -6,3 +6,11 @@
 //
 
 #include "FakeSectionHeader.hpp"
+
+FakeSectionHeader::FakeSectionHeader() {
+    
+}
+
+FakeSectionHeader::~FakeSectionHeader() {
+    
+}

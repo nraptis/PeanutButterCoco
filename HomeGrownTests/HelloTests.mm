@@ -10,6 +10,10 @@
 #include "FakeFile.hpp"
 #include "Random.hpp"
 #include "Words.hpp"
+#include "TestBundle.hpp"
+#include "JobBundle.hpp"
+#include "WrappedArchiveAssembler.hpp"
+#include "BundleVerify.hpp"
 
 @interface HelloTests : XCTestCase
 @end
@@ -75,6 +79,61 @@
             return;
         }
     }
+}
+
+- (void)testQuickBundle {
+    
+    FakeFile aFile1;
+    aFile1.mName = "a.txt";
+    aFile1.mContent = "ZZHOME content a content content a content a content content a content a content content a content a content content a content a content content a content a content content a content a content content a content a content content a content a content content a content a content content a content a content content a content a content content a content a content content a content a content content a content a content content a content a content content a content a content content a content a content content";
+    
+    FakeFile aFile2;
+    aFile2.mName = "b.txt";
+    aFile2.mContent = "b content b";
+    
+    FakeFile aFile3;
+    aFile3.mName = "folder/c.txt";
+    aFile3.mContent = "c content c";
+    
+    FakeFile aFile4;
+    aFile4.mName = "d.txt";
+    aFile4.mContent = "d content d";
+    
+    JobBundle aJob;
+    aJob.mFileList.push_back(aFile1);
+    aJob.mFileList.push_back(aFile2);
+    aJob.mFileList.push_back(aFile3);
+    aJob.mFileList.push_back(aFile4);
+    
+    MockHardDrive aHardDrive;
+    MockFileSystem aFileSystem(&aHardDrive);
+    ByteString aErrorString;
+    
+    if (!TestBundle::PerformReal(aJob, aFileSystem, &aErrorString)) {
+        printf("Error: %.*s\n", aErrorString.mLength, (char*)aErrorString.mData);
+        XCTFail(@"The bundle job returned an error.");
+        return;
+    }
+    
+    auto a = WrappedArchiveAssembler::Get(aJob.mDestination.ToString(),
+                                          aFileSystem,
+                                          aJob.mBlocksPerArchive,
+                                          aJob.mPayloadBytesPerBlock + Layout::SectionHeaderSize());
+
+    
+    vector<FakeArchive> aMocks;
+    if (!TestBundle::PerformMock(aJob, &aMocks, &aErrorString)) {
+        printf("Error: %.*s\n", aErrorString.mLength, (char*)aErrorString.mData);
+        XCTFail(@"The bundle job returned an error.");
+        return;
+    }
+    
+    if (!BundleVerify::Execute(aJob, a, aMocks, &aErrorString)) {
+        printf("Error: %.*s\n", aErrorString.mLength, (char*)aErrorString.mData);
+        XCTFail(@"The bundle job returned an error.");
+        return;
+    }
+    
 }
 
 @end

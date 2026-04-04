@@ -1,7 +1,9 @@
 #ifndef F_SILLY_STRING_H
 #define F_SILLY_STRING_H
 
-#include "namespaces.hpp"
+#include <string>
+
+using namespace std;
 
 class ByteString
 {
@@ -28,9 +30,9 @@ public:
     void                                Set(const string &pString);
     void					            Set(const ByteString &pString);
     
-    int                                 Compare(const unsigned char *pString, int pLength);
-    int                                 Compare(const string &pString);
-    int                                 Compare(const ByteString &pString);
+    int                                 Compare(const unsigned char *pString, int pLength) const;
+    int                                 Compare(const string &pString) const;
+    int                                 Compare(const ByteString &pString) const;
     
     void                                Append(const unsigned char* pString, int pLength);
     void                                Append(const string &pString);
@@ -41,8 +43,8 @@ public:
     
     string                              ToString() const;
     
-    inline bool                         operator == (const ByteString &pString) { return (Compare(pString) == 0); }
-    inline bool                         operator == (const string &pString) { return (Compare(pString) == 0); }
+    inline bool                         operator == (const ByteString &pString) const { return (Compare(pString) == 0); }
+    inline bool                         operator == (const string &pString) const { return (Compare(pString) == 0); }
     
     inline void                         operator = (const ByteString &pString) { Set(pString); }
     inline void                         operator = (const string &pString) { Set(pString); }
@@ -51,7 +53,6 @@ public:
     ByteString                          operator + (const string &pRight) const;
 
     //printf("%.*s\n", aByteString.mLength, (char*)aByteString.mData);
-    
     
 };
 

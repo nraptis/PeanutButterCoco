@@ -7,6 +7,7 @@
 
 #include "Words.hpp"
 #include "Random.hpp"
+#include "ByteMap.hpp"
 
 vector<string> gTestLetters = {
     // --- Original "Fun" Categories ---
@@ -64,6 +65,35 @@ ByteString Words::GetRandomFileName(int pLength) {
     for (int i=0;i<((int)aLetters.size());i++) {
         string aLetter = aLetters[i];
         aResult.Append(aLetter);
+    }
+    return aResult;
+}
+
+vector<ByteString> Words::GetRandomFileNames(int pCount, int pMinLength, int pMaxLength) {
+    ByteMap aMap;
+    vector<ByteString> aResult;
+    int aTries = (pCount * 2 + 100);
+    int aFudge = 0;
+    while (((int)(aResult.size()) < pCount) && (aFudge < aTries)) {
+        ByteString aString = GetRandomFileName(pMinLength, pMaxLength);
+        if (aMap.Exists(aString) == false) {
+            aMap.Add(aString);
+            aResult.push_back(aString);
+        }
+        aFudge++;
+    }
+    return aResult;
+}
+
+vector<FakeFile> Words::GetRandomFiles(int pCount, int pNameMinLength, int pNameMaxLength, int pContentMinLength, int pContentMaxLength) {
+    vector<ByteString> aFileNames = GetRandomFileNames(pCount, pNameMinLength, pNameMaxLength);
+    vector<FakeFile> aResult;
+    
+    for (int aIndex=0; aIndex<((int)aFileNames.size()); aIndex++) {
+        FakeFile aFile;
+        aFile.mName.Set(aFileNames[aIndex]);
+        aFile.mContent.Set(GetRandomFileContent(pContentMinLength, pContentMaxLength));
+        aResult.push_back(aFile);
     }
     return aResult;
 }

@@ -1,5 +1,7 @@
 #include "ByteString.hpp"
 
+#include "namespaces.hpp"
+
 ByteString::ByteString() {
     mData = NULL; mLength = 0; mSize = 0;
 }
@@ -45,21 +47,20 @@ void ByteString::Size(int pSize) {
     if (pSize <= 0) {
         Free();
     } else if (pSize != mSize) {
-        mSize = pSize;
-        unsigned char *aNew = new unsigned char[mSize];
         
-        // If our current content is longer than the new buffer, truncate it
-        if (mLength > mSize) {
-            mLength = mSize;
+        unsigned char *aNewData = new unsigned char[pSize];
+        
+        if (mLength > pSize) {
+            mLength = pSize;
         }
 
-        // Copy existing data to the new buffer
-        for (int i = 0; i < mLength; i++) {
-            aNew[i] = mData[i];
+        if (mData != NULL && mLength > 0) {
+            memcpy(aNewData, mData, mLength);
         }
 
-        delete[] mData;
-        mData = aNew;
+        delete [] mData;
+        mData = aNewData;
+        mSize = pSize;
     }
 }
 
@@ -104,7 +105,7 @@ void ByteString::Set(const ByteString &pString) {
     Set(pString.mData, pString.mLength);
 }
 
-int ByteString::Compare(const unsigned char *pString, int pLength) {
+int ByteString::Compare(const unsigned char *pString, int pLength) const {
     int aShortest = (mLength < pLength) ? mLength : pLength;
     for (int i = 0; i < aShortest; i++) {
         if (mData[i] < pString[i]) return -1;
@@ -115,26 +116,32 @@ int ByteString::Compare(const unsigned char *pString, int pLength) {
     return 0;
 }
 
-int ByteString::Compare(const string &pString) {
+int ByteString::Compare(const string &pString) const {
     return Compare((const unsigned char*)pString.c_str(), (int)pString.length());
 }
 
-int ByteString::Compare(const ByteString &pString) {
+int ByteString::Compare(const ByteString &pString) const {
     return Compare(pString.mData, pString.mLength);
 }
 
 void ByteString::Append(const unsigned char* pString, int pLength) {
-    if (!pString || pLength <= 0) return;
     
-    int newLength = mLength + pLength;
-    if (newLength > mSize) {
-        Size(newLength); // Grow buffer if needed
+    if (pString == NULL) {
+        return;
+    }
+    if (pLength <= 0) {
+        return;
     }
     
-    for (int i = 0; i < pLength; i++) {
-        mData[mLength + i] = pString[i];
+    int aOldLength = mLength;
+    int aNewLength = aOldLength + pLength;
+    
+    if (aNewLength > mSize) {
+        Size(aNewLength);
     }
-    mLength = newLength;
+    
+    memcpy(&(mData[aOldLength]), pString, pLength);
+    mLength = aNewLength;
 }
 
 void ByteString::Append(const string &pString) {
@@ -142,7 +149,12 @@ void ByteString::Append(const string &pString) {
 }
 
 void ByteString::Append(const ByteString &pString) {
-    Append(pString.mData, pString.mLength);
+    if (this == &pString) {
+        ByteString temp = pString;
+        Append(temp.mData, temp.mLength);
+    } else {
+        Append(pString.mData, pString.mLength);
+    }
 }
 
 void ByteString::ParseInt(int pNumber) {

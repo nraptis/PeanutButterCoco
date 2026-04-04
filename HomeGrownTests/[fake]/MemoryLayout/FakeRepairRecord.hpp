@@ -8,6 +8,8 @@
 #ifndef FakeRepairRecord_hpp
 #define FakeRepairRecord_hpp
 
-#include <stdio.h>
+class FakeRepairRecord {
+    
+};
 
 #endif /* FakeRepairRecord_hpp */

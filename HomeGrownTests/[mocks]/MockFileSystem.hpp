@@ -11,6 +11,7 @@
 #include "MockHardDrive.hpp"
 #include "FileReadStream.hpp"
 #include "FileWriteStream.hpp"
+#include "ByteString.hpp"
 
 using namespace peanutbutter;
 
@@ -136,6 +137,10 @@ public:
                                                      const std::string& pPath) const override;
     std::unique_ptr<FileWriteStreamV2> OpenWriteStream(
                                                        const std::string& pPath) override;
+    
+    ByteString                        Load(const std::string& pPath);
+    
+    
     bool AppendFile(const std::string& pPath,
                     const unsigned char* pContents,
                     std::size_t pLength) override;
