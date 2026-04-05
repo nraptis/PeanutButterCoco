@@ -85,6 +85,22 @@ vector<ByteString> Words::GetRandomFileNames(int pCount, int pMinLength, int pMa
     return aResult;
 }
 
+vector<ByteString> Words::GetRandomFolderNames(int pCount, int pMinLength, int pMaxLength) {
+    ByteMap aMap;
+    vector<ByteString> aResult;
+    int aTries = (pCount * 2 + 100);
+    int aFudge = 0;
+    while (((int)(aResult.size()) < pCount) && (aFudge < aTries)) {
+        ByteString aString = GetRandomFileContent(pMinLength, pMaxLength);
+        if (aMap.Exists(aString) == false) {
+            aMap.Add(aString);
+            aResult.push_back(aString);
+        }
+        aFudge++;
+    }
+    return aResult;
+}
+
 vector<FakeFile> Words::GetRandomFiles(int pCount, int pNameMinLength, int pNameMaxLength, int pContentMinLength, int pContentMaxLength) {
     vector<ByteString> aFileNames = GetRandomFileNames(pCount, pNameMinLength, pNameMaxLength);
     vector<FakeFile> aResult;
@@ -95,6 +111,53 @@ vector<FakeFile> Words::GetRandomFiles(int pCount, int pNameMinLength, int pName
         aFile.mContent.Set(GetRandomFileContent(pContentMinLength, pContentMaxLength));
         aResult.push_back(aFile);
     }
+    return aResult;
+}
+
+vector<FakeFile> Words::GetRandomFolders(int pCount, int pNameMinLength, int pNameMaxLength) {
+    vector<ByteString> aFolderNames = GetRandomFolderNames(pCount, pNameMinLength, pNameMaxLength);
+    vector<FakeFile> aResult;
+    
+    for (int aIndex=0; aIndex<((int)aFolderNames.size()); aIndex++) {
+        FakeFile aFile;
+        aFile.mName.Set(aFolderNames[aIndex]);
+        aFile.mIsFolder = true;
+        aResult.push_back(aFile);
+    }
+    return aResult;
+}
+
+vector<FakeFile> Words::GetRandomFilesAndFolders(int pFileCount,
+                                                 int pFileNameMinLength, int pFileNameMaxLength,
+                                                 int pContentMinLength, int pContentMaxLength,
+                                                 int pFolderCount,
+                                                 int pFolderNameMinLength, int pFolderNameMaxLength) {
+    
+    vector<ByteString> aFileNames = GetRandomFileNames(pFileCount, pFileNameMinLength, pFileNameMaxLength);
+    vector<ByteString> aFolderNames = GetRandomFolderNames(pFolderCount, pFolderNameMinLength, pFolderNameMaxLength);
+    vector<FakeFile> aResult;
+    
+    for (int aIndex=0; aIndex<((int)aFolderNames.size()); aIndex++) {
+        FakeFile aFile;
+        aFile.mName.Set(aFolderNames[aIndex]);
+        aFile.mIsFolder = true;
+        aResult.push_back(aFile);
+    }
+    
+    for (int aIndex=0; aIndex<((int)aFileNames.size()); aIndex++) {
+        FakeFile aFile;
+        aFile.mName.Set(aFileNames[aIndex]);
+        aFile.mContent.Set(GetRandomFileContent(pContentMinLength, pContentMaxLength));
+        aResult.push_back(aFile);
+    }
+    
+    for (int aIndex=0; aIndex<((int)aResult.size()); aIndex++) {
+        int aPick = Random::Get((int)aResult.size());
+        if (aPick != aIndex) {
+            swap(aResult[aPick], aResult[aIndex]);
+        }
+    }
+    
     return aResult;
 }
 

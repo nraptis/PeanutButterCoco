@@ -34,6 +34,8 @@ public:
     void                            AddFile(string pName, string pContent);
     void                            AddFile(ByteString pName, ByteString pContent);
     
+    void                            AddFolder(string pName);
+    void                            AddFolder(ByteString pName);
     
     ByteString                      mSource;
     ByteString                      mDestination;

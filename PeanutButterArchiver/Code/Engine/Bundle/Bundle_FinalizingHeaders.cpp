@@ -46,22 +46,22 @@ bool BuildArchiveHeader(const BundleStageContextV2& pContext,
                             pContext.State().mMemoryPlan.mArchiveCount,
                             nullptr,
                             "ArchiveCount") &&
-         TrySetPackedUint48(pOutHeader.mArchiveDataBlockCount,
-                            pContext.State().mMemoryPlan.mArchiveDataBlockCount,
+         TrySetPackedUint48(pOutHeader.mBlockCountMain,
+                            pContext.State().mMemoryPlan.mBlockCountMain,
                             nullptr,
-                            "ArchiveDataBlockCount") &&
-         TrySetPackedUint48(pOutHeader.mEmptyFolderBlockCount,
+                            "BlockCountMain") &&
+         TrySetPackedUint48(pOutHeader.mReservedCount0,
                             0u,
                             nullptr,
-                            "EmptyFolderBlockCount") &&
-         TrySetPackedUint48(pOutHeader.mPreviewManifestBlockCount,
-                            pContext.State().mMemoryPlan.mPreviewManifestBlockCount,
+                            "ReservedCount0") &&
+         TrySetPackedUint48(pOutHeader.mBlockCountPreview,
+                            pContext.State().mMemoryPlan.mBlockCountPreview,
                             nullptr,
-                            "PreviewManifestBlockCount") &&
-         TrySetPackedUint48(pOutHeader.mRepairSectorBlockCount,
+                            "BlockCountPreview") &&
+         TrySetPackedUint48(pOutHeader.mBlockCountRepair,
                             pContext.State().mMemoryPlan.mRepairSectorBlockCount,
                             nullptr,
-                            "RepairSectorBlockCount");
+                            "BlockCountRepair");
 }
 
 void EmitBundleArchiveHeaderFinalizedEvent(

@@ -22,8 +22,18 @@ public:
     static ByteString           GetRandomFileContent(int pMinLength, int pMaxLength);
     static ByteString           GetRandomFileContent(int pLength);
     
+    static vector<ByteString>   GetRandomFolderNames(int pCount, int pMinLength, int pMaxLength);
+    
     static vector<ByteString>   GetRandomFileNames(int pCount, int pMinLength, int pMaxLength);
     static vector<FakeFile>     GetRandomFiles(int pCount, int pNameMinLength, int pNameMaxLength, int pContentMinLength, int pContentMaxLength);
+    static vector<FakeFile>     GetRandomFolders(int pCount, int pNameMinLength, int pNameMaxLength);
+    
+    static vector<FakeFile>     GetRandomFilesAndFolders(int pFileCount,
+                                                         int pFileNameMinLength, int pFileNameMaxLength,
+                                                         int pContentMinLength, int pContentMaxLength,
+                                                         int pFolderCount,
+                                                         int pFolderNameMinLength, int pFolderNameMaxLength);
+    
     
 private:
     

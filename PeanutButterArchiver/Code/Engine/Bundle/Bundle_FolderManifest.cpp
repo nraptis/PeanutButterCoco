@@ -11,7 +11,7 @@ bool BundleFolderPackingV2::Run(BundleStageContextV2& pContext) {
   BundleManifestStateV2& aManifest = pContext.State().mManifest;
   const BundleMemoryPlanV2& aMemoryPlan = pContext.State().mMemoryPlan;
   aManifest.mFolderPackingBytes = aMemoryPlan.mEmptyFolderLogicalBytes;
-  aManifest.mFolderPackingBlockCount = aMemoryPlan.mEmptyFolderBlockCount;
+  aManifest.mFolderPackingBlockCount = 0u;
 
   pContext.EmitLog(LogLevelV2::kInfo,
                    LogBundleFolderPackingSummaryV2(aManifest.mFolderPackingBytes));

@@ -1,0 +1,124 @@
+Fake File <-> Archive Block Linking Plan
+
+Goal
+- Build a deterministic mapping from each FakeFile (by unique mName) to the ordered list of archive blocks it spans.
+- Fast checks for recover flows, especially: "does this file/record start in this block?"
+
+Recommended approach (least invasive)
+- Add a new sidecar index object instead of mutating FakeFile/FakeArchiveBlock heavily.
+- Keep FakeFile and FakeArchiveBlock mostly as-is.
+- Build the index once in PerformMock using the same integer math already used to pack payloads.
+
+Why this is easiest to test
+- Deterministic and pure integer math.
+- No dependency on random invalid skip values.
+- Directly mirrors packing math, so assertions are straightforward.
+- No need to decode bytes back out of blocks just to discover spans.
+
+Suggested model
+
+struct FakeBlockAddress {
+    int mGlobalBlockIndex = -1;
+    int mArchiveIndex = -1;
+    int mLocalBlockIndex = -1;
+    // Optional: string mBlockUuid;
+};
+
+struct FakeFileBlockSpan {
+    FakeBlockAddress mBlock;
+    int mPayloadByteStart = 0;      // inclusive, inside block payload
+    int mPayloadByteEndExclusive = 0;
+    bool mStartsRecord = false;
+    bool mEndsRecord = false;
+    bool mStartsContent = false;    // optional but useful for recover
+};
+
+struct FakeFileLinkRecord {
+    ByteString mFileName;           // unique key (mName)
+    bool mIsFolder = false;
+    int mRecordGlobalByteStart = 0;
+    int mRecordGlobalByteEndExclusive = 0;
+    int mContentGlobalByteStart = -1;      // -1 for folder
+    int mContentGlobalByteEndExclusive = -1;
+    vector<FakeFileBlockSpan> mSpans;      // ordered by block index
+};
+
+class FakeFileLinkIndex {
+public:
+    vector<FakeFileLinkRecord> mRecords;
+
+    // Map file name -> record index for O(1)-ish lookup.
+    // Use std::string key derived from ByteString.
+    unordered_map<string, int> mRecordIndexByName;
+
+    // Map "archive:local" -> file names whose record starts in that block.
+    unordered_map<string, vector<string>> mRecordStartsByBlock;
+
+    // Optional: map content starts too.
+    unordered_map<string, vector<string>> mContentStartsByBlock;
+};
+
+Build algorithm (single pass, integer math)
+Inputs
+- Sorted file list (the same list used to build aMainPayloadList)
+- aMainPayloadList (already computed payload bytes per file)
+- pJob.mPayloadBytesPerBlock
+- pJob.mBlocksPerArchive
+- aPreviewChunkCount
+
+Cursor setup
+- int aPayloadBytesPerBlock = pJob.mPayloadBytesPerBlock;
+- int aBlocksPerArchive = pJob.mBlocksPerArchive;
+- int aGlobalByteCursor = aPreviewChunkCount * aPayloadBytesPerBlock;
+
+For each file i
+1. int aRecordLen = aMainPayloadList[i].mLength;
+2. int aRecordStart = aGlobalByteCursor;
+3. int aRecordEnd = aRecordStart + aRecordLen;
+4. Compute content start/end if file (optional but recommended):
+   - header bytes in FakeFile::ToPayload for file = 2 + nameLen + 1 + 8
+   - folder has no content bytes
+5. int aFirstBlock = aRecordStart / aPayloadBytesPerBlock;
+6. int aLastBlock = (aRecordEnd - 1) / aPayloadBytesPerBlock;
+7. For b from aFirstBlock to aLastBlock:
+   - int aBlockGlobalStart = b * aPayloadBytesPerBlock;
+   - int aStartInBlock = max(aRecordStart, aBlockGlobalStart) - aBlockGlobalStart;
+   - int aEndInBlock = min(aRecordEnd, aBlockGlobalStart + aPayloadBytesPerBlock) - aBlockGlobalStart;
+   - archive/local:
+     - int aArchive = b / aBlocksPerArchive;
+     - int aLocal = b - (aArchive * aBlocksPerArchive);
+   - create FakeFileBlockSpan with:
+     - mStartsRecord = (b == aFirstBlock)
+     - mEndsRecord = (b == aLastBlock)
+     - mStartsContent = (contentStart in this block range)
+8. Insert file record into index maps.
+9. aGlobalByteCursor += aRecordLen;
+
+Complexity
+- O(fileCount + totalSpannedBlocks)
+- No expensive search required for normal queries.
+
+Query helpers to expose
+- const vector<FakeFileBlockSpan>* TryGetFileSpans(const ByteString& pFileName)
+- bool DoesRecordStartInBlock(const ByteString& pFileName, int pArchive, int pLocal)
+- bool DoesContentStartInBlock(const ByteString& pFileName, int pArchive, int pLocal)
+- const vector<string>* TryGetFilesWhoseRecordStartsInBlock(int pArchive, int pLocal)
+
+About UUIDs on FakeArchiveBlock
+- Optional, not required for correctness.
+- If you want identity that survives reshuffling/rebuilds, add:
+  - string mBlockUuid
+  - int mGlobalBlockIndex
+  - int mArchiveIndex
+  - int mLocalBlockIndex
+- But for recover assertions, archive/local/global indices are usually enough.
+
+Practical integration point in PerformMock
+- Build FakeFileLinkIndex right after aMainPayloadList/aMainPayloadChunks are available.
+- Use the same preview offset already present in PerformMock.
+- Keep link-building independent from skip-record generation.
+
+Net recommendation
+- Use a new FakeFileLinkIndex sidecar object.
+- Track both record-start and content-start block locations.
+- Keep archive/local/global indices in each span; UUID is optional.

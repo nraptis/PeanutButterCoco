@@ -32,6 +32,7 @@ void JobBundle::AddFile(string pName, string pContent) {
     FakeFile aFile;
     aFile.mName.Set(pName);
     aFile.mContent.Set(pContent);
+    aFile.mIsFolder = false;
     mFileList.push_back(aFile);
 }
 
@@ -39,6 +40,21 @@ void JobBundle::AddFile(ByteString pName, ByteString pContent) {
     FakeFile aFile;
     aFile.mName.Set(pName);
     aFile.mContent.Set(pContent);
+    aFile.mIsFolder = false;
+    mFileList.push_back(aFile);
+}
+
+void JobBundle::AddFolder(string pName) {
+    FakeFile aFile;
+    aFile.mName.Set(pName);
+    aFile.mIsFolder = true;
+    mFileList.push_back(aFile);
+}
+
+void JobBundle::AddFolder(ByteString pName) {
+    FakeFile aFile;
+    aFile.mName.Set(pName);
+    aFile.mIsFolder = true;
     mFileList.push_back(aFile);
 }
 

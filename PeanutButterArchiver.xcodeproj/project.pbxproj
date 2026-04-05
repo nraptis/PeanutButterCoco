@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		774DB8842F824D5900209FDE /* aPayloadList.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 774DB8832F824D5900209FDE /* aPayloadList.cpp */; };
 		779793522F6E2B5700D6A4FC /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 779793512F6E2B5700D6A4FC /* Cocoa.framework */; };
 /* End PBXBuildFile section */
 
@@ -21,6 +22,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		774DB8832F824D5900209FDE /* aPayloadList.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = aPayloadList.cpp; sourceTree = "<group>"; };
 		776586412F70ED3500735D5C /* HomeGrownTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = HomeGrownTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		7796863D2F6E240800144DD9 /* PeanutButterArchiver.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PeanutButterArchiver.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		7797934F2F6E2B5300D6A4FC /* AppKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AppKit.framework; path = System/Library/Frameworks/AppKit.framework; sourceTree = SDKROOT; };
@@ -66,6 +68,7 @@
 				776586422F70ED3500735D5C /* HomeGrownTests */,
 				7797934E2F6E2B5200D6A4FC /* Frameworks */,
 				7796863E2F6E240800144DD9 /* Products */,
+				774DB8832F824D5900209FDE /* aPayloadList.cpp */,
 			);
 			sourceTree = "<group>";
 		};
@@ -196,6 +199,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				774DB8842F824D5900209FDE /* aPayloadList.cpp in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

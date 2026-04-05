@@ -134,16 +134,16 @@ void EmitDecodeArchiveHeaderEvent(DecodeStageContextV2& pContext,
   aEvent.SetInfo("archive_index", memory_layout::PackedUint48ToUInt64(pHeader.mArchiveIndex));
   aEvent.SetInfo("archive_count", memory_layout::PackedUint48ToUInt64(pHeader.mArchiveCount));
   aEvent.SetInfo("archive_data_block_count",
-                 memory_layout::PackedUint48ToUInt64(pHeader.mArchiveDataBlockCount));
-  const std::uint64_t aLegacyEmptyFolderBlocks =
-      memory_layout::PackedUint48ToUInt64(pHeader.mEmptyFolderBlockCount);
-  if (aLegacyEmptyFolderBlocks > 0u) {
-    aEvent.SetInfo("legacy_empty_folder_block_count", aLegacyEmptyFolderBlocks);
+                 memory_layout::PackedUint48ToUInt64(pHeader.mBlockCountMain));
+  const std::uint64_t aReservedCount0 =
+      memory_layout::PackedUint48ToUInt64(pHeader.mReservedCount0);
+  if (aReservedCount0 > 0u) {
+    aEvent.SetInfo("reserved_count0", aReservedCount0);
   }
   aEvent.SetInfo("preview_manifest_block_count",
-                 memory_layout::PackedUint48ToUInt64(pHeader.mPreviewManifestBlockCount));
+                 memory_layout::PackedUint48ToUInt64(pHeader.mBlockCountPreview));
   aEvent.SetInfo("repair_block_count",
-                 memory_layout::PackedUint48ToUInt64(pHeader.mRepairSectorBlockCount));
+                 memory_layout::PackedUint48ToUInt64(pHeader.mBlockCountRepair));
   aEvent.SetInfo("archive_family_id", pHeader.mArchiveFamilyId);
   aEvent.SetInfo("file_length", pFileLength);
   aEvent.SetInfo("is_encrypted", pHeader.mIsEncrypted != 0u);

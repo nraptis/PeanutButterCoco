@@ -28,6 +28,8 @@ public:
     ByteString                              mFileNumberString;
     int                                     mFileNumber;
     
+    int                                     mArchiveUUID;
+    
 };
 
 #endif /* FakeArchive_hpp */

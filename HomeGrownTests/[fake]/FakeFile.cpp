@@ -193,3 +193,68 @@ bool FakeFile::FromPayload(ByteString &pPayload, ByteString *pError) {
     
     return true;
 }
+
+bool FakeFile::ToPreviewPayload(ByteString *pPayload, ByteString *pError) {
+    if (mName.mLength > knobs::kMaxPathLengthV2) {
+        if (pError != NULL) {
+            ByteString aErrorString =
+            ByteString("Error: file name length of ") +
+            ByteString(mName.mLength) +
+            ByteString(" exceeds the max (") +
+            ByteString((int)(knobs::kMaxPathLengthV2)) +
+            ByteString(")");
+            pError->Set(aErrorString);
+        }
+        return false;
+    }
+    
+    if (pPayload == NULL) {
+        if (pError != NULL) {
+            pError->Set("Error: The payload ByteString was null.");
+        }
+        return false;
+    }
+    
+    pPayload->Clear();
+    
+    // 1. Name Length (2 bytes, Little Endian)
+    unsigned short aNameLength = (unsigned short)mName.mLength;
+    unsigned char aNameLengthBytes[2];
+    aNameLengthBytes[0] = (unsigned char)(aNameLength & 0xFF);
+    aNameLengthBytes[1] = (unsigned char)((aNameLength >> 8) & 0xFF);
+    pPayload->Append(aNameLengthBytes, 2);
+    
+    // 2. Name Bytes
+    pPayload->Append(mName);
+    
+    // 3. Type
+    if (mIsFolder) {
+        unsigned char aType = (unsigned char)TypedRecordTypeV2::kManifestFolder;
+        pPayload->Append(&aType, 1);
+        return true;
+    }
+    
+    unsigned char aType = (unsigned char)TypedRecordTypeV2::kManifestFile;
+    pPayload->Append(&aType, 1);
+    
+    
+    unsigned char aExtra = memory_layout::specs_verified::kPreviewRecordPlaceholderValueV2;
+    pPayload->Append(&aExtra, 1);
+    
+    // 4. Content Length (8 bytes, Little Endian)
+    unsigned long long aContentLength = (unsigned long long)mContent.mLength;
+    unsigned char aContentLengthBytes[8];
+    
+    aContentLengthBytes[0] = (unsigned char)((aContentLength >> 0)  & 0xFF);
+    aContentLengthBytes[1] = (unsigned char)((aContentLength >> 8)  & 0xFF);
+    aContentLengthBytes[2] = (unsigned char)((aContentLength >> 16) & 0xFF);
+    aContentLengthBytes[3] = (unsigned char)((aContentLength >> 24) & 0xFF);
+    aContentLengthBytes[4] = (unsigned char)((aContentLength >> 32) & 0xFF);
+    aContentLengthBytes[5] = (unsigned char)((aContentLength >> 40) & 0xFF);
+    aContentLengthBytes[6] = (unsigned char)((aContentLength >> 48) & 0xFF);
+    aContentLengthBytes[7] = (unsigned char)((aContentLength >> 56) & 0xFF);
+    
+    pPayload->Append(aContentLengthBytes, 8);
+    
+    return true;
+}

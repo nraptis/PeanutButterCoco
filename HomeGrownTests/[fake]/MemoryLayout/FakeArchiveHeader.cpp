@@ -9,23 +9,19 @@
 
 
 FakeArchiveHeader::FakeArchiveHeader() {
-    mMagic = kArchiveMagicV2;
-    mArchiveFormatVersion = 2;
-    mCipherVersion = 1;
-    mExpanderVersion = 1;
+    
     mDirtyState = ((unsigned char)ArchiveDirtyStateV2::kInvalid);
     mIsEncrypted = true;
-    mCipherProfile = 0;
-    mExpanderProfile = 0;
-    mArchiveIndex = 0;
     
+    mArchiveIndex = 0;
     mArchiveCount = 0;
-    mArchiveDataBlockCount = 0;
     
     //mEmptyFolderBlockCount = 0;
     
-    mPreviewManifestBlockCount = 0;
-    mRepairSectorBlockCount = 0;
+    mBlockCountPreview = 0;
+    mBlockCountMain = 0;
+    mBlockCountRepair = 0;
+    
     mArchiveFamilyId = 0;
     
 }

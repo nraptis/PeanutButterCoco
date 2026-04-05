@@ -10,7 +10,7 @@ bool BundleArchiveManifestV2::Run(BundleStageContextV2& pContext) {
                    LogPhaseStartedV2(LogActionV2::kBundle,
                                      ProgressStageV2::kArchiveManifest));
   BundleManifestStateV2& aManifest = pContext.State().mManifest;
-  if (aManifest.mPreviewManifestBlockCount == 0u) {
+  if (aManifest.mBlockCountPreview == 0u) {
     pContext.EmitLog(LogLevelV2::kInfo, LogBundleArchiveManifestNoneV2());
     pContext.EmitLog(LogLevelV2::kInfo,
                      LogPhaseCompletedV2(LogActionV2::kBundle,
@@ -19,14 +19,14 @@ bool BundleArchiveManifestV2::Run(BundleStageContextV2& pContext) {
     return !pContext.IsCancelRequested();
   }
 
-  aManifest.mPreviewManifestBlockCount =
-      pContext.State().mMemoryPlan.mPreviewManifestBlockCount;
+  aManifest.mBlockCountPreview =
+      pContext.State().mMemoryPlan.mBlockCountPreview;
   aManifest.mPreviewManifestBytes =
       static_cast<std::uint64_t>(aManifest.mPreviewManifestPayload.size());
   pContext.EmitLog(LogLevelV2::kInfo,
                    LogBundleArchiveManifestSummaryV2(
                        aManifest.mPreviewManifestBytes,
-                       aManifest.mPreviewManifestBlockCount));
+                       aManifest.mBlockCountPreview));
   pContext.EmitLog(LogLevelV2::kInfo,
                    LogPhaseCompletedV2(LogActionV2::kBundle,
                                        ProgressStageV2::kArchiveManifest));

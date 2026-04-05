@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <unordered_set>
 
 #include "../../Knobs.hpp"
 #include "../../Common/LogCatalog.hpp"
@@ -19,6 +20,7 @@ struct BundleDiscoveryFrameV2 {
   std::size_t mChildIndex = 0u;
   bool mLoaded = false;
   bool mHasResolvedDirectoryIdentity = false;
+  bool mTracksResolvedIdentityInActiveSet = false;
   std::string mResolvedDirectoryIdentity;
 };
 
@@ -31,8 +33,10 @@ class BundleDiscoveryCursorV2 {
   bool mHasResolvedSourceRoot = false;
   std::size_t mProcessedItems = 0u;
   std::size_t mBatchItemsProcessed = 0u;
+  std::size_t mPendingItems = 0u;
   std::size_t mMaxObservedItems = 1u;
   std::size_t mNextProgressItem = 1u;
+  std::unordered_set<std::string> mActiveResolvedDirectoryIdentities;
 };
 
 namespace {
@@ -235,11 +239,13 @@ bool BuildAliasTargetDescriptor(const std::string& pResolvedSourceRoot,
     if (TryEncodeAliasTargetHomeRelative(pResolvedTargetPath, aHomeRelative)) {
       pOutTargetDescriptor = aHomeRelative.empty() ? "h" : "h/" + aHomeRelative;
     } else if (IsAbsolutePathLikeV2(pResolvedTargetPath)) {
-      std::string aAbsoluteSansRoot = pResolvedTargetPath;
-      while (!aAbsoluteSansRoot.empty() &&
-             (aAbsoluteSansRoot[0] == '/' || aAbsoluteSansRoot[0] == '\\')) {
-        aAbsoluteSansRoot.erase(aAbsoluteSansRoot.begin());
+      std::size_t aTrimStart = 0u;
+      while (aTrimStart < pResolvedTargetPath.size() &&
+             (pResolvedTargetPath[aTrimStart] == '/' ||
+              pResolvedTargetPath[aTrimStart] == '\\')) {
+        ++aTrimStart;
       }
+      const std::string aAbsoluteSansRoot = pResolvedTargetPath.substr(aTrimStart);
       pOutTargetDescriptor =
           aAbsoluteSansRoot.empty() ? "a" : "a/" + aAbsoluteSansRoot;
     } else {
@@ -353,18 +359,10 @@ bool TryBuildInternalReferenceTargetRelativePath(
 
 bool DirectoryWouldCreateCycle(const BundleDiscoveryCursorV2& pCursor,
                                const std::string& pResolvedDirectoryIdentity) {
-  if (pResolvedDirectoryIdentity.empty()) {
-    return false;
-  }
-  for (const BundleDiscoveryFrameV2& aFrame : pCursor.mFrames) {
-    if (!aFrame.mHasResolvedDirectoryIdentity) {
-      continue;
-    }
-    if (aFrame.mResolvedDirectoryIdentity == pResolvedDirectoryIdentity) {
-      return true;
-    }
-  }
-  return false;
+  return !pResolvedDirectoryIdentity.empty() &&
+         pCursor.mActiveResolvedDirectoryIdentities.find(
+             pResolvedDirectoryIdentity) !=
+             pCursor.mActiveResolvedDirectoryIdentities.end();
 }
 
 void EmitBundleDiscoveryItemEvent(BundleStageContextV2& pContext,
@@ -414,23 +412,9 @@ bool FinalizeBundleDiscovery(BundleStageContextV2& pContext) {
   return !pContext.IsCancelRequested();
 }
 
-std::size_t PendingItemCount(const BundleDiscoveryCursorV2& pCursor) {
-  std::size_t aPending = pCursor.mSingleFilePending ? 1u : 0u;
-  for (const BundleDiscoveryFrameV2& aFrame : pCursor.mFrames) {
-    if (!aFrame.mLoaded) {
-      ++aPending;
-      continue;
-    }
-    if (aFrame.mChildIndex < aFrame.mChildren.size()) {
-      aPending += (aFrame.mChildren.size() - aFrame.mChildIndex);
-    }
-  }
-  return aPending;
-}
-
 void UpdateObservedItemCount(BundleDiscoveryCursorV2& pCursor) {
   const std::size_t aObserved =
-      pCursor.mProcessedItems + std::max<std::size_t>(1u, PendingItemCount(pCursor));
+      pCursor.mProcessedItems + std::max<std::size_t>(1u, pCursor.mPendingItems);
   pCursor.mMaxObservedItems = std::max(pCursor.mMaxObservedItems, aObserved);
 }
 
@@ -466,6 +450,7 @@ void NoteEmptyDirectory(BundleStageContextV2& pContext,
 }
 
 void LoadDirectoryChildren(BundleStageContextV2& pContext,
+                           BundleDiscoveryCursorV2& pCursor,
                            BundleDiscoveryFrameV2& pFrame) {
   pFrame.mChildren = pContext.FileSystem().ListDirectoryEntries(pFrame.mDirectoryPath);
   if (!std::is_sorted(
@@ -474,6 +459,10 @@ void LoadDirectoryChildren(BundleStageContextV2& pContext,
   }
   pFrame.mChildIndex = 0u;
   pFrame.mLoaded = true;
+  if (pCursor.mPendingItems > 0u) {
+    --pCursor.mPendingItems;
+  }
+  pCursor.mPendingItems += pFrame.mChildren.size();
   if (pFrame.mChildren.empty()) {
     NoteEmptyDirectory(pContext, pFrame);
   }
@@ -633,7 +622,13 @@ bool ProcessDiscoveredDirectory(BundleStageContextV2& pContext,
         "[Bundle][Discovery] Skipping recursive directory link to avoid a cycle: '" +
             pRelativePath + "'.");
   } else {
+    if (aNextFrame.mHasResolvedDirectoryIdentity) {
+      const auto aInserted = pCursor.mActiveResolvedDirectoryIdentities.insert(
+          aNextFrame.mResolvedDirectoryIdentity);
+      aNextFrame.mTracksResolvedIdentityInActiveSet = aInserted.second;
+    }
     pCursor.mFrames.push_back(std::move(aNextFrame));
+    ++pCursor.mPendingItems;
   }
   UpdateObservedItemCount(pCursor);
   if (pContext.WantsRuntimeEvent(RuntimeEventKindV2::kBundleDiscoveryItemScanned)) {
@@ -657,17 +652,25 @@ bool AdvanceDirectoryTree(BundleStageContextV2& pContext,
   while (!pCursor.mFrames.empty()) {
     BundleDiscoveryFrameV2& aFrame = pCursor.mFrames.back();
     if (!aFrame.mLoaded) {
-      LoadDirectoryChildren(pContext, aFrame);
+      LoadDirectoryChildren(pContext, pCursor, aFrame);
       UpdateObservedItemCount(pCursor);
     }
 
     if (aFrame.mChildIndex >= aFrame.mChildren.size()) {
+      if (aFrame.mTracksResolvedIdentityInActiveSet &&
+          !aFrame.mResolvedDirectoryIdentity.empty()) {
+        pCursor.mActiveResolvedDirectoryIdentities.erase(
+            aFrame.mResolvedDirectoryIdentity);
+      }
       pCursor.mFrames.pop_back();
       continue;
     }
 
     const DirectoryEntryV2& aChild = aFrame.mChildren[aFrame.mChildIndex];
     ++aFrame.mChildIndex;
+    if (pCursor.mPendingItems > 0u) {
+      --pCursor.mPendingItems;
+    }
 
     const std::string aRelativePath =
         JoinRelativePathFast(aFrame.mRelativePath, aChild.mRelativePath);
@@ -729,6 +732,7 @@ bool BundleDiscoveryV2::Run(BundleStageContextV2& pContext) {
     if (aSourceIsFile) {
       const std::string aRelativePath = pContext.FileSystem().FileName(aSourcePath);
       aCursor->mSingleFilePending = true;
+      aCursor->mPendingItems = 1u;
       aCursor->mSingleFile = {aSourcePath, aRelativePath, false};
       const std::string aSourceParent = pContext.FileSystem().ParentPath(aSourcePath);
       if (!aSourceParent.empty()) {
@@ -748,7 +752,14 @@ bool BundleDiscoveryV2::Run(BundleStageContextV2& pContext) {
       aRootFrame.mHasResolvedDirectoryIdentity =
           ResolveDirectoryIdentity(
               aSourcePath, aRootFrame.mResolvedDirectoryIdentity);
+      if (aRootFrame.mHasResolvedDirectoryIdentity) {
+        const auto aInserted =
+            aCursor->mActiveResolvedDirectoryIdentities.insert(
+                aRootFrame.mResolvedDirectoryIdentity);
+        aRootFrame.mTracksResolvedIdentityInActiveSet = aInserted.second;
+      }
       aCursor->mFrames.push_back(std::move(aRootFrame));
+      aCursor->mPendingItems += 1u;
       UpdateObservedItemCount(*aCursor);
     } else {
       pContext.EmitLog(LogLevelV2::kError,
@@ -761,6 +772,9 @@ bool BundleDiscoveryV2::Run(BundleStageContextV2& pContext) {
 
   if (aCursor->mSingleFilePending) {
     aCursor->mSingleFilePending = false;
+    if (aCursor->mPendingItems > 0u) {
+      --aCursor->mPendingItems;
+    }
     const bool aIsSymlink = pContext.FileSystem().IsSymlink(aCursor->mSingleFile.mPath) &&
                             aCursor->mHasResolvedSourceRoot;
     const bool aIsAlias = !aIsSymlink &&

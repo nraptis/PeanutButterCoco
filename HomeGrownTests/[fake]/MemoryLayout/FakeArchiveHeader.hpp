@@ -22,22 +22,17 @@ public:
     FakeArchiveHeader();
     ~FakeArchiveHeader();
     
-    unsigned long long mMagic;
-    unsigned char mArchiveFormatVersion;
-    unsigned char mCipherVersion;
-    unsigned char mExpanderVersion;
-    unsigned char mDirtyState;
-    bool mIsEncrypted;
-    unsigned char mCipherProfile;
-    unsigned char mExpanderProfile;
-    unsigned long long mArchiveIndex;
-    unsigned long long mArchiveCount;
-    unsigned long long mArchiveDataBlockCount;
-    //unsigned long long mEmptyFolderBlockCount; // We don't need this.
+    unsigned char                   mDirtyState;
+    bool                            mIsEncrypted;
     
-    unsigned long long mPreviewManifestBlockCount;
-    unsigned long long mRepairSectorBlockCount;
-    unsigned long long mArchiveFamilyId = 0u;
+    unsigned long long              mArchiveIndex;
+    unsigned long long              mArchiveCount;
+    
+    unsigned long long              mBlockCountPreview;
+    unsigned long long              mBlockCountMain;
+    unsigned long long              mBlockCountRepair;
+    
+    unsigned long long              mArchiveFamilyId = 0u;
     
 };
 

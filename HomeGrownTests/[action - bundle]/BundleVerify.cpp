@@ -16,7 +16,6 @@ bool BundleVerify::Execute(JobBundle &pJob, vector<WrappedArchive> pReal, vector
     int aMockIndex = 0;
     int aMockCount = (int)pMock.size();
     
-    
     while ((aRealIndex < aRealCount) && (aMockIndex < aMockCount)) {
         
         WrappedArchive *aReal = &(pReal[aRealIndex]);
@@ -48,7 +47,27 @@ bool BundleVerify::Execute(JobBundle &pJob, vector<WrappedArchive> pReal, vector
                         ByteString(", block ") + ByteString(aRealBlockIndex) +
                         ByteString(", byte ") + ByteString(aRealPayloadIndex) +
                         ByteString(", real byte (") + ByteString(aRealByte) +
-                        ByteString(") was not equal to mock byte (") + ByteString(aMockByte) + ByteString(")");
+                        ByteString(") was not equal to mock byte (") + ByteString(aMockByte) + ByteString(")\n");
+                        
+                        /*
+                        int aStart = aRealPayloadIndex - 8;
+                        int aEnd = aRealPayloadIndex + 16;
+                        if (aStart < 0) { aStart = 0; }
+                        if (aEnd >= aRealPayloadCount) { aEnd = aRealPayloadCount - 1; }
+                        
+                        printf("Real: ");
+                        for (int aByte=aStart;aByte<=aEnd;aByte++) {
+                            printf("%d, ", aRealBlock->mPayload.mData[aByte]);
+                        }
+                        
+                        printf("\nMock: ");
+                        for (int aByte=aStart;aByte<=aEnd;aByte++) {
+                            printf("%d, ", aMockBlock->mPayload.mData[aByte]);
+                        }
+                        
+                        printf("\n...");
+                        */
+                        
                         pError->Set(aError);
                     }
                     return false;
@@ -58,11 +77,138 @@ bool BundleVerify::Execute(JobBundle &pJob, vector<WrappedArchive> pReal, vector
                 ++aMockPayloadIndex;
             }
             
-            // The clincher: which blocks must be invalid.
+            if (Layout::ToInt(aRealBlock->mHeader.mBlockCountPreview) != aMockBlock->mHeader.mBlockCountPreview) {
+                if (pError != NULL) {
+                    ByteString aError = ByteString("At archive ") + ByteString(aRealIndex) +
+                    ByteString(", block ") + ByteString(aRealBlockIndex) +
+                    ByteString(", real section header preview block count (") + ByteString(Layout::ToInt(aRealBlock->mHeader.mBlockCountPreview)) +
+                    ByteString(") was not equal to mock section header preview block count (") + ByteString((int)aMockBlock->mHeader.mBlockCountPreview)
+                    + ByteString(")");
+                    pError->Set(aError);
+                }
+                return false;
+            }
             
-            int aRealSkipIndex1 = aRealBlock->mHeader.mSkipRecord.mArchiveDistance;
-            int aRealSkipIndex2 = aRealBlock->mHeader.mSkipRecord.mBlockDistance;
-            int aRealSkipIndex3 = Layout::ToInt(aRealBlock->mHeader.mSkipRecord.mByteDistance);
+            if (Layout::ToInt(aRealBlock->mHeader.mBlockCountMain) != aMockBlock->mHeader.mBlockCountMain) {
+                if (pError != NULL) {
+                    ByteString aError = ByteString("At archive ") + ByteString(aRealIndex) +
+                    ByteString(", block ") + ByteString(aRealBlockIndex) +
+                    ByteString(", real section header main block count (") + ByteString(Layout::ToInt(aRealBlock->mHeader.mBlockCountMain)) +
+                    ByteString(") was not equal to mock section header main block count (") + ByteString((int)aMockBlock->mHeader.mBlockCountMain)
+                    + ByteString(")");
+                    pError->Set(aError);
+                }
+                return false;
+            }
+            
+            if (Layout::ToInt(aRealBlock->mHeader.mBlockCountRepair) != aMockBlock->mHeader.mBlockCountRepair) {
+                if (pError != NULL) {
+                    ByteString aError = ByteString("At archive ") + ByteString(aRealIndex) +
+                    ByteString(", block ") + ByteString(aRealBlockIndex) +
+                    ByteString(", real section header repair block count (") + ByteString(Layout::ToInt(aRealBlock->mHeader.mBlockCountRepair)) +
+                    ByteString(") was not equal to mock section header repair block count (") + ByteString((int)aMockBlock->mHeader.mBlockCountRepair)
+                    + ByteString(")");
+                    pError->Set(aError);
+                }
+                return false;
+            }
+            
+            if (aRealBlock->mHeader.mSectionType != ((unsigned char)aMockBlock->mHeader.mSectionType)) {
+                if (pError != NULL) {
+                    
+                    ByteString aType1 = string("???");
+                    if (aRealBlock->mHeader.mSectionType == ((unsigned char)SectionTypeV2::kPreviewManifest)) {
+                        aType1 = "PreviewManifest";
+                    }
+                    if (aRealBlock->mHeader.mSectionType == ((unsigned char)SectionTypeV2::kArchiveData)) {
+                        aType1 = "ArchiveData";
+                    }
+                    if (aRealBlock->mHeader.mSectionType == ((unsigned char)SectionTypeV2::kRepairData)) {
+                        aType1 = "RepairData";
+                    }
+                    
+                    ByteString aType2 = string("???");
+                    if (aMockBlock->mHeader.mSectionType == ((unsigned char)SectionTypeV2::kPreviewManifest)) {
+                        aType2 = "PreviewManifest";
+                    }
+                    if (aMockBlock->mHeader.mSectionType == ((unsigned char)SectionTypeV2::kArchiveData)) {
+                        aType2 = "ArchiveData";
+                    }
+                    if (aMockBlock->mHeader.mSectionType == ((unsigned char)SectionTypeV2::kRepairData)) {
+                        aType2 = "RepairData";
+                    }
+                    
+                    ByteString aError = ByteString("At archive ") + ByteString(aRealIndex) +
+                    ByteString(", block ") + ByteString(aRealBlockIndex) +
+                    ByteString(", real section header type (") + aType1 +
+                    ByteString(") was not equal to mock section header type (") + aType2
+                    + ByteString(")");
+                    pError->Set(aError);
+                }
+                return false;
+            }
+            
+            
+            
+            int aRealRepairIndex1 = aRealBlock->mHeader.mRepairRecord.mArchiveIndex;
+            int aRealRepairIndex2 = aRealBlock->mHeader.mRepairRecord.mBlockIndex;
+            int aMockRepairIndex1 = aMockBlock->mHeader.mRepairRecord.mArchiveIndex;
+            int aMockRepairIndex2 = aMockBlock->mHeader.mRepairRecord.mBlockIndex;
+            
+            if (aMockBlock->mHeader.mRepairRecord.mExpectInvalid) {
+                if (aRealRepairIndex1 < (int)pReal.size()) {
+                    if (pError != NULL) {
+                        ByteString aError = ByteString("At archive ") + ByteString(aRealIndex) +
+                        ByteString(", block ") + ByteString(aRealBlockIndex) +
+                        ByteString(", real repair record archive (") + ByteString(aRealRepairIndex1) +
+                        ByteString(") was expected to be invalid, so larger than (") + ByteString((int)pReal.size())
+                        + ByteString(")");
+                        pError->Set(aError);
+                    }
+                    return false;
+                }
+                if (aRealRepairIndex2 < pJob.mBlocksPerArchive) {
+                    if (pError != NULL) {
+                        ByteString aError = ByteString("At archive ") + ByteString(aRealIndex) +
+                        ByteString(", block ") + ByteString(aRealBlockIndex) +
+                        ByteString(", real repair record block (") + ByteString(aRealRepairIndex1) +
+                        ByteString(") was expected to be invalid, so larger than (") + ByteString(pJob.mBlocksPerArchive)
+                        + ByteString(")");
+                        pError->Set(aError);
+                    }
+                    return false;
+                }
+            } else {
+                if (aRealRepairIndex1 != aMockRepairIndex1) {
+                    if (pError != NULL) {
+                        ByteString aError = ByteString("At archive ") + ByteString(aRealIndex) +
+                        ByteString(", block ") + ByteString(aRealBlockIndex) +
+                        ByteString(", real repair record archive (") + ByteString(aRealRepairIndex1) +
+                        ByteString(") was not equal to mock repair record archive (") + ByteString(aMockRepairIndex1)
+                        + ByteString(")");
+                        pError->Set(aError);
+                    }
+                    return false;
+                }
+                if (aRealRepairIndex2 != aMockRepairIndex2) {
+                    if (pError != NULL) {
+                        ByteString aError = ByteString("At archive ") + ByteString(aRealIndex) +
+                        ByteString(", block ") + ByteString(aRealBlockIndex) +
+                        ByteString(", real repair record block (") + ByteString(aRealRepairIndex2) +
+                        ByteString(") was not equal to mock repair record block (") + ByteString(aMockRepairIndex2)
+                        + ByteString(")");
+                        pError->Set(aError);
+                    }
+                    return false;
+                }
+            }
+            
+            
+            
+            
+            int aRealSkipIndex1 = Layout::ToInt(aRealBlock->mHeader.mSkipRecord.mArchiveIndex);
+            int aRealSkipIndex2 = aRealBlock->mHeader.mSkipRecord.mBlockIndex;
+            int aRealSkipIndex3 = Layout::ToInt(aRealBlock->mHeader.mSkipRecord.mByteIndex);
             
             int aMockSkipIndex1 = aMockBlock->mHeader.mSkipRecord.mArchiveIndex;
             int aMockSkipIndex2 = aMockBlock->mHeader.mSkipRecord.mBlockIndex;
@@ -70,7 +216,6 @@ bool BundleVerify::Execute(JobBundle &pJob, vector<WrappedArchive> pReal, vector
             
             if (aMockBlock->mHeader.mSkipRecord.mExpectInvalid) {
                 
-                /*
                 if (aRealSkipIndex1 < (int)pReal.size()) {
                     if (pError != NULL) {
                         ByteString aError = ByteString("At archive ") + ByteString(aRealIndex) +
@@ -104,11 +249,9 @@ bool BundleVerify::Execute(JobBundle &pJob, vector<WrappedArchive> pReal, vector
                     }
                     return false;
                 }
-                */
                 
             } else {
                 
-                /*
                 if (aRealSkipIndex1 != aMockSkipIndex1) {
                     if (pError != NULL) {
                         ByteString aError = ByteString("At archive ") + ByteString(aRealIndex) +
@@ -142,10 +285,7 @@ bool BundleVerify::Execute(JobBundle &pJob, vector<WrappedArchive> pReal, vector
                     }
                     return false;
                 }
-                */
-                
             }
-            
             
             if (aRealPayloadCount != aMockPayloadCount) {
                 if (pError != NULL) {
@@ -174,6 +314,40 @@ bool BundleVerify::Execute(JobBundle &pJob, vector<WrappedArchive> pReal, vector
             return false;
         }
         
+        if (Layout::ToInt(aReal->mHeader.mBlockCountPreview) != aMock->mHeader.mBlockCountPreview) {
+            if (pError != NULL) {
+                ByteString aError = ByteString("At archive ") + ByteString(aRealIndex) +
+                ByteString(", real archive header preview block count (") + ByteString(Layout::ToInt(aReal->mHeader.mBlockCountPreview)) +
+                ByteString(") was not equal to mock archive header preview block count (") + ByteString((int)aMock->mHeader.mBlockCountPreview)
+                + ByteString(")");
+                pError->Set(aError);
+            }
+            return false;
+        }
+        
+        if (Layout::ToInt(aReal->mHeader.mBlockCountMain) != aMock->mHeader.mBlockCountMain) {
+            if (pError != NULL) {
+                ByteString aError = ByteString("At archive ") + ByteString(aRealIndex) +
+                ByteString(", real archive header main block count (") + ByteString(Layout::ToInt(aReal->mHeader.mBlockCountMain)) +
+                ByteString(") was not equal to mock archive header main block count (") + ByteString((int)aMock->mHeader.mBlockCountMain)
+                + ByteString(")");
+                pError->Set(aError);
+            }
+            return false;
+        }
+        
+        if (Layout::ToInt(aReal->mHeader.mBlockCountRepair) != aMock->mHeader.mBlockCountRepair) {
+            if (pError != NULL) {
+                ByteString aError = ByteString("At archive ") + ByteString(aRealIndex) +
+                ByteString(", real archive header repair block count (") + ByteString(Layout::ToInt(aReal->mHeader.mBlockCountRepair)) +
+                ByteString(") was not equal to mock archive header repair block count (") + ByteString((int)aMock->mHeader.mBlockCountRepair)
+                + ByteString(")");
+                pError->Set(aError);
+            }
+            return false;
+        }
+        
+        
         ++aRealIndex;
         ++aMockIndex;
     }
@@ -189,3 +363,4 @@ bool BundleVerify::Execute(JobBundle &pJob, vector<WrappedArchive> pReal, vector
     
     return true;
 }
+

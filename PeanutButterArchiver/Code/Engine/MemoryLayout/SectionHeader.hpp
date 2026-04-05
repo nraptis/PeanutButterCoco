@@ -6,6 +6,7 @@
 #include "../../Knobs.hpp"
 #include "CheckSum.hpp"
 #include "MemoryLayoutError.hpp"
+#include "Primatives.hpp"
 #include "RepairRecord.hpp"
 #include "SkipRecord.hpp"
 
@@ -16,7 +17,6 @@ inline constexpr std::size_t kSectionHeaderBytesV2 = knobs::kSectionHeaderBytesV
 enum class SectionTypeV2 : std::uint8_t {
   kArchiveData = 0u,
   kPreviewManifest = 1u,
-  kEmptyFolderManifest = 2u,
   kRepairData = 3u,
 };
 
@@ -33,14 +33,25 @@ struct SectionHeaderV2 {
   std::uint32_t mArchiveBlockCount = 0u;
   std::uint32_t mArchiveIndex = 0u;
   std::uint32_t mBlockIndex = 0u;
-  std::uint32_t mArchiveDataBlockCount = 0u;
-  std::uint32_t mPreviewManifestBlockCount = 0u;
-  std::uint32_t mFolderManifestBlockCount = 0u;
-  std::uint32_t mRepairDataBlockCount = 0u;
+  PackedUint48V2 mBlockCountMain{};
+  PackedUint48V2 mBlockCountPreview{};
+  PackedUint48V2 mBlockCountRepair{};
   std::uint64_t mArchiveFamilyId = 0u;
   std::uint8_t mReserved[specs_verified::kSectionReservedBytesV2] = {};
 };
 #pragma pack(pop)
+
+inline std::uint64_t SectionHeaderBlockCountMain(const SectionHeaderV2& pHeader) {
+  return PackedUint48ToUInt64(pHeader.mBlockCountMain);
+}
+
+inline std::uint64_t SectionHeaderBlockCountPreview(const SectionHeaderV2& pHeader) {
+  return PackedUint48ToUInt64(pHeader.mBlockCountPreview);
+}
+
+inline std::uint64_t SectionHeaderBlockCountRepair(const SectionHeaderV2& pHeader) {
+  return PackedUint48ToUInt64(pHeader.mBlockCountRepair);
+}
 
 bool ValidateSectionHeader(const SectionHeaderV2& pHeader,
                            MemoryLayoutErrorInfo* pOutError = nullptr);

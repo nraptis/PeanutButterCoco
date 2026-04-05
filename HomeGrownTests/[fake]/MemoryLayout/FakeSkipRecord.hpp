@@ -20,8 +20,6 @@ public:
     bool                    SetValid(int pPayloadDistance,
                                 int pBlocksPerArchive,
                                 int pPayloadBytesPerBlock,
-                                int pArchiveOffset,
-                                int pBlockOffset,
                                 ByteString *pError);
     bool                    SetInvalid();
     

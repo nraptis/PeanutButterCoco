@@ -35,8 +35,6 @@ bool FakeSkipRecord::SetInvalid() {
 bool FakeSkipRecord::SetValid(int pPayloadDistance,
                          int pBlocksPerArchive,
                          int pPayloadBytesPerBlock,
-                         int pArchiveOffset,
-                         int pBlockOffset,
                          ByteString *pError) {
     
     if (pBlocksPerArchive <= 0) {
@@ -49,32 +47,16 @@ bool FakeSkipRecord::SetValid(int pPayloadDistance,
         return false;
     }
     
-    if (pArchiveOffset < 0) {
-        if (pError != NULL) pError->Set("Invalid archive offset.");
-        return false;
-    }
-    
-    if (pBlockOffset < 0) {
-        if (pError != NULL) pError->Set("Invalid block offset.");
-        return false;
-    }
-    
     if (pPayloadDistance < 0) {
         if (pError != NULL) pError->Set("Invalid payload distance.");
         return false;
     }
     
-
     // Store raw
     mPayloadDistance = pPayloadDistance;
     
-    // Flatten start position
-    int aStart =
-        (pArchiveOffset * pBlocksPerArchive * pPayloadBytesPerBlock) +
-        (pBlockOffset   * pPayloadBytesPerBlock);
-    
-    // Advance
-    int aEnd = aStart + pPayloadDistance;
+    int aStart = 0;
+    int aEnd = pPayloadDistance;
     
     // Decompose
     int aBytesPerArchive = pBlocksPerArchive * pPayloadBytesPerBlock;

@@ -26,8 +26,6 @@ constexpr std::uint64_t kDecodeProgressByteLogIntervalV2 =
 
 const char* SectionTypeLabel(SectionTypeV2 pSectionType) {
   switch (pSectionType) {
-    case SectionTypeV2::kEmptyFolderManifest:
-      return "empty_folder_manifest";
     case SectionTypeV2::kPreviewManifest:
       return "preview_manifest";
     case SectionTypeV2::kArchiveData:
@@ -131,16 +129,16 @@ void EmitDecodeArchiveHeaderEvent(DecodeStageContextV2& pContext,
   aEvent.SetInfo("archive_count",
                  PackedUint48ToUInt64(pArchive.mHeader.mArchiveCount));
   aEvent.SetInfo("archive_data_block_count",
-                 PackedUint48ToUInt64(pArchive.mHeader.mArchiveDataBlockCount));
-  const std::uint64_t aLegacyEmptyFolderBlocks =
-      PackedUint48ToUInt64(pArchive.mHeader.mEmptyFolderBlockCount);
-  if (aLegacyEmptyFolderBlocks > 0u) {
-    aEvent.SetInfo("legacy_empty_folder_block_count", aLegacyEmptyFolderBlocks);
+                 PackedUint48ToUInt64(pArchive.mHeader.mBlockCountMain));
+  const std::uint64_t aReservedCount0 =
+      PackedUint48ToUInt64(pArchive.mHeader.mReservedCount0);
+  if (aReservedCount0 > 0u) {
+    aEvent.SetInfo("reserved_count0", aReservedCount0);
   }
   aEvent.SetInfo("preview_manifest_block_count",
-                 PackedUint48ToUInt64(pArchive.mHeader.mPreviewManifestBlockCount));
+                 PackedUint48ToUInt64(pArchive.mHeader.mBlockCountPreview));
   aEvent.SetInfo("repair_block_count",
-                 PackedUint48ToUInt64(pArchive.mHeader.mRepairSectorBlockCount));
+                 PackedUint48ToUInt64(pArchive.mHeader.mBlockCountRepair));
   aEvent.SetInfo("archive_family_id", pArchive.mHeader.mArchiveFamilyId);
   aEvent.SetInfo("is_encrypted", pArchive.mHeader.mIsEncrypted != 0u);
   pContext.EmitRuntimeEvent(aEvent);
@@ -358,10 +356,6 @@ bool ShouldTryPlaintextPreviewManifestBlock(const DecodeStageContextV2& pContext
 std::uint8_t ExpectedSectionType(const DecodeStageContextV2& pContext) {
   const DecodeManifestStateV2& aManifest = pContext.State().mManifest;
   const DecodeBootstrapStateV2& aBootstrap = pContext.State().mBootstrap;
-  if (aManifest.mEmptyFolderBlocksProcessed <
-      aBootstrap.mExpectedEmptyFolderBlockCount) {
-    return static_cast<std::uint8_t>(SectionTypeV2::kEmptyFolderManifest);
-  }
   if (aManifest.mPreviewManifestBlocksProcessed <
       aBootstrap.mExpectedPreviewManifestBlockCount) {
     return static_cast<std::uint8_t>(SectionTypeV2::kPreviewManifest);
@@ -411,8 +405,8 @@ bool IsExpectedContinuationBlock(const std::vector<DiscoveredArchiveFileV2>& pAr
 }
 
 bool SkipRecordIsZero(const SkipRecordV2& pSkipRecord) {
-  return pSkipRecord.mArchiveDistance == 0u &&
-         pSkipRecord.mBlockDistance == 0u &&
+  return GetSkipRecordArchiveIndex(pSkipRecord) == 0u &&
+         pSkipRecord.mBlockIndex == 0u &&
          GetSkipRecordByteDistance(pSkipRecord) == 0u;
 }
 
@@ -593,10 +587,9 @@ bool TryApplyRecoverSkipRecord(DecodeStageContextV2& pContext,
   const std::vector<DiscoveredArchiveFileV2>& aArchives =
       pContext.State().mDiscovery.mArchives;
   const std::size_t aTargetArchiveSlot =
-      pCurrentArchiveSlot +
-      static_cast<std::size_t>(pSectionHeader.mSkipRecord.mArchiveDistance);
+      static_cast<std::size_t>(GetSkipRecordArchiveIndex(pSectionHeader.mSkipRecord));
   const std::uint64_t aTargetBlockIndex =
-      static_cast<std::uint64_t>(pSectionHeader.mSkipRecord.mBlockDistance);
+      static_cast<std::uint64_t>(pSectionHeader.mSkipRecord.mBlockIndex);
   const std::size_t aTargetPayloadOffset = static_cast<std::size_t>(
       GetSkipRecordByteDistance(pSectionHeader.mSkipRecord));
   const std::size_t aPayloadBytesPerBlock = pContext.Layout().SectionPayloadBytes();
@@ -1294,45 +1287,6 @@ bool DecodeArchiveDecodeV2::Run(DecodeStageContextV2& pContext) {
     std::string aPausedRecordReference;
 
     switch (static_cast<SectionTypeV2>(aSectionHeader.mSectionType)) {
-      case SectionTypeV2::kEmptyFolderManifest:
-        if (!aCursor.mFolderDecoder.Consume(aCursor.mBlockBytes.Data() + kSectionHeaderBytesV2,
-                                            aBlockPayloadStart,
-                                            aBlockPayloadEnd,
-                                            false,
-                                            aTerminated,
-                                            aStoppedAtPadding,
-                                            aParseError,
-                                            aParseErrorMessage,
-                                            aDataBytesWritten,
-                                            aPausedAtBoundary,
-                                            aResumeOffset,
-                                            aPausedRecordReference)) {
-          EmitDecodeErrorMarkerEvent(
-              pContext,
-              "empty_folder_name_error",
-              "Decode empty-folder record encountered a name/path error.",
-              aArchive,
-              aCursor.mArchiveSlot,
-              aCursor.mBlockIndex,
-              SectionTypeLabel(SectionTypeV2::kEmptyFolderManifest),
-              aCursor.mFolderDecoder.CurrentFileReference());
-          if (!HandleDamagedBlock(
-                  pContext,
-                  "empty-folder logical record parse failed: " +
-                      aParseErrorMessage)) {
-            aCursorPtr.reset();
-            return false;
-          }
-          aCursor.mFolderDecoder.ResetAfterParseError();
-          if (ContinueAfterDamagedBlock(pContext, aCursor, aArchive)) {
-            return true;
-          }
-          aParseError = false;
-          aParseErrorMessage.clear();
-          continue;
-        }
-        break;
-
       case SectionTypeV2::kPreviewManifest:
         if (!aCursor.mPreviewDecoder.Consume(aCursor.mBlockBytes.Data() + kSectionHeaderBytesV2,
                                              aBlockPayloadStart,
@@ -1498,9 +1452,6 @@ bool DecodeArchiveDecodeV2::Run(DecodeStageContextV2& pContext) {
     }
 
     switch (static_cast<SectionTypeV2>(aSectionHeader.mSectionType)) {
-      case SectionTypeV2::kEmptyFolderManifest:
-        ++pContext.State().mManifest.mEmptyFolderBlocksProcessed;
-        break;
       case SectionTypeV2::kPreviewManifest:
         ++pContext.State().mManifest.mPreviewManifestBlocksProcessed;
         break;

@@ -25,6 +25,8 @@ public:
     bool                    ToPayload(ByteString *pPayload, ByteString *pError);
     bool                    FromPayload(ByteString &pPayload, ByteString *pError);
     
+    bool                    ToPreviewPayload(ByteString *pPayload, ByteString *pError);
+    
 };
 
 #endif /* FakeFile_hpp */

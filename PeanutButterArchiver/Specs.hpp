@@ -110,10 +110,10 @@ Offset map (little-endian numeric fields):
 - `15`: `mReserved0`
 - `16..21`: `mArchiveIndex` (packed uint48)
 - `22..27`: `mArchiveCount` (packed uint48)
-- `28..33`: `mArchiveDataBlockCount` (packed uint48)
-- `34..39`: `mEmptyFolderBlockCount` (packed uint48, legacy compatibility field; current bundler writes `0`)
-- `40..45`: `mPreviewManifestBlockCount` (packed uint48)
-- `46..51`: `mRepairSectorBlockCount` (packed uint48)
+- `28..33`: `mBlockCountMain` (packed uint48)
+- `34..39`: `mReservedCount0` (packed uint48, currently written as `0`)
+- `40..45`: `mBlockCountPreview` (packed uint48)
+- `46..51`: `mBlockCountRepair` (packed uint48)
 - `52..59`: `mArchiveFamilyId` (u64)
 - `60..63`: `mReserved1` (u32)
 
@@ -130,36 +130,38 @@ Bundle writes provisional headers first (`kInvalid`), then patches to final stat
 Offset map:
 
 - `0..31`: `mCheckSum` (32 bytes)
-- `32..38`: `mSkipRecord` (7 bytes)
-- `39..46`: `mRepairRecord` (8 bytes)
-- `47`: `mSectionType`
-- `48`: `mSectionFlags` (must be zero)
-- `49..52`: `mPayloadBytesUsed` (u32)
-- `53..56`: `mArchiveFileCount` (u32)
-- `57..60`: `mArchiveBlockCount` (u32)
-- `61..64`: `mArchiveIndex` (u32)
-- `65..68`: `mBlockIndex` (u32)
-- `69..72`: `mArchiveDataBlockCount` (u32)
-- `73..76`: `mPreviewManifestBlockCount` (u32)
-- `77..80`: `mFolderManifestBlockCount` (u32, legacy compatibility field; current bundler writes `0`)
-- `81..84`: `mRepairDataBlockCount` (u32)
+- `32..39`: `mSkipRecord` (8 bytes)
+- `40..43`: `mRepairRecord` (4 bytes)
+- `44`: `mCheckSumKind` (must match SHA-256 kind constant)
+- `45`: `mSectionType`
+- `46`: `mSectionFlags` (must be zero)
+- `47..50`: `mPayloadBytesUsed` (u32)
+- `51..54`: `mArchiveFileCount` (u32)
+- `55..58`: `mArchiveBlockCount` (u32)
+- `59..62`: `mArchiveIndex` (u32)
+- `63..66`: `mBlockIndex` (u32)
+- `67..72`: `mBlockCountMain` (packed uint48)
+- `73..78`: `mBlockCountPreview` (packed uint48)
+- `79..84`: `mBlockCountRepair` (packed uint48)
 - `85..92`: `mArchiveFamilyId` (u64)
 - `93..95`: reserved bytes
 
 Section types (`SectionTypeV2`):
 - `0`: archive_data
 - `1`: preview_manifest
-- `2`: empty_folder_manifest (legacy decode compatibility)
+- `2`: reserved (unused)
 - `3`: repair_data
 
-3.3 Skip Record (`SkipRecordV2`, 7 bytes)
-- `mArchiveDistance` (u16)
-- `mBlockDistance` (u16)
-- `mByteDistance` (packed u24)
+3.3 Skip Record (`SkipRecordV2`, 8 bytes)
+- `mArchiveIndex` (packed u24, absolute archive index)
+- `mBlockIndex` (u16, local block index inside that archive)
+- `mByteIndex` (packed u24, payload byte offset inside target block)
 
-3.4 Repair Record (`RepairRecordV2`, 8 bytes)
-- `mRepairPointerArchive` (u32)
-- `mRepairPointerBlock` (u32)
+3.4 Repair Record (`RepairRecordV2`, 4 bytes)
+- `mArchiveIndex` (u16)
+- `mBlockIndex` (u16)
+- Non-repair (preview/data) blocks carry intentionally invalid repair targets.
+- Repair-copy blocks carry valid archive-local targets for the block they repair.
 
 3.5 Section checksum
 `ComputeSectionCheckSum` hashes:

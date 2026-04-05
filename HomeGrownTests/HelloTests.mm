@@ -136,4 +136,51 @@
     
 }
 
+- (void)testPreviewBundle {
+    
+    FakeFile aFile1;
+    aFile1.mName = "a.txt";
+    aFile1.mContent = "a";
+    
+    FakeFile aFile2;
+    aFile2.mName = "b.txt";
+    aFile2.mContent = "b";
+    
+    JobBundle aJob;
+    aJob.mFileList.push_back(aFile1);
+    aJob.mFileList.push_back(aFile2);
+    
+    aJob.mPreviewEnabled = true;
+    
+    MockHardDrive aHardDrive;
+    MockFileSystem aFileSystem(&aHardDrive);
+    ByteString aErrorString;
+    
+    if (!TestBundle::PerformReal(aJob, aFileSystem, &aErrorString)) {
+        printf("Error: %.*s\n", aErrorString.mLength, (char*)aErrorString.mData);
+        XCTFail(@"The bundle job returned an error.");
+        return;
+    }
+    
+    auto a = WrappedArchiveAssembler::Get(aJob.mDestination.ToString(),
+                                          aFileSystem,
+                                          aJob.mBlocksPerArchive,
+                                          aJob.mPayloadBytesPerBlock + Layout::SectionHeaderSize());
+
+    
+    vector<FakeArchive> aMocks;
+    if (!TestBundle::PerformMock(aJob, &aMocks, &aErrorString)) {
+        printf("Error: %.*s\n", aErrorString.mLength, (char*)aErrorString.mData);
+        XCTFail(@"The bundle job returned an error.");
+        return;
+    }
+    
+    if (!BundleVerify::Execute(aJob, a, aMocks, &aErrorString)) {
+        printf("Error: %.*s\n", aErrorString.mLength, (char*)aErrorString.mData);
+        XCTFail(@"The bundle job returned an error.");
+        return;
+    }
+    
+}
+
 @end

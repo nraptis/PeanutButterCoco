@@ -32,8 +32,8 @@ bool ReadRepairRecord(const unsigned char* pBytes,
     return false;
   }
 
-  pOutRepairRecord.mRepairPointerArchive = ReadUint32LE(pBytes + 0u);
-  pOutRepairRecord.mRepairPointerBlock = ReadUint32LE(pBytes + 4u);
+  pOutRepairRecord.mArchiveIndex = ReadUint16LE(pBytes + 0u);
+  pOutRepairRecord.mBlockIndex = ReadUint16LE(pBytes + 2u);
   return true;
 }
 
@@ -64,8 +64,8 @@ bool WriteRepairRecord(const RepairRecordV2& pRepairRecord,
     return false;
   }
 
-  WriteUint32LE(pRepairRecord.mRepairPointerArchive, pOutBytes + 0u);
-  WriteUint32LE(pRepairRecord.mRepairPointerBlock, pOutBytes + 4u);
+  WriteUint16LE(pRepairRecord.mArchiveIndex, pOutBytes + 0u);
+  WriteUint16LE(pRepairRecord.mBlockIndex, pOutBytes + 2u);
   return true;
 }
 

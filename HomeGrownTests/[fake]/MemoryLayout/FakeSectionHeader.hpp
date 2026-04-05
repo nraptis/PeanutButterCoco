@@ -9,6 +9,9 @@
 #define FakeSectionHeader_hpp
 
 #include "FakeSkipRecord.hpp"
+#include "FakeRepairRecord.hpp"
+
+// Note: mFolderManifestBlockCount should not be needed.
 
 class FakeSectionHeader {
 public:
@@ -17,6 +20,16 @@ public:
     ~FakeSectionHeader();
     
     FakeSkipRecord                  mSkipRecord;
+    FakeRepairRecord                mRepairRecord;
+    
+    unsigned char                   mSectionType;
+    
+    unsigned long long              mArchiveIndex;
+    unsigned long long              mArchiveCount;
+    
+    unsigned long long              mBlockCountPreview;
+    unsigned long long              mBlockCountMain;
+    unsigned long long              mBlockCountRepair;
     
 };
 

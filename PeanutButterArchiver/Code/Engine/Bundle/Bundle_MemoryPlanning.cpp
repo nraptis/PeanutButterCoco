@@ -15,16 +15,15 @@ std::uint64_t CeilingDivide(std::uint64_t pValue,
   return pDivisor == 0u ? 0u : ((pValue + pDivisor - 1u) / pDivisor);
 }
 
-std::uint32_t GetExpectedRepairBlockCount(
-    std::uint32_t pEligibleSourceBlockCount,
+std::uint64_t GetExpectedRepairBlockCount(
+    std::uint64_t pEligibleSourceBlockCount,
     RepairCoveragePresetV2 pCoverage) {
   if (pEligibleSourceBlockCount == 0u) {
     return 0u;
   }
-  const std::uint64_t aPercent =
+  const std::uint64_t aCoverage =
       static_cast<std::uint64_t>(RepairCoveragePercentV2(pCoverage));
-  return static_cast<std::uint32_t>(CeilingDivide(
-      static_cast<std::uint64_t>(pEligibleSourceBlockCount) * aPercent, 100u));
+  return ((pEligibleSourceBlockCount * aCoverage) + 99u) / 100u;
 }
 
 std::vector<std::uint32_t> BuildArchiveBlockCounts(std::uint64_t pTotalBlockCount,
@@ -137,7 +136,7 @@ bool BundleMemoryPlanningV2::Run(BundleStageContextV2& pContext) {
   aMemoryPlan = BundleMemoryPlanV2{};
   aManifest.mPreviewManifestPayload.clear();
   aManifest.mPreviewManifestBytes = 0u;
-  aManifest.mPreviewManifestBlockCount = 0u;
+  aManifest.mBlockCountPreview = 0u;
 
   for (const BundleRecordEntryV2& aFileRecord : aDiscovery.mFileRecords) {
     aMemoryPlan.mArchiveDataLogicalBytes += RecordLogicalBytes(
@@ -156,9 +155,8 @@ bool BundleMemoryPlanningV2::Run(BundleStageContextV2& pContext) {
         false);
   }
 
-  aMemoryPlan.mArchiveDataBlockCount = CeilingDivide(
+  aMemoryPlan.mBlockCountMain = CeilingDivide(
       aMemoryPlan.mArchiveDataLogicalBytes, aSectionPayloadBytes);
-  aMemoryPlan.mEmptyFolderBlockCount = 0u;
   if (pContext.Request().mIncludePreviewManifest) {
     for (const BundleRecordEntryV2& aFolderRecord : aDiscovery.mEmptyFolderRecords) {
       aManifest.mPreviewManifestBytes += RecordLogicalBytes(
@@ -174,13 +172,13 @@ bool BundleMemoryPlanningV2::Run(BundleStageContextV2& pContext) {
           memory_layout::TypedRecordTypeV2::kManifestFolder,
           true);
     }
-    aManifest.mPreviewManifestBlockCount = CeilingDivide(
+    aManifest.mBlockCountPreview = CeilingDivide(
         aManifest.mPreviewManifestBytes, aSectionPayloadBytes);
   }
-  aMemoryPlan.mPreviewManifestBlockCount = aManifest.mPreviewManifestBlockCount;
+  aMemoryPlan.mBlockCountPreview = aManifest.mBlockCountPreview;
   aMemoryPlan.mNonRepairFamilyBlockCount =
-      aMemoryPlan.mPreviewManifestBlockCount +
-      aMemoryPlan.mArchiveDataBlockCount;
+      aMemoryPlan.mBlockCountPreview +
+      aMemoryPlan.mBlockCountMain;
 
   const std::uint32_t aBlocksPerArchive =
       std::max<std::uint32_t>(1u, pContext.Request().mBlockCount);
@@ -193,10 +191,12 @@ bool BundleMemoryPlanningV2::Run(BundleStageContextV2& pContext) {
   if (pContext.Request().mRepairEnabled) {
     const std::uint64_t aPreviewStart = 0u;
     const std::uint64_t aPreviewEnd =
-        aPreviewStart + aMemoryPlan.mPreviewManifestBlockCount;
+        aPreviewStart + aMemoryPlan.mBlockCountPreview;
     std::uint64_t aSourceFamilyBlockCursor = 0u;
-    aMemoryPlan.mRepairCopySourceLocalBlocks.reserve(
+    std::vector<std::vector<std::uint32_t>> aEligibleSourceLocalBlocksByArchive;
+    aEligibleSourceLocalBlocksByArchive.reserve(
         aMemoryPlan.mSourceArchiveBlockCounts.size());
+    std::uint64_t aTotalEligibleSourceBlockCount = 0u;
     for (std::uint32_t aSourceBlockCount : aMemoryPlan.mSourceArchiveBlockCounts) {
       std::vector<std::uint32_t> aEligibleSourceLocalBlocks;
       aEligibleSourceLocalBlocks.reserve(static_cast<std::size_t>(aSourceBlockCount));
@@ -210,20 +210,54 @@ bool BundleMemoryPlanningV2::Run(BundleStageContextV2& pContext) {
         }
         aEligibleSourceLocalBlocks.push_back(aLocalBlockIndex);
       }
-
-      const std::uint32_t aExpectedRepairBlocks = GetExpectedRepairBlockCount(
-          static_cast<std::uint32_t>(aEligibleSourceLocalBlocks.size()),
-          pContext.Request().mRepairCoverage);
-      if (aExpectedRepairBlocks > 0u) {
-        aEligibleSourceLocalBlocks.resize(aExpectedRepairBlocks);
-      }
-      aMemoryPlan.mRepairCopyBlockCounts.push_back(
-          static_cast<std::uint32_t>(aEligibleSourceLocalBlocks.size()));
-      aMemoryPlan.mRepairCopySourceLocalBlocks.push_back(
+      aTotalEligibleSourceBlockCount +=
+          static_cast<std::uint64_t>(aEligibleSourceLocalBlocks.size());
+      aEligibleSourceLocalBlocksByArchive.push_back(
           std::move(aEligibleSourceLocalBlocks));
-      aMemoryPlan.mRepairSectorBlockCount +=
-          static_cast<std::uint64_t>(aMemoryPlan.mRepairCopyBlockCounts.back());
       aSourceFamilyBlockCursor += static_cast<std::uint64_t>(aSourceBlockCount);
+    }
+
+    const std::uint64_t aTargetRepairBlockCount = GetExpectedRepairBlockCount(
+        aTotalEligibleSourceBlockCount, pContext.Request().mRepairCoverage);
+
+    std::vector<std::vector<std::uint32_t>> aSelectedSourceLocalBlocksByArchive(
+        aEligibleSourceLocalBlocksByArchive.size());
+    std::uint64_t aSelectedBlockCount = 0u;
+    std::size_t aLayer = 0u;
+    while (aSelectedBlockCount < aTargetRepairBlockCount) {
+      bool aPickedAnyInLayer = false;
+      for (std::size_t aArchiveIndex = 0u;
+           aArchiveIndex < aEligibleSourceLocalBlocksByArchive.size();
+           ++aArchiveIndex) {
+        const std::vector<std::uint32_t>& aEligible =
+            aEligibleSourceLocalBlocksByArchive[aArchiveIndex];
+        if (aLayer >= aEligible.size()) {
+          continue;
+        }
+        aSelectedSourceLocalBlocksByArchive[aArchiveIndex].push_back(aEligible[aLayer]);
+        ++aSelectedBlockCount;
+        aPickedAnyInLayer = true;
+        if (aSelectedBlockCount >= aTargetRepairBlockCount) {
+          break;
+        }
+      }
+      if (!aPickedAnyInLayer) {
+        break;
+      }
+      ++aLayer;
+    }
+
+    aMemoryPlan.mRepairCopySourceLocalBlocks.reserve(
+        aSelectedSourceLocalBlocksByArchive.size());
+    aMemoryPlan.mRepairCopyBlockCounts.reserve(
+        aSelectedSourceLocalBlocksByArchive.size());
+    for (std::vector<std::uint32_t>& aSelected :
+         aSelectedSourceLocalBlocksByArchive) {
+      const std::uint32_t aCount =
+          static_cast<std::uint32_t>(aSelected.size());
+      aMemoryPlan.mRepairCopyBlockCounts.push_back(aCount);
+      aMemoryPlan.mRepairCopySourceLocalBlocks.push_back(std::move(aSelected));
+      aMemoryPlan.mRepairSectorBlockCount += static_cast<std::uint64_t>(aCount);
     }
   }
 

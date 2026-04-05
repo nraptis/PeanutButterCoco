@@ -41,6 +41,7 @@ class DecodeRepairApplyCursorV2 {
     std::uint64_t mExpectedRepairBlocks = 0u;
     std::uint64_t mReadableRepairBlocks = 0u;
     std::uint64_t mRepairableBlocks = 0u;
+    std::uint64_t mNonRepairBlockStart = 0u;
   };
 
   enum class StageV2 {
@@ -63,6 +64,7 @@ class DecodeRepairApplyCursorV2 {
   std::uint64_t mNominalBlocksPerArchive = 0u;
   std::uint64_t mTotalFamilyBlocks = 0u;
   std::uint64_t mTotalNonRepairBlocks = 0u;
+  std::uint64_t mPlannedNonRepairPrefix = 0u;
   std::uint64_t mPlanArchiveIndex = 0u;
   std::size_t mPlanningArchiveSlot = std::numeric_limits<std::size_t>::max();
   std::uint64_t mPlanningBlockIndex = 0u;
@@ -73,6 +75,7 @@ class DecodeRepairApplyCursorV2 {
   FixedBlockBufferV2 mCopyBuffer;
   FixedBlockBufferV2 mZeroBuffer;
   FixedBlockBufferV2 mDecodeBuffer;
+  FixedBlockBufferV2 mTargetDecodeBuffer;
   std::unique_ptr<FileReadStreamV2> mRead;
   std::unique_ptr<FileWriteStreamV2> mWrite;
   std::uint64_t mBytesCopied = 0u;
@@ -146,10 +149,13 @@ void RefineArchiveWindowFromInspection(DecodeStageContextV2& pContext,
   if (pSectionHeader.mArchiveFileCount != 0u) {
     aBootstrap.mExpectedArchiveCount = pSectionHeader.mArchiveFileCount;
   }
-  aBootstrap.mExpectedEmptyFolderBlockCount = pSectionHeader.mFolderManifestBlockCount;
-  aBootstrap.mExpectedPreviewManifestBlockCount = pSectionHeader.mPreviewManifestBlockCount;
-  aBootstrap.mExpectedArchiveDataBlockCount = pSectionHeader.mArchiveDataBlockCount;
-  aBootstrap.mExpectedRepairBlockCount = pSectionHeader.mRepairDataBlockCount;
+  aBootstrap.mExpectedEmptyFolderBlockCount = 0u;
+  aBootstrap.mExpectedPreviewManifestBlockCount =
+      PackedUint48ToUInt64(pSectionHeader.mBlockCountPreview);
+  aBootstrap.mExpectedArchiveDataBlockCount =
+      PackedUint48ToUInt64(pSectionHeader.mBlockCountMain);
+  aBootstrap.mExpectedRepairBlockCount =
+      PackedUint48ToUInt64(pSectionHeader.mBlockCountRepair);
 
   std::uint64_t aObservedArchiveCount = 0u;
   for (const DiscoveredArchiveFileV2& aArchive : aDiscovery.mArchives) {
@@ -341,22 +347,22 @@ bool BuildSyntheticArchiveHeader(const DecodeStageContextV2& pContext,
                           pContext.State().mBootstrap.mExpectedArchiveCount,
                           nullptr,
                           "ArchiveCount") ||
-      !TrySetPackedUint48(pOutHeader.mArchiveDataBlockCount,
+      !TrySetPackedUint48(pOutHeader.mBlockCountMain,
                           pContext.State().mBootstrap.mExpectedArchiveDataBlockCount,
                           nullptr,
-                          "ArchiveDataBlockCount") ||
-      !TrySetPackedUint48(pOutHeader.mEmptyFolderBlockCount,
-                          pContext.State().mBootstrap.mExpectedEmptyFolderBlockCount,
+                          "BlockCountMain") ||
+      !TrySetPackedUint48(pOutHeader.mReservedCount0,
+                          0u,
                           nullptr,
-                          "EmptyFolderBlockCount") ||
-      !TrySetPackedUint48(pOutHeader.mPreviewManifestBlockCount,
+                          "ReservedCount0") ||
+      !TrySetPackedUint48(pOutHeader.mBlockCountPreview,
                           pContext.State().mBootstrap.mExpectedPreviewManifestBlockCount,
                           nullptr,
-                          "PreviewManifestBlockCount") ||
-      !TrySetPackedUint48(pOutHeader.mRepairSectorBlockCount,
+                          "BlockCountPreview") ||
+      !TrySetPackedUint48(pOutHeader.mBlockCountRepair,
                           pContext.State().mBootstrap.mExpectedRepairBlockCount,
                           nullptr,
-                          "RepairSectorBlockCount")) {
+                          "BlockCountRepair")) {
     pOutError = "synthetic archive header values were out of range";
     return false;
   }
@@ -525,6 +531,7 @@ bool BuildRepairArchivePlan(
   pOutError.clear();
   pOutPlan = DecodeRepairApplyCursorV2::ArchivePlanV2{};
   pOutPlan.mArchiveIndex = pArchiveIndex;
+  const std::uint64_t aNonRepairPrefixStart = pCursor.mPlannedNonRepairPrefix;
 
   DiscoveredArchiveFileV2* aArchive = nullptr;
   if (pArchiveIndex < pContext.State().mDiscovery.mArchives.size()) {
@@ -548,6 +555,7 @@ bool BuildRepairArchivePlan(
   if (pOutPlan.mNonRepairBlocks > pOutPlan.mExpectedBlocks) {
     pOutPlan.mNonRepairBlocks = pOutPlan.mExpectedBlocks;
   }
+  pOutPlan.mNonRepairBlockStart = aNonRepairPrefixStart;
   pOutPlan.mExpectedRepairBlocks = pOutPlan.mExpectedBlocks - pOutPlan.mNonRepairBlocks;
   pOutPlan.mExpectedFileBytes =
       static_cast<std::uint64_t>(kArchiveHeaderBytesV2) +
@@ -601,6 +609,12 @@ bool BuildRepairArchivePlan(
       pOutPlan.mExpectedBlocks > pOutPlan.mFullReadableBlocks
           ? (pOutPlan.mExpectedBlocks - pOutPlan.mFullReadableBlocks)
           : 0u;
+  if (pOutPlan.mNonRepairBlocks >
+      (std::numeric_limits<std::uint64_t>::max() - aNonRepairPrefixStart)) {
+    pOutError = "repair plan overflowed non-repair prefix indexing";
+    return false;
+  }
+  pCursor.mPlannedNonRepairPrefix = aNonRepairPrefixStart + pOutPlan.mNonRepairBlocks;
   return true;
 }
 
@@ -671,12 +685,49 @@ bool DecodeValidatedSectionHeaderFromRawBlock(DecodeStageContextV2& pContext,
   return true;
 }
 
+bool ResolvePatchedSectionTypeForRepairTarget(
+    const DecodeStageContextV2& pContext,
+    const DecodeRepairApplyCursorV2& pCursor,
+    std::uint64_t pTargetArchiveIndex,
+    std::uint64_t pTargetBlockIndex,
+    std::uint8_t& pOutSectionType,
+    std::string& pOutError) {
+  pOutError.clear();
+  pOutSectionType = static_cast<std::uint8_t>(SectionTypeV2::kArchiveData);
+
+  if (pTargetArchiveIndex >= pCursor.mPlans.size()) {
+    pOutError = "repair pointer archive index was out of range";
+    return false;
+  }
+  const DecodeRepairApplyCursorV2::ArchivePlanV2& aTargetPlan =
+      pCursor.mPlans[static_cast<std::size_t>(pTargetArchiveIndex)];
+  if (pTargetBlockIndex >= aTargetPlan.mNonRepairBlocks) {
+    pOutError = "repair pointer targeted a block outside the non-repair zone";
+    return false;
+  }
+  if (pTargetBlockIndex >
+      (std::numeric_limits<std::uint64_t>::max() - aTargetPlan.mNonRepairBlockStart)) {
+    pOutError = "repair pointer overflowed non-repair block indexing";
+    return false;
+  }
+  const std::uint64_t aGlobalNonRepairBlockIndex =
+      aTargetPlan.mNonRepairBlockStart + pTargetBlockIndex;
+
+  pOutSectionType =
+      aGlobalNonRepairBlockIndex <
+              pContext.State().mBootstrap.mExpectedPreviewManifestBlockCount
+          ? static_cast<std::uint8_t>(SectionTypeV2::kPreviewManifest)
+          : static_cast<std::uint8_t>(SectionTypeV2::kArchiveData);
+  return true;
+}
+
 bool BuildPatchedRawTargetBlockFromRepair(DecodeStageContextV2& pContext,
                                           const unsigned char* pRawRepairBlockBytes,
                                           const FixedBlockBufferV2& pDecodeBuffer,
                                           const SectionHeaderV2& pRepairHeader,
                                           std::uint64_t pTargetArchiveIndex,
                                           std::uint64_t pTargetBlockIndex,
+                                          std::uint8_t pPatchedSectionType,
                                           FixedBlockBufferV2& pOutPatchedRawBlock,
                                           std::string& pOutError) {
   pOutError.clear();
@@ -698,14 +749,17 @@ bool BuildPatchedRawTargetBlockFromRepair(DecodeStageContextV2& pContext,
     aRepairPlainBlockBytes = pDecodeBuffer.Data();
   }
 
-  std::memcpy(
-      pOutPatchedRawBlock.Data(), aRepairPlainBlockBytes, aArchiveBlockBytes);
+  if (pOutPatchedRawBlock.Data() != aRepairPlainBlockBytes) {
+    std::memcpy(
+        pOutPatchedRawBlock.Data(), aRepairPlainBlockBytes, aArchiveBlockBytes);
+  }
 
   SectionHeaderV2 aPatchedHeader = pRepairHeader;
-  aPatchedHeader.mRepairRecord.mRepairPointerArchive =
-      static_cast<std::uint32_t>(pTargetArchiveIndex);
-  aPatchedHeader.mRepairRecord.mRepairPointerBlock =
-      static_cast<std::uint32_t>(pTargetBlockIndex);
+  (void)pTargetArchiveIndex;
+  (void)pTargetBlockIndex;
+  aPatchedHeader.mSectionType = pPatchedSectionType;
+  aPatchedHeader.mRepairRecord.mArchiveIndex = std::numeric_limits<std::uint16_t>::max();
+  aPatchedHeader.mRepairRecord.mBlockIndex = std::numeric_limits<std::uint16_t>::max();
   aPatchedHeader.mCheckSum = ComputeSectionCheckSum(
       pOutPatchedRawBlock.Data() + kSectionHeaderBytesV2,
       aSectionPayloadBytes,
@@ -928,9 +982,9 @@ void EmitRepairArchiveHeaderEvent(DecodeStageContextV2& pContext,
   aEvent.SetInfo("archive_count", PackedUint48ToUInt64(pHeader.mArchiveCount));
   aEvent.SetInfo("archive_family_id", pHeader.mArchiveFamilyId);
   aEvent.SetInfo("archive_data_block_count",
-                 PackedUint48ToUInt64(pHeader.mArchiveDataBlockCount));
+                 PackedUint48ToUInt64(pHeader.mBlockCountMain));
   aEvent.SetInfo("repair_block_count",
-                 PackedUint48ToUInt64(pHeader.mRepairSectorBlockCount));
+                 PackedUint48ToUInt64(pHeader.mBlockCountRepair));
   pContext.EmitRuntimeEvent(aEvent);
 }
 
@@ -1173,7 +1227,9 @@ bool DecodeRepairApplyV2::Run(DecodeStageContextV2& pContext) {
                               pContext.Layout().mArchiveBlockBytes);
     if (!aCursorPtr->mCopyBuffer.Resize(aRepairBufferBytes) ||
         !aCursorPtr->mZeroBuffer.Resize(aRepairBufferBytes) ||
-        !aCursorPtr->mDecodeBuffer.Resize(pContext.Layout().mArchiveBlockBytes)) {
+        !aCursorPtr->mDecodeBuffer.Resize(pContext.Layout().mArchiveBlockBytes) ||
+        !aCursorPtr->mTargetDecodeBuffer.Resize(
+            pContext.Layout().mArchiveBlockBytes)) {
       pContext.EmitLog(LogLevelV2::kError,
                        LogPhaseFailedV2(LogActionV2::kRepair,
                                         ProgressStageV2::kRepairApply,
@@ -1719,11 +1775,28 @@ bool DecodeRepairApplyV2::Run(DecodeStageContextV2& pContext) {
         aCursorPtr.reset();
         return false;
       }
+      if (aRepairHeader.mSectionType !=
+          static_cast<std::uint8_t>(SectionTypeV2::kRepairData)) {
+        pContext.EmitLog(
+            LogLevelV2::kError,
+            LogPhaseFailedV2(
+                LogActionV2::kRepair,
+                ProgressStageV2::kRepairApply,
+                "repair block section type mismatch at archive " +
+                    std::to_string(aSourcePlan.mArchiveIndex) + ", block " +
+                    std::to_string(aSourceRepairBlockIndex) + ": observed " +
+                    std::to_string(static_cast<std::uint64_t>(aRepairHeader.mSectionType)) +
+                    ", expected " +
+                    std::to_string(static_cast<std::uint64_t>(
+                        static_cast<std::uint8_t>(SectionTypeV2::kRepairData)))));
+        aCursorPtr.reset();
+        return false;
+      }
 
       const std::uint64_t aTargetArchiveIndex =
-          static_cast<std::uint64_t>(aRepairHeader.mRepairRecord.mRepairPointerArchive);
+          static_cast<std::uint64_t>(aRepairHeader.mRepairRecord.mArchiveIndex);
       const std::uint64_t aTargetBlockIndex =
-          static_cast<std::uint64_t>(aRepairHeader.mRepairRecord.mRepairPointerBlock);
+          static_cast<std::uint64_t>(aRepairHeader.mRepairRecord.mBlockIndex);
       if (aTargetArchiveIndex >= aCursor.mPlans.size()) {
         pContext.EmitLog(
             LogLevelV2::kError,
@@ -1754,24 +1827,23 @@ bool DecodeRepairApplyV2::Run(DecodeStageContextV2& pContext) {
         aCursorPtr.reset();
         return false;
       }
-
-      std::string aPatchBuildError;
-      if (!BuildPatchedRawTargetBlockFromRepair(pContext,
-                                                aCursor.mCopyBuffer.Data(),
-                                                aCursor.mDecodeBuffer,
-                                                aRepairHeader,
-                                                aTargetArchiveIndex,
-                                                aTargetBlockIndex,
-                                                aCursor.mZeroBuffer,
-                                                aPatchBuildError)) {
+      std::uint8_t aPatchedSectionType = static_cast<std::uint8_t>(SectionTypeV2::kArchiveData);
+      std::string aPatchedSectionTypeError;
+      if (!ResolvePatchedSectionTypeForRepairTarget(pContext,
+                                                    aCursor,
+                                                    aTargetArchiveIndex,
+                                                    aTargetBlockIndex,
+                                                    aPatchedSectionType,
+                                                    aPatchedSectionTypeError)) {
         pContext.EmitLog(
             LogLevelV2::kError,
             LogPhaseFailedV2(
                 LogActionV2::kRepair,
                 ProgressStageV2::kRepairApply,
-                "failed preparing repaired target block at archive " +
-                    std::to_string(aTargetArchiveIndex) + ", block " +
-                    std::to_string(aTargetBlockIndex) + ": " + aPatchBuildError));
+                "repair block pointer could not resolve target section type at archive " +
+                    std::to_string(aSourcePlan.mArchiveIndex) + ", block " +
+                    std::to_string(aSourceRepairBlockIndex) + ": " +
+                    aPatchedSectionTypeError));
         aCursorPtr.reset();
         return false;
       }
@@ -1784,8 +1856,8 @@ bool DecodeRepairApplyV2::Run(DecodeStageContextV2& pContext) {
                 pContext,
                 aTargetPlan.mOutputPath,
                 aTargetBlockIndex,
-                aCursor.mCopyBuffer,
-                aCursor.mDecodeBuffer,
+                aCursor.mZeroBuffer,
+                aCursor.mTargetDecodeBuffer,
                 aTargetIsValid,
                 aTargetReadError)) {
           pContext.EmitLog(
@@ -1805,13 +1877,35 @@ bool DecodeRepairApplyV2::Run(DecodeStageContextV2& pContext) {
       if (aSkipOverwriteForValidTarget) {
         ++aRepair.mRepairBlocksSkippedValidTarget;
       } else {
+        std::string aPatchBuildError;
+        if (!BuildPatchedRawTargetBlockFromRepair(pContext,
+                                                  aCursor.mCopyBuffer.Data(),
+                                                  aCursor.mDecodeBuffer,
+                                                  aRepairHeader,
+                                                  aTargetArchiveIndex,
+                                                  aTargetBlockIndex,
+                                                  aPatchedSectionType,
+                                                  aCursor.mCopyBuffer,
+                                                  aPatchBuildError)) {
+          pContext.EmitLog(
+              LogLevelV2::kError,
+              LogPhaseFailedV2(
+                  LogActionV2::kRepair,
+                  ProgressStageV2::kRepairApply,
+                  "failed preparing repaired target block at archive " +
+                      std::to_string(aTargetArchiveIndex) + ", block " +
+                      std::to_string(aTargetBlockIndex) + ": " + aPatchBuildError));
+          aCursorPtr.reset();
+          return false;
+        }
+
         const std::size_t aTargetOffset = static_cast<std::size_t>(
             kArchiveHeaderBytesV2 +
             (aTargetBlockIndex *
              static_cast<std::uint64_t>(pContext.Layout().mArchiveBlockBytes)));
         if (!pContext.FileSystem().OverwriteFileRegion(aTargetPlan.mOutputPath,
                                                        aTargetOffset,
-                                                       aCursor.mZeroBuffer.Data(),
+                                                       aCursor.mCopyBuffer.Data(),
                                                        pContext.Layout().mArchiveBlockBytes)) {
           pContext.EmitLog(
               LogLevelV2::kError,

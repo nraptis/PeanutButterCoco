@@ -1,0 +1,67 @@
+{
+  "buildCommand" : {
+    "command" : "build",
+    "skipDependencies" : false,
+    "style" : "buildOnly"
+  },
+  "configuredTargets" : [
+    {
+      "guid" : "679a25c33252f8571940eb3d796f84d10f2e3896d583b4909a67a2d425396a16"
+    }
+  ],
+  "containerPath" : "/Users/magneto/Desktop/Codex Playground/PeanutButterCoco/PeanutButterArchiver.xcodeproj",
+  "continueBuildingAfterErrors" : false,
+  "dependencyScope" : "workspace",
+  "enableIndexBuildArena" : false,
+  "hideShellScriptEnvironment" : false,
+  "parameters" : {
+    "action" : "build",
+    "activeArchitecture" : "arm64",
+    "activeRunDestination" : {
+      "disableOnlyActiveArch" : false,
+      "platform" : "macosx",
+      "sdk" : "macosx26.2",
+      "sdkVariant" : "macos",
+      "supportedArchitectures" : [
+        "arm64e",
+        "arm64",
+        "x86_64"
+      ],
+      "targetArchitecture" : "arm64"
+    },
+    "arenaInfo" : {
+      "buildIntermediatesPath" : "/Users/magneto/Desktop/Codex Playground/PeanutButterCoco/build/Build/Intermediates.noindex",
+      "buildProductsPath" : "/Users/magneto/Desktop/Codex Playground/PeanutButterCoco/build/Build/Products",
+      "derivedDataPath" : "/Users/magneto/Desktop/Codex Playground/PeanutButterCoco/build",
+      "indexDataStoreFolderPath" : "/Users/magneto/Desktop/Codex Playground/PeanutButterCoco/build/Index.noindex/DataStore",
+      "indexEnableDataStore" : true,
+      "indexPCHPath" : "/Users/magneto/Desktop/Codex Playground/PeanutButterCoco/build/Index.noindex/PrecompiledHeaders",
+      "pchPath" : "/Users/magneto/Desktop/Codex Playground/PeanutButterCoco/build/Build/Intermediates.noindex/PrecompiledHeaders"
+    },
+    "configurationName" : "Debug",
+    "overrides" : {
+      "commandLine" : {
+        "table" : {
+
+        }
+      },
+      "synthesized" : {
+        "table" : {
+          "ACTION" : "build",
+          "CLANG_COVERAGE_MAPPING" : "YES",
+          "CLANG_PROFILE_DATA_DIRECTORY" : "/Users/magneto/Desktop/Codex Playground/PeanutButterCoco/build/Build/ProfileData",
+          "ENABLE_PREVIEWS" : "NO",
+          "ENABLE_XOJIT_PREVIEWS" : "YES",
+          "ONLY_ACTIVE_ARCH" : "YES",
+          "TOOLCHAINS" : "com.apple.dt.toolchain.Metal.32023.864 $(inherited)"
+        }
+      }
+    }
+  },
+  "schemeCommand" : "launch",
+  "showNonLoggedProgress" : true,
+  "useDryRun" : false,
+  "useImplicitDependencies" : true,
+  "useLegacyBuildLocations" : false,
+  "useParallelTargets" : true
+}

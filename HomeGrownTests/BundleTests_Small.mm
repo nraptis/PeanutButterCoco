@@ -21,6 +21,10 @@
 
 @implementation BundleTests_Small
 
+- (int) TEST_C {
+    return 50;
+}
+
 - (void) logRegression: (JobBundle &)pJob {
     
     NSLog(@"\n🔥 TEST FAILURE REPRO CODE 🔥\n");
@@ -43,10 +47,19 @@
         NSString *escapedName = [[name stringByReplacingOccurrencesOfString:@"\\" withString:@"\\\\"]
                                       stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\""];
         
-        NSString *escapedContent = [[content stringByReplacingOccurrencesOfString:@"\\" withString:@"\\\\"]
-                                         stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\""];
         
-        NSLog(@"    aJob.AddFile(\"%@\", \"%@\");", escapedName, escapedContent);
+        if (file.mIsFolder) {
+            
+            NSLog(@"    aJob.AddFolder(\"%@\");", escapedName);
+            
+        } else {
+            NSString *escapedContent = [[content stringByReplacingOccurrencesOfString:@"\\" withString:@"\\\\"]
+                                             stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\""];
+            
+            NSLog(@"    aJob.AddFile(\"%@\", \"%@\");", escapedName, escapedContent);
+        }
+        
+        
     }
     
     // Footer
@@ -88,28 +101,65 @@
         return NO;
     }
     
+    vector<FakeFileBlockSpan> aBlockSpans;
+    if (!TestBundle::GetBlockSpans(pJob, &aBlockSpans, &aMockArchives, &aErrorString)) {
+        printf("Error: %.*s\n", aErrorString.mLength, (char*)aErrorString.mData);
+        [self logRegression: pJob];
+        return NO;
+    }
+        
+        
+    
     return YES;
 }
 
-- (void)test_100_1_1_filesOnly {
+- (void)test_100_full_spectrum {
     
-    for (int aTestIndex=0;aTestIndex<100;aTestIndex++) {
-        int aFileCount = Random::Get(1, 8);
-        vector<FakeFile> aFiles = Words::GetRandomFiles(aFileCount, 1, 4, 0, 8);
+    for (int aPayloadBytesPerBlock=1;aPayloadBytesPerBlock<=4;aPayloadBytesPerBlock++) {
+        printf("aPayloadBytesPerBlock = %d\n", aPayloadBytesPerBlock);
         
-        JobBundle aJob;
-        for (auto aFile: aFiles) {
-            aJob.mFileList.push_back(aFile);
+        for (int aBlocksPerArchive=1;aBlocksPerArchive<=4;aBlocksPerArchive++) {
+            printf("\taBlocksPerArchive = %d\n", aBlocksPerArchive);
+            
+            for (int aRepair=0;aRepair<=80;aRepair+=20) {
+                for (int aPreview=0;aPreview<2;aPreview++) {
+                    for (int aTestIndex=0;aTestIndex<[self TEST_C];aTestIndex++) {
+                        
+                        int aFileCount = Random::Get(1, 8);
+                        vector<FakeFile> aFiles = Words::GetRandomFiles(aFileCount, 1, 4, 0, 8);
+                        JobBundle aJob;
+                        for (auto aFile: aFiles) {
+                            aJob.mFileList.push_back(aFile);
+                        }
+                        aJob.mPayloadBytesPerBlock = aPayloadBytesPerBlock;
+                        aJob.mBlocksPerArchive = aBlocksPerArchive;
+                        
+                        if (aPreview == 0) {
+                            aJob.mPreviewEnabled = false;
+                        } else {
+                            aJob.mPreviewEnabled = true;
+                        }
+                        
+                        if (aRepair == 20) {
+                            aJob.SetRepair20();
+                        } else if (aRepair == 40) {
+                            aJob.SetRepair40();
+                        } else if (aRepair == 60) {
+                            aJob.SetRepair60();
+                        } else if (aRepair == 80) {
+                            aJob.SetRepair80();
+                        } else {
+                            aJob.SetRepairOff();
+                        }
+                        
+                        if ([self run: aJob] == NO) {
+                            XCTFail(@"The bundle job returned an error.");
+                            return;
+                        }
+                    }
+                }
+            }
         }
-        aJob.mPayloadBytesPerBlock = 1;
-        aJob.mBlocksPerArchive = 1;
-        
-        if ([self run: aJob] == NO) {
-            XCTFail(@"The bundle job returned an error.");
-            return;
-        }
-        
-        NSLog(@"PASSED!!!");
     }
 }
 

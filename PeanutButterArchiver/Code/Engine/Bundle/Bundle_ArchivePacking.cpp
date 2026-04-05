@@ -4,6 +4,7 @@
 #include <array>
 #include <limits>
 #include <memory>
+#include <random>
 
 #include "../../Knobs.hpp"
 #include "../../Common/LogCatalog.hpp"
@@ -22,10 +23,98 @@ constexpr std::uint64_t kArchiveProgressFileLogIntervalV2 =
 constexpr std::uint64_t kArchiveProgressByteLogIntervalV2 =
     knobs::kBundleArchiveProgressByteLogIntervalV2;
 
+struct PrecomputedSkipRecordEntryV2 {
+  bool mHasValidSkip = false;
+  SkipRecordV2 mSkipRecord{};
+};
+
+template <typename UInt>
+UInt RandomInclusive(UInt pMin, UInt pMax) {
+  if (pMin >= pMax) {
+    return pMin;
+  }
+  static thread_local std::mt19937_64 sGenerator([]() {
+    std::random_device aDevice;
+    std::seed_seq aSeed{
+        aDevice(), aDevice(), aDevice(), aDevice(), aDevice(), aDevice()};
+    return std::mt19937_64(aSeed);
+  }());
+  std::uniform_int_distribution<std::uint64_t> aDistribution(
+      static_cast<std::uint64_t>(pMin), static_cast<std::uint64_t>(pMax));
+  return static_cast<UInt>(aDistribution(sGenerator));
+}
+
+constexpr std::uint32_t kSkipArchiveIndexMaxV2 = 0x00FFFFFFu;
+constexpr std::uint32_t kSkipByteIndexMaxV2 = 0x00FFFFFFu;
+
+std::uint32_t ComputeMaxLegalSkipArchiveIndex(const BundleStageContextV2& pContext) {
+  const std::uint64_t aArchiveCount = pContext.State().mMemoryPlan.mArchiveCount;
+  if (aArchiveCount == 0u) {
+    return 0u;
+  }
+  const std::uint64_t aMaxLegal = aArchiveCount - 1u;
+  const std::uint64_t aCeiling = static_cast<std::uint64_t>(kSkipArchiveIndexMaxV2);
+  if (aMaxLegal >= aCeiling) {
+    return kSkipArchiveIndexMaxV2;
+  }
+  return static_cast<std::uint32_t>(aMaxLegal);
+}
+
+std::uint16_t ComputeMaxLegalSkipBlockIndex(const BundleStageContextV2& pContext) {
+  const std::uint64_t aBlocksPerArchive =
+      static_cast<std::uint64_t>(pContext.Layout().mMaxBlocksPerArchive);
+  if (aBlocksPerArchive == 0u) {
+    return 0u;
+  }
+  const std::uint64_t aMaxLegal = aBlocksPerArchive - 1u;
+  const std::uint64_t aCeiling = static_cast<std::uint64_t>(std::numeric_limits<std::uint16_t>::max());
+  if (aMaxLegal >= aCeiling) {
+    return std::numeric_limits<std::uint16_t>::max();
+  }
+  return static_cast<std::uint16_t>(aMaxLegal);
+}
+
+std::uint32_t ComputeMaxLegalSkipByteIndex(const BundleStageContextV2& pContext) {
+  const std::uint64_t aPayloadBytes = pContext.Layout().SectionPayloadBytes();
+  if (aPayloadBytes == 0u) {
+    return 0u;
+  }
+  const std::uint64_t aMaxLegal = aPayloadBytes - 1u;
+  const std::uint64_t aCeiling = static_cast<std::uint64_t>(kSkipByteIndexMaxV2);
+  if (aMaxLegal >= aCeiling) {
+    return kSkipByteIndexMaxV2;
+  }
+  return static_cast<std::uint32_t>(aMaxLegal);
+}
+
+SkipRecordV2 MakeInvalidSkipRecord(const BundleStageContextV2& pContext) {
+  SkipRecordV2 aSkip{};
+  const std::uint32_t aArchiveMaxLegal = ComputeMaxLegalSkipArchiveIndex(pContext);
+  const std::uint32_t aArchiveLower = (aArchiveMaxLegal < kSkipArchiveIndexMaxV2)
+                                          ? (aArchiveMaxLegal + 1u)
+                                          : kSkipArchiveIndexMaxV2;
+  const std::uint32_t aArchiveInvalid =
+      RandomInclusive<std::uint32_t>(aArchiveLower, kSkipArchiveIndexMaxV2);
+  (void)SetSkipRecordArchiveIndex(aSkip, aArchiveInvalid, nullptr);
+
+  const std::uint16_t aBlockMaxLegal = ComputeMaxLegalSkipBlockIndex(pContext);
+  const std::uint16_t aBlockLower = (aBlockMaxLegal < std::numeric_limits<std::uint16_t>::max())
+                                        ? static_cast<std::uint16_t>(aBlockMaxLegal + 1u)
+                                        : std::numeric_limits<std::uint16_t>::max();
+  aSkip.mBlockIndex =
+      RandomInclusive<std::uint16_t>(aBlockLower, std::numeric_limits<std::uint16_t>::max());
+
+  const std::uint32_t aByteUpper =
+      kSkipByteIndexMaxV2;
+  const std::uint32_t aByteMaxLegal = ComputeMaxLegalSkipByteIndex(pContext);
+  const std::uint32_t aByteLower = (aByteMaxLegal < aByteUpper) ? (aByteMaxLegal + 1u) : aByteUpper;
+  (void)SetSkipRecordByteDistance(
+      aSkip, RandomInclusive<std::uint32_t>(aByteLower, aByteUpper), nullptr);
+  return aSkip;
+}
+
 const char* SectionTypeLabel(SectionTypeV2 pSectionType) {
   switch (pSectionType) {
-    case SectionTypeV2::kEmptyFolderManifest:
-      return "empty_folder_manifest";
     case SectionTypeV2::kPreviewManifest:
       return "preview_manifest";
     case SectionTypeV2::kArchiveData:
@@ -161,18 +250,54 @@ void PopulateSectionBootstrapFields(const BundleStageContextV2& pContext,
                                     std::uint32_t pLocalBlockIndex,
                                     std::uint32_t pPayloadBytesUsed,
                                     SectionHeaderV2& pOutHeader) {
-  const BundleMemoryPlanV2& aPlan = pContext.State().mMemoryPlan;
-  pOutHeader.mPayloadBytesUsed = pPayloadBytesUsed;
-  pOutHeader.mArchiveFileCount = static_cast<std::uint32_t>(aPlan.mArchiveCount);
-  pOutHeader.mArchiveBlockCount = pArchive.mBlockCount;
-  pOutHeader.mArchiveIndex = static_cast<std::uint32_t>(pArchive.mArchiveIndex);
-  pOutHeader.mBlockIndex = pLocalBlockIndex;
-  pOutHeader.mArchiveDataBlockCount = static_cast<std::uint32_t>(aPlan.mArchiveDataBlockCount);
-  pOutHeader.mPreviewManifestBlockCount =
-      static_cast<std::uint32_t>(aPlan.mPreviewManifestBlockCount);
-  pOutHeader.mFolderManifestBlockCount = 0u;
-  pOutHeader.mRepairDataBlockCount = static_cast<std::uint32_t>(aPlan.mRepairSectorBlockCount);
-  pOutHeader.mArchiveFamilyId = aPlan.mArchiveFamilyId;
+    const BundleMemoryPlanV2& aPlan = pContext.State().mMemoryPlan;
+    pOutHeader.mPayloadBytesUsed = pPayloadBytesUsed;
+    pOutHeader.mArchiveFileCount = static_cast<std::uint32_t>(aPlan.mArchiveCount);
+    pOutHeader.mArchiveBlockCount = pArchive.mBlockCount;
+    pOutHeader.mArchiveIndex = static_cast<std::uint32_t>(pArchive.mArchiveIndex);
+    pOutHeader.mBlockIndex = pLocalBlockIndex;
+    (void)TrySetPackedUint48(
+        pOutHeader.mBlockCountMain, aPlan.mBlockCountMain, nullptr, "BlockCountMain");
+    (void)TrySetPackedUint48(pOutHeader.mBlockCountPreview,
+                             aPlan.mBlockCountPreview,
+                             nullptr,
+                             "BlockCountPreview");
+    (void)TrySetPackedUint48(pOutHeader.mBlockCountRepair,
+                             aPlan.mRepairSectorBlockCount,
+                             nullptr,
+                             "BlockCountRepair");
+    pOutHeader.mArchiveFamilyId = aPlan.mArchiveFamilyId;
+}
+
+RepairRecordV2 MakeInvalidRepairRecord(const BundleStageContextV2& pContext) {
+  RepairRecordV2 aRepair{};
+  const std::uint16_t aCeiling = std::numeric_limits<std::uint16_t>::max();
+  const std::uint64_t aArchiveCount = pContext.State().mMemoryPlan.mArchiveCount;
+  const std::uint64_t aArchiveMaxLegal = aArchiveCount == 0u
+                                             ? 0u
+                                             : (aArchiveCount - 1u);
+  const std::uint64_t aArchiveCeiling = static_cast<std::uint64_t>(aCeiling);
+  if (aArchiveMaxLegal < aArchiveCeiling) {
+    const std::uint16_t aArchiveLower = static_cast<std::uint16_t>(aArchiveMaxLegal + 1u);
+    aRepair.mArchiveIndex = RandomInclusive<std::uint16_t>(aArchiveLower, aCeiling);
+  } else {
+    aRepair.mArchiveIndex = aCeiling;
+  }
+
+  const std::uint64_t aBlocksPerArchive =
+      static_cast<std::uint64_t>(pContext.Layout().mMaxBlocksPerArchive);
+  const std::uint64_t aBlockMaxLegal = aBlocksPerArchive == 0u
+                                           ? 0u
+                                           : (aBlocksPerArchive - 1u);
+  const std::uint64_t aBlockCeiling = static_cast<std::uint64_t>(aCeiling);
+  if (aBlockMaxLegal < aBlockCeiling) {
+    const std::uint16_t aBlockLower = static_cast<std::uint16_t>(aBlockMaxLegal + 1u);
+    aRepair.mBlockIndex = RandomInclusive<std::uint16_t>(aBlockLower, aCeiling);
+  } else {
+    aRepair.mBlockIndex = aCeiling;
+  }
+
+  return aRepair;
 }
 
 bool BuildArchiveHeader(const BundleStageContextV2& pContext,
@@ -200,22 +325,22 @@ bool BuildArchiveHeader(const BundleStageContextV2& pContext,
                             pContext.State().mMemoryPlan.mArchiveCount,
                             nullptr,
                             "ArchiveCount") &&
-         TrySetPackedUint48(pOutHeader.mArchiveDataBlockCount,
-                            pContext.State().mMemoryPlan.mArchiveDataBlockCount,
+         TrySetPackedUint48(pOutHeader.mBlockCountMain,
+                            pContext.State().mMemoryPlan.mBlockCountMain,
                             nullptr,
-                            "ArchiveDataBlockCount") &&
-         TrySetPackedUint48(pOutHeader.mEmptyFolderBlockCount,
+                            "BlockCountMain") &&
+         TrySetPackedUint48(pOutHeader.mReservedCount0,
                             0u,
                             nullptr,
-                            "EmptyFolderBlockCount") &&
-         TrySetPackedUint48(pOutHeader.mPreviewManifestBlockCount,
-                            pContext.State().mMemoryPlan.mPreviewManifestBlockCount,
+                            "ReservedCount0") &&
+         TrySetPackedUint48(pOutHeader.mBlockCountPreview,
+                            pContext.State().mMemoryPlan.mBlockCountPreview,
                             nullptr,
-                            "PreviewManifestBlockCount") &&
-         TrySetPackedUint48(pOutHeader.mRepairSectorBlockCount,
+                            "BlockCountPreview") &&
+         TrySetPackedUint48(pOutHeader.mBlockCountRepair,
                             pContext.State().mMemoryPlan.mRepairSectorBlockCount,
                             nullptr,
-                            "RepairSectorBlockCount");
+                            "BlockCountRepair");
 }
 
 bool WriteArchiveHeaderPrefix(BundleStageContextV2& pContext,
@@ -264,107 +389,159 @@ bool FillSectionPayload(BundleStageContextV2& pContext,
                        true);
 }
 
-bool TryLocateArchiveLocalForFamilyBlock(
-    const BundleMemoryPlanV2& pPlan,
-    std::uint64_t pFamilyBlockIndex,
-    std::uint32_t& pOutArchiveIndex,
-    std::uint32_t& pOutLocalBlockIndex) {
-  for (const PlannedArchiveFileV2& aArchive : pPlan.mArchives) {
-    if (pFamilyBlockIndex < aArchive.mFamilyBlockStart ||
-        pFamilyBlockIndex >=
-            (aArchive.mFamilyBlockStart +
-             static_cast<std::uint64_t>(aArchive.mBlockCount))) {
-      continue;
-    }
-    const std::uint64_t aLocal64 = pFamilyBlockIndex - aArchive.mFamilyBlockStart;
-    if (aArchive.mArchiveIndex > std::numeric_limits<std::uint32_t>::max() ||
-        aLocal64 > std::numeric_limits<std::uint32_t>::max()) {
-      return false;
-    }
-    pOutArchiveIndex = static_cast<std::uint32_t>(aArchive.mArchiveIndex);
-    pOutLocalBlockIndex = static_cast<std::uint32_t>(aLocal64);
-    return true;
+std::uint64_t ComputeDataRecordLogicalBytes(
+    const BundleRecordEntryV2& pRecord) {
+  const TypedRecordTypeV2 aType = pRecord.mIsReference
+                                      ? TypedRecordTypeV2::kDataReference
+                                      : (pRecord.mIsDirectory
+                                             ? TypedRecordTypeV2::kDataFolder
+                                             : TypedRecordTypeV2::kDataFile);
+  std::uint64_t aBytes =
+      2u + static_cast<std::uint64_t>(pRecord.mRelativePath.size()) + 1u;
+  if (TypedRecordTypeIsReferenceV2(static_cast<std::uint8_t>(aType))) {
+    aBytes += 1u;  // reference kind
+    aBytes += 2u;  // reference target length
+    aBytes += static_cast<std::uint64_t>(pRecord.mReferenceTargetRelativePath.size());
+    return aBytes;
   }
-  return false;
+  if (TypedRecordTypeHasFileSizeV2(static_cast<std::uint8_t>(aType))) {
+    aBytes += 8u;
+  }
+  if (TypedRecordTypeHasContentBytesV2(static_cast<std::uint8_t>(aType))) {
+    aBytes += pRecord.mContentLength;
+  }
+  return aBytes;
 }
 
-bool TryPopulateSkipRecordForArchiveData(
+bool BuildPrecomputedDataSkipRecords(
     const BundleStageContextV2& pContext,
-    const PlannedArchiveFileV2& pArchive,
-    std::uint64_t pFamilyBlockIndex,
-    std::size_t pPayloadBytesWritten,
-    BundleLogicalRecordEncoderV2& pEncoder,
-    SectionHeaderV2& pOutHeader,
+    const std::vector<BundleRecordEntryV2>& pDataRecords,
+    std::vector<PrecomputedSkipRecordEntryV2>& pOutSkipRecords,
     std::string& pOutFailureMessage) {
-  pOutHeader.mSkipRecord = SkipRecordV2{};
+  pOutFailureMessage.clear();
+  pOutSkipRecords.clear();
 
-  std::uint64_t aDistanceToNextRecordStart = 0u;
-  if (!pEncoder.TryGetLastFillFirstRecordBoundaryDistance(
-          aDistanceToNextRecordStart)) {
-    std::uint64_t aDistanceFromCursorToNextRecordStart = 0u;
-    if (!pEncoder.TryMeasureDistanceToNextRecordStart(
-            aDistanceFromCursorToNextRecordStart)) {
-      return true;
-    }
-    aDistanceToNextRecordStart =
-        static_cast<std::uint64_t>(pPayloadBytesWritten) +
-        aDistanceFromCursorToNextRecordStart;
-  }
-
-  if (aDistanceToNextRecordStart == 0u) {
-    return true;
-  }
-
-  const std::size_t aPayloadBytesPerBlock = pContext.Layout().SectionPayloadBytes();
+  const BundleMemoryPlanV2& aPlan = pContext.State().mMemoryPlan;
+  const std::uint64_t aPayloadBytesPerBlock =
+      static_cast<std::uint64_t>(pContext.Layout().SectionPayloadBytes());
   if (aPayloadBytesPerBlock == 0u) {
-    pOutFailureMessage = "section payload bytes must be at least 1 for skip-record planning.";
+    pOutFailureMessage =
+        "section payload bytes must be at least 1 for precomputed skip records.";
     return false;
   }
 
-  const std::uint64_t aDeltaBlocks =
-      aDistanceToNextRecordStart / static_cast<std::uint64_t>(aPayloadBytesPerBlock);
-  const std::uint32_t aTargetByteOffset = static_cast<std::uint32_t>(
-      aDistanceToNextRecordStart % static_cast<std::uint64_t>(aPayloadBytesPerBlock));
-  const std::uint64_t aTargetFamilyBlockIndex = pFamilyBlockIndex + aDeltaBlocks;
-  if (aTargetFamilyBlockIndex >= pContext.State().mMemoryPlan.mNonRepairFamilyBlockCount) {
+  const std::uint64_t aDataBlockCount = aPlan.mBlockCountMain;
+  if (aDataBlockCount > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
+    pOutFailureMessage = "archive-data block count exceeded addressable size.";
+    return false;
+  }
+  pOutSkipRecords.resize(static_cast<std::size_t>(aDataBlockCount));
+  for (PrecomputedSkipRecordEntryV2& aEntry : pOutSkipRecords) {
+    aEntry.mHasValidSkip = false;
+    aEntry.mSkipRecord = MakeInvalidSkipRecord(pContext);
+  }
+  if (aDataBlockCount == 0u) {
     return true;
   }
 
-  std::uint32_t aTargetArchiveIndex = 0u;
-  std::uint32_t aTargetLocalBlockIndex = 0u;
-  if (!TryLocateArchiveLocalForFamilyBlock(pContext.State().mMemoryPlan,
-                                           aTargetFamilyBlockIndex,
-                                           aTargetArchiveIndex,
-                                           aTargetLocalBlockIndex)) {
-    pOutFailureMessage =
-        "failed mapping skip-record target to archive/local block coordinates.";
+  std::vector<std::uint64_t> aRecordStartBytes;
+  aRecordStartBytes.reserve(pDataRecords.size());
+  std::uint64_t aRecordCursorBytes = 0u;
+  for (const BundleRecordEntryV2& aRecord : pDataRecords) {
+    aRecordStartBytes.push_back(aRecordCursorBytes);
+    aRecordCursorBytes += ComputeDataRecordLogicalBytes(aRecord);
+  }
+
+  const std::uint64_t aPreviewBlockCount = aPlan.mBlockCountPreview;
+  const std::uint64_t aNonRepairBlockCount = aPlan.mNonRepairFamilyBlockCount;
+  if (aNonRepairBlockCount >
+      static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
+    pOutFailureMessage = "non-repair family block count exceeded addressable size.";
     return false;
   }
 
-  if (aTargetArchiveIndex < pArchive.mArchiveIndex) {
-    pOutFailureMessage =
-        "skip-record target archive mapped behind current archive.";
-    return false;
-  }
-  const std::uint64_t aArchiveDistance64 =
-      static_cast<std::uint64_t>(aTargetArchiveIndex) - pArchive.mArchiveIndex;
-  if (aArchiveDistance64 > std::numeric_limits<std::uint16_t>::max()) {
-    pOutFailureMessage = "skip-record archive distance exceeded 16-bit field.";
-    return false;
-  }
-  if (aTargetLocalBlockIndex > std::numeric_limits<std::uint16_t>::max()) {
-    pOutFailureMessage = "skip-record block distance exceeded 16-bit field.";
-    return false;
+  const std::size_t aNonRepairBlockCountSz =
+      static_cast<std::size_t>(aNonRepairBlockCount);
+  std::vector<std::uint32_t> aArchiveByFamily(
+      aNonRepairBlockCountSz, std::numeric_limits<std::uint32_t>::max());
+  std::vector<std::uint32_t> aLocalByFamily(
+      aNonRepairBlockCountSz, std::numeric_limits<std::uint32_t>::max());
+  for (const PlannedArchiveFileV2& aArchive : aPlan.mArchives) {
+    if (aArchive.mFamilyBlockStart >= aNonRepairBlockCount) {
+      break;
+    }
+    if (aArchive.mArchiveIndex >
+        static_cast<std::uint64_t>(std::numeric_limits<std::uint32_t>::max())) {
+      continue;
+    }
+    const std::uint64_t aMaxLocal =
+        std::min<std::uint64_t>(static_cast<std::uint64_t>(aArchive.mBlockCount),
+                                aNonRepairBlockCount - aArchive.mFamilyBlockStart);
+    for (std::uint64_t aLocal = 0u; aLocal < aMaxLocal; ++aLocal) {
+      const std::uint64_t aFamily = aArchive.mFamilyBlockStart + aLocal;
+      if (aFamily >= aNonRepairBlockCount) {
+        break;
+      }
+      const std::size_t aFamilySlot = static_cast<std::size_t>(aFamily);
+      aArchiveByFamily[aFamilySlot] = static_cast<std::uint32_t>(aArchive.mArchiveIndex);
+      aLocalByFamily[aFamilySlot] = static_cast<std::uint32_t>(aLocal);
+    }
   }
 
-  pOutHeader.mSkipRecord.mArchiveDistance =
-      static_cast<std::uint16_t>(aArchiveDistance64);
-  pOutHeader.mSkipRecord.mBlockDistance =
-      static_cast<std::uint16_t>(aTargetLocalBlockIndex);
-  if (!SetSkipRecordByteDistance(
-          pOutHeader.mSkipRecord, aTargetByteOffset, nullptr)) {
-    pOutFailureMessage = "skip-record byte distance exceeded 24-bit field.";
-    return false;
+  std::size_t aBoundaryIndex = 0u;
+  for (std::uint64_t aDataBlockIndex = 0u; aDataBlockIndex < aDataBlockCount;
+       ++aDataBlockIndex) {
+    if (aDataBlockIndex == 0u) {
+      continue;
+    }
+    const std::uint64_t aFamilyBlockIndex = aPreviewBlockCount + aDataBlockIndex;
+    if (aFamilyBlockIndex == 0u) {
+      continue;
+    }
+
+    const std::uint64_t aBlockStartBytes = aDataBlockIndex * aPayloadBytesPerBlock;
+    while (aBoundaryIndex < aRecordStartBytes.size() &&
+           aRecordStartBytes[aBoundaryIndex] < aBlockStartBytes) {
+      ++aBoundaryIndex;
+    }
+    if (aBoundaryIndex >= aRecordStartBytes.size()) {
+      continue;
+    }
+
+    const std::uint64_t aTargetRecordStartBytes = aRecordStartBytes[aBoundaryIndex];
+    const std::uint64_t aTargetDataBlockIndex =
+        aTargetRecordStartBytes / aPayloadBytesPerBlock;
+    const std::uint32_t aTargetByteOffset = static_cast<std::uint32_t>(
+        aTargetRecordStartBytes % aPayloadBytesPerBlock);
+    const std::uint64_t aTargetFamilyBlockIndex =
+        aPreviewBlockCount + aTargetDataBlockIndex;
+    if (aTargetFamilyBlockIndex >= aNonRepairBlockCount) {
+      continue;
+    }
+
+    const std::size_t aTargetFamilySlot =
+        static_cast<std::size_t>(aTargetFamilyBlockIndex);
+    const std::uint32_t aTargetArchiveIndex = aArchiveByFamily[aTargetFamilySlot];
+    const std::uint32_t aTargetLocalBlockIndex = aLocalByFamily[aTargetFamilySlot];
+    if (aTargetArchiveIndex == std::numeric_limits<std::uint32_t>::max() ||
+        aTargetArchiveIndex > kSkipArchiveIndexMaxV2 ||
+        aTargetLocalBlockIndex > std::numeric_limits<std::uint16_t>::max()) {
+      continue;
+    }
+
+    SkipRecordV2 aSkipRecord{};
+    if (!SetSkipRecordArchiveIndex(aSkipRecord, aTargetArchiveIndex, nullptr)) {
+      continue;
+    }
+    aSkipRecord.mBlockIndex = static_cast<std::uint16_t>(aTargetLocalBlockIndex);
+    if (!SetSkipRecordByteDistance(aSkipRecord, aTargetByteOffset, nullptr)) {
+      continue;
+    }
+
+    PrecomputedSkipRecordEntryV2& aEntry =
+        pOutSkipRecords[static_cast<std::size_t>(aDataBlockIndex)];
+    aEntry.mHasValidSkip = true;
+    aEntry.mSkipRecord = aSkipRecord;
   }
   return true;
 }
@@ -376,6 +553,7 @@ bool WriteSectionBlock(BundleStageContextV2& pContext,
                        SectionTypeV2 pSectionType,
                        const std::string& pFileReference,
                        BundleLogicalRecordEncoderV2& pEncoder,
+                       const PrecomputedSkipRecordEntryV2* pPrecomputedSkipRecord,
                        bool pPauseAfterCurrentFileBoundary,
                        bool pEncryptBlock,
                        FixedBlockBufferV2& pPlainBlock,
@@ -406,6 +584,7 @@ bool WriteSectionBlock(BundleStageContextV2& pContext,
   }
 
   SectionHeaderV2 aSectionHeader{};
+  aSectionHeader.mSkipRecord = MakeInvalidSkipRecord(pContext);
   aSectionHeader.mSectionType = static_cast<std::uint8_t>(pSectionType);
   (void)aPausedAtBoundary;
   PopulateSectionBootstrapFields(pContext,
@@ -413,20 +592,17 @@ bool WriteSectionBlock(BundleStageContextV2& pContext,
                                  pLocalBlockIndex,
                                  static_cast<std::uint32_t>(aPayloadBytesWritten),
                                  aSectionHeader);
-  if (pSectionType == SectionTypeV2::kArchiveData &&
-      !TryPopulateSkipRecordForArchiveData(
-          pContext,
-          pArchive,
-          pFamilyBlockIndex,
-          aPayloadBytesWritten,
-          pEncoder,
-          aSectionHeader,
-          pOutFailureMessage)) {
-    return false;
+  if (pSectionType == SectionTypeV2::kArchiveData) {
+    if (pPrecomputedSkipRecord == nullptr) {
+      pOutFailureMessage =
+          "precomputed skip record was unavailable for archive-data block.";
+      return false;
+    }
+    if (pPrecomputedSkipRecord->mHasValidSkip) {
+      aSectionHeader.mSkipRecord = pPrecomputedSkipRecord->mSkipRecord;
+    }
   }
-  aSectionHeader.mRepairRecord.mRepairPointerArchive =
-      static_cast<std::uint32_t>(pArchive.mArchiveIndex);
-  aSectionHeader.mRepairRecord.mRepairPointerBlock = pLocalBlockIndex;
+  aSectionHeader.mRepairRecord = MakeInvalidRepairRecord(pContext);
   aSectionHeader.mCheckSum =
       ComputeSectionCheckSum(aPayload, aSectionPayloadBytes, aSectionHeader);
 
@@ -519,6 +695,7 @@ bool WritePreviewManifestBlock(BundleStageContextV2& pContext,
   (void)aPausedAtBoundary;
 
   SectionHeaderV2 aSectionHeader{};
+  aSectionHeader.mSkipRecord = MakeInvalidSkipRecord(pContext);
   aSectionHeader.mSectionType =
       static_cast<std::uint8_t>(SectionTypeV2::kPreviewManifest);
   PopulateSectionBootstrapFields(pContext,
@@ -526,9 +703,7 @@ bool WritePreviewManifestBlock(BundleStageContextV2& pContext,
                                  pLocalBlockIndex,
                                  static_cast<std::uint32_t>(aChunkBytes),
                                  aSectionHeader);
-  aSectionHeader.mRepairRecord.mRepairPointerArchive =
-      static_cast<std::uint32_t>(pArchive.mArchiveIndex);
-  aSectionHeader.mRepairRecord.mRepairPointerBlock = pLocalBlockIndex;
+  aSectionHeader.mRepairRecord = MakeInvalidRepairRecord(pContext);
   aSectionHeader.mCheckSum =
       ComputeSectionCheckSum(aPayloadBytes, aSectionPayloadBytes, aSectionHeader);
 
@@ -695,10 +870,230 @@ class BundleArchivePackingCursorV2 {
     mNextArchiveLog = kArchiveProgressArchiveLogIntervalV2;
     mNextFileLog = kArchiveProgressFileLogIntervalV2;
     mNextByteLog = kArchiveProgressByteLogIntervalV2;
+    mDataSkipRecordsReady = BuildPrecomputedDataSkipRecords(
+        pContext, mDataRecords, mDataSkipRecords, mDataSkipPlanError);
+  }
+
+  bool RebuildDataSkipPlan(BundleStageContextV2& pContext,
+                           std::string& pOutFailureMessage) {
+    mDataSkipPlanError.clear();
+    mDataSkipRecordsReady = BuildPrecomputedDataSkipRecords(
+        pContext, mDataRecords, mDataSkipRecords, mDataSkipPlanError);
+    if (!mDataSkipRecordsReady) {
+      pOutFailureMessage = mDataSkipPlanError.empty()
+                               ? "failed rebuilding precomputed skip records."
+                               : mDataSkipPlanError;
+      return false;
+    }
+    pOutFailureMessage.clear();
+    return true;
+  }
+
+  bool EnsureDataSkipPlan(BundleStageContextV2& pContext,
+                          std::string& pOutFailureMessage) {
+    const std::uint64_t aExpectedDataBlocks =
+        pContext.State().mMemoryPlan.mBlockCountMain;
+    const bool aSizeMismatch =
+        aExpectedDataBlocks !=
+        static_cast<std::uint64_t>(mDataSkipRecords.size());
+    if (!mDataSkipRecordsReady || aSizeMismatch) {
+      return RebuildDataSkipPlan(pContext, pOutFailureMessage);
+    }
+    pOutFailureMessage.clear();
+    return true;
+  }
+
+  std::uint64_t ExpectedSourceBlocksForArchive(const BundleMemoryPlanV2& pPlan,
+                                               std::size_t pArchiveIndex) const {
+    if (pArchiveIndex < pPlan.mSourceArchiveBlockCounts.size()) {
+      return static_cast<std::uint64_t>(
+          pPlan.mSourceArchiveBlockCounts[pArchiveIndex]);
+    }
+    if (pArchiveIndex >= pPlan.mArchives.size()) {
+      return 0u;
+    }
+    const PlannedArchiveFileV2& aArchive = pPlan.mArchives[pArchiveIndex];
+    const std::uint64_t aStart = aArchive.mFamilyBlockStart;
+    const std::uint64_t aEnd = std::min<std::uint64_t>(
+        aArchive.mFamilyBlockStart + static_cast<std::uint64_t>(aArchive.mBlockCount),
+        pPlan.mNonRepairFamilyBlockCount);
+    return aEnd > aStart ? (aEnd - aStart) : 0u;
+  }
+
+  std::uint64_t ExpectedArchiveBytesForPackedArchive(
+      const BundleStageContextV2& pContext,
+      std::size_t pArchiveIndex) const {
+    const BundleMemoryPlanV2& aPlan = pContext.State().mMemoryPlan;
+    const std::uint64_t aSourceBlocks = ExpectedSourceBlocksForArchive(
+        aPlan, pArchiveIndex);
+    return static_cast<std::uint64_t>(kArchiveHeaderBytesV2) +
+           (aSourceBlocks *
+            static_cast<std::uint64_t>(pContext.Layout().mArchiveBlockBytes));
+  }
+
+  bool TryGetArchiveFileLength(BundleStageContextV2& pContext,
+                               const std::string& pPath,
+                               std::uint64_t& pOutLength) const {
+    pOutLength = 0u;
+    std::unique_ptr<FileReadStreamV2> aRead =
+        pContext.FileSystem().OpenReadStream(pPath);
+    if (aRead == nullptr || !aRead->IsReady()) {
+      return false;
+    }
+    pOutLength = static_cast<std::uint64_t>(aRead->GetLength());
+    return true;
+  }
+
+  bool ResetEncodersToGlobalBlockIndex(BundleStageContextV2& pContext,
+                                       std::uint64_t pGlobalBlockIndex,
+                                       std::string& pOutFailureMessage) {
+    pOutFailureMessage.clear();
+    const std::size_t aSectionPayloadBytes = pContext.Layout().SectionPayloadBytes();
+    if (aSectionPayloadBytes == 0u) {
+      pOutFailureMessage = "section payload bytes must be at least 1 when replaying cursor state.";
+      return false;
+    }
+
+    ByteBufferV2 aScratch(aSectionPayloadBytes);
+    if (aScratch.Empty()) {
+      pOutFailureMessage = "failed allocating replay buffer for archive packing reconciliation.";
+      return false;
+    }
+
+    mDataEncoder.Reset();
+    mPreviewEncoder.Reset();
+    mFileBytesPacked = 0u;
+
+    const std::uint64_t aPreviewBlockCount =
+        pContext.State().mMemoryPlan.mBlockCountPreview;
+    const std::uint64_t aNonRepairBlockCount =
+        pContext.State().mMemoryPlan.mNonRepairFamilyBlockCount;
+    const std::uint64_t aReplayBlocks =
+        std::min<std::uint64_t>(pGlobalBlockIndex, aNonRepairBlockCount);
+    for (std::uint64_t aGlobalBlock = 0u; aGlobalBlock < aReplayBlocks; ++aGlobalBlock) {
+      BundleLogicalRecordEncoderV2& aEncoder =
+          aGlobalBlock < aPreviewBlockCount ? mPreviewEncoder : mDataEncoder;
+      std::size_t aPayloadBytesWritten = 0u;
+      std::uint64_t aLogicalBytesWritten = 0u;
+      std::uint64_t aFileBytesWritten = 0u;
+      bool aPausedAtBoundary = false;
+      if (!aEncoder.Fill(aScratch.Data(),
+                         aSectionPayloadBytes,
+                         false,
+                         aPayloadBytesWritten,
+                         aLogicalBytesWritten,
+                         aFileBytesWritten,
+                         aPausedAtBoundary,
+                         pOutFailureMessage,
+                         true)) {
+        if (pOutFailureMessage.empty()) {
+          pOutFailureMessage =
+              "failed replaying record encoders while rebuilding archive packing cursor.";
+        }
+        return false;
+      }
+      (void)aPayloadBytesWritten;
+      (void)aLogicalBytesWritten;
+      (void)aPausedAtBoundary;
+      mFileBytesPacked += aFileBytesWritten;
+    }
+    return true;
+  }
+
+  bool ReconcilePackedAndPendingBoxes(BundleStageContextV2& pContext,
+                                      BundlePackingStateV2& pPacking,
+                                      const std::string& pReason,
+                                      std::string& pOutFailureMessage) {
+    pOutFailureMessage.clear();
+    const BundleMemoryPlanV2& aPlan = pContext.State().mMemoryPlan;
+    const std::size_t aArchiveCount = aPlan.mArchives.size();
+
+    std::size_t aPackedCount = std::min<std::size_t>(pPacking.mArchivePaths.size(), aArchiveCount);
+    for (std::size_t aArchiveIndex = 0u; aArchiveIndex < aPackedCount; ++aArchiveIndex) {
+      const PlannedArchiveFileV2& aArchive = aPlan.mArchives[aArchiveIndex];
+      const std::string& aObservedPath = pPacking.mArchivePaths[aArchiveIndex];
+      if (aObservedPath != aArchive.mPath) {
+        aPackedCount = aArchiveIndex;
+        break;
+      }
+      std::uint64_t aObservedBytes = 0u;
+      if (!TryGetArchiveFileLength(pContext, aArchive.mPath, aObservedBytes)) {
+        aPackedCount = aArchiveIndex;
+        break;
+      }
+      const std::uint64_t aExpectedBytes =
+          ExpectedArchiveBytesForPackedArchive(pContext, aArchiveIndex);
+      if (aObservedBytes != aExpectedBytes) {
+        aPackedCount = aArchiveIndex;
+        break;
+      }
+    }
+
+    const std::uint64_t aExpectedGlobalAtPackedBoundaryRaw =
+        aPackedCount >= aArchiveCount
+            ? aPlan.mNonRepairFamilyBlockCount
+            : aPlan.mArchives[aPackedCount].mFamilyBlockStart;
+    const std::uint64_t aExpectedGlobalAtPackedBoundary =
+        std::min<std::uint64_t>(aExpectedGlobalAtPackedBoundaryRaw,
+                                aPlan.mNonRepairFamilyBlockCount);
+    const std::size_t aPendingCount =
+        aArchiveCount > aPackedCount ? (aArchiveCount - aPackedCount) : 0u;
+
+    const bool aNeedsCursorReset =
+        (mArchiveIndex != aPackedCount) ||
+        (mLocalBlockIndex != 0u) ||
+        (mArchiveBlocksWritten != 0u) ||
+        (mGlobalBlockIndex != aExpectedGlobalAtPackedBoundary) ||
+        (mWrite != nullptr) ||
+        (pPacking.mArchivePaths.size() != aPackedCount) ||
+        (pPacking.mArchivePackedBlockCount != aExpectedGlobalAtPackedBoundary);
+    const bool aNeedsSkipRebuild =
+        !mDataSkipRecordsReady ||
+        (mDataSkipRecords.size() !=
+         static_cast<std::size_t>(aPlan.mBlockCountMain));
+
+    if (!aNeedsCursorReset && !aNeedsSkipRebuild) {
+      pOutFailureMessage =
+          "archive packing reconciliation found no state delta to apply.";
+      return false;
+    }
+
+    if (mWrite != nullptr) {
+      if (!mWrite->Close()) {
+        pOutFailureMessage = "failed closing active archive during reconciliation.";
+        return false;
+      }
+      mWrite.reset();
+    }
+
+    pPacking.mArchivePaths.resize(aPackedCount);
+    pPacking.mArchivePackedBlockCount = aExpectedGlobalAtPackedBoundary;
+    mArchiveIndex = aPackedCount;
+    mLocalBlockIndex = 0u;
+    mArchiveBlocksWritten = 0u;
+    mGlobalBlockIndex = aExpectedGlobalAtPackedBoundary;
+    mCanStopAtSafeBoundary = true;
+    mSafeBoundaryFileReference.clear();
+
+    if (!ResetEncodersToGlobalBlockIndex(
+            pContext, aExpectedGlobalAtPackedBoundary, pOutFailureMessage)) {
+      return false;
+    }
+    if (!RebuildDataSkipPlan(pContext, pOutFailureMessage)) {
+      return false;
+    }
+
+    pContext.EmitLog(
+        LogLevelV2::kWarning,
+        "[Bundle][Archive Packing] Reconciled archive tables after '" + pReason +
+            "': packed=" + std::to_string(aPackedCount) +
+            ", still_to_pack=" + std::to_string(aPendingCount) + ".");
+    return true;
   }
 
   std::vector<BundleRecordEntryV2> mDataRecords;
   std::vector<BundleRecordEntryV2> mPreviewRecords;
+  std::vector<PrecomputedSkipRecordEntryV2> mDataSkipRecords;
   BundleLogicalRecordEncoderV2 mDataEncoder;
   BundleLogicalRecordEncoderV2 mPreviewEncoder;
   FixedBlockBufferV2 mPlainBlock;
@@ -713,6 +1108,8 @@ class BundleArchivePackingCursorV2 {
   std::uint64_t mNextByteLog = 0u;
   bool mCanStopAtSafeBoundary = false;
   std::string mSafeBoundaryFileReference;
+  bool mDataSkipRecordsReady = false;
+  std::string mDataSkipPlanError;
 };
 
 namespace {
@@ -772,6 +1169,14 @@ bool MaterializeRemainingArchives(BundleStageContextV2& pContext,
 
     std::unique_ptr<FileWriteStreamV2> aWrite =
         pContext.FileSystem().OpenWriteStream(aArchive.mPath);
+    if (aWrite == nullptr || !aWrite->IsReady()) {
+      const std::string aArchiveParent =
+          pContext.FileSystem().ParentPath(aArchive.mPath);
+      if (!aArchiveParent.empty()) {
+        (void)pContext.FileSystem().EnsureDirectory(aArchiveParent);
+        aWrite = pContext.FileSystem().OpenWriteStream(aArchive.mPath);
+      }
+    }
     if (aWrite == nullptr || !aWrite->IsReady()) {
       pContext.EmitLog(LogLevelV2::kError,
                        "Archive packing failed: could not materialize remaining archive file.");
@@ -902,6 +1307,22 @@ bool BundleArchivePackingV2::Run(BundleStageContextV2& pContext) {
       aCursorPtr.reset();
       return false;
     }
+    std::string aSkipPlanError;
+    if (!aCursorPtr->EnsureDataSkipPlan(pContext, aSkipPlanError)) {
+      std::string aReconcileError;
+      if (!aCursorPtr->ReconcilePackedAndPendingBoxes(
+              pContext,
+              aPacking,
+              "initial skip-table build",
+              aReconcileError)) {
+        const std::string aError = aSkipPlanError.empty() ? aReconcileError
+                                                          : aSkipPlanError;
+        pContext.EmitLog(LogLevelV2::kError,
+                         "Archive packing failed: " + aError);
+        aCursorPtr.reset();
+        return false;
+      }
+    }
     pContext.EmitLog(
         LogLevelV2::kInfo,
         "[Bundle][Archive Packing] START. " +
@@ -911,6 +1332,23 @@ bool BundleArchivePackingV2::Run(BundleStageContextV2& pContext) {
   }
 
   BundleArchivePackingCursorV2& aCursor = *aCursorPtr;
+  std::string aSkipPlanError;
+  if (!aCursor.EnsureDataSkipPlan(pContext, aSkipPlanError)) {
+    std::string aReconcileError;
+    if (aCursor.ReconcilePackedAndPendingBoxes(pContext,
+                                               aPacking,
+                                               "skip-table validation",
+                                               aReconcileError)) {
+      pContext.ContinuePhaseOnNextHeartbeat();
+      return true;
+    }
+    pContext.EmitLog(
+        LogLevelV2::kError,
+        "Archive packing failed: " +
+            (aSkipPlanError.empty() ? aReconcileError : aSkipPlanError));
+    aCursorPtr.reset();
+    return false;
+  }
   std::size_t aRemainingBlockBudget =
       std::max<std::size_t>(
           1u,
@@ -959,6 +1397,23 @@ bool BundleArchivePackingV2::Run(BundleStageContextV2& pContext) {
       }
       aCursor.mWrite = pContext.FileSystem().OpenWriteStream(aArchive.mPath);
       if (aCursor.mWrite == nullptr || !aCursor.mWrite->IsReady()) {
+        const std::string aArchiveParent =
+            pContext.FileSystem().ParentPath(aArchive.mPath);
+        if (!aArchiveParent.empty()) {
+          (void)pContext.FileSystem().EnsureDirectory(aArchiveParent);
+          aCursor.mWrite = pContext.FileSystem().OpenWriteStream(aArchive.mPath);
+        }
+      }
+      if (aCursor.mWrite == nullptr || !aCursor.mWrite->IsReady()) {
+        std::string aReconcileError;
+        if (aCursor.ReconcilePackedAndPendingBoxes(
+                pContext,
+                aPacking,
+                "destination archive open failure",
+                aReconcileError)) {
+          pContext.ContinuePhaseOnNextHeartbeat();
+          return true;
+        }
         pContext.EmitLog(LogLevelV2::kError,
                          "Archive packing failed: could not open destination archive file.");
         aCursorPtr.reset();
@@ -989,7 +1444,7 @@ bool BundleArchivePackingV2::Run(BundleStageContextV2& pContext) {
     std::string aFailureMessage;
     std::uint64_t aBlockFileBytes = 0u;
     const bool aIsPreviewBlock =
-        aCursor.mGlobalBlockIndex < aMemoryPlan.mPreviewManifestBlockCount;
+        aCursor.mGlobalBlockIndex < aMemoryPlan.mBlockCountPreview;
     const SectionTypeV2 aSectionType = aIsPreviewBlock
                                            ? SectionTypeV2::kPreviewManifest
                                            : SectionTypeV2::kArchiveData;
@@ -1028,6 +1483,43 @@ bool BundleArchivePackingV2::Run(BundleStageContextV2& pContext) {
       }
     } else {
       BundleLogicalRecordEncoderV2& aEncoder = aCursor.mDataEncoder;
+      if (!aCursor.EnsureDataSkipPlan(pContext, aSkipPlanError)) {
+        std::string aReconcileError;
+        if (aCursor.ReconcilePackedAndPendingBoxes(
+                pContext,
+                aPacking,
+                "skip-table access failure",
+                aReconcileError)) {
+          pContext.ContinuePhaseOnNextHeartbeat();
+          return true;
+        }
+        pContext.EmitLog(
+            LogLevelV2::kError,
+            "Archive packing failed: " +
+                (aSkipPlanError.empty() ? aReconcileError : aSkipPlanError));
+        aCursorPtr.reset();
+        return false;
+      }
+      const std::uint64_t aDataBlockIndex =
+          aCursor.mGlobalBlockIndex - aMemoryPlan.mBlockCountPreview;
+      if (aDataBlockIndex >=
+          static_cast<std::uint64_t>(aCursor.mDataSkipRecords.size())) {
+        std::string aReconcileError;
+        if (aCursor.ReconcilePackedAndPendingBoxes(
+                pContext,
+                aPacking,
+                "precomputed skip index moved out of range",
+                aReconcileError)) {
+          pContext.ContinuePhaseOnNextHeartbeat();
+          return true;
+        }
+        pContext.EmitLog(LogLevelV2::kError,
+                         "Archive packing failed: precomputed skip index moved out of range.");
+        aCursorPtr.reset();
+        return false;
+      }
+      const PrecomputedSkipRecordEntryV2* aPrecomputedSkipRecord =
+          &aCursor.mDataSkipRecords[static_cast<std::size_t>(aDataBlockIndex)];
       const bool aPauseAfterCurrentFileBoundary =
           pContext.IsCancelRequested() &&
           !aCurrentFileReference.empty() &&
@@ -1040,6 +1532,7 @@ bool BundleArchivePackingV2::Run(BundleStageContextV2& pContext) {
                              aSectionType,
                              aObservedFileReference,
                              aEncoder,
+                             aPrecomputedSkipRecord,
                              aPauseAfterCurrentFileBoundary,
                              pContext.Request().mEncryptionEnabled,
                              aCursor.mPlainBlock,

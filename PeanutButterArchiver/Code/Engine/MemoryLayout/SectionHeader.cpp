@@ -11,7 +11,6 @@ bool IsKnownSectionType(std::uint8_t pValue) {
   switch (static_cast<SectionTypeV2>(pValue)) {
     case SectionTypeV2::kArchiveData:
     case SectionTypeV2::kPreviewManifest:
-    case SectionTypeV2::kEmptyFolderManifest:
     case SectionTypeV2::kRepairData:
       return true;
   }
@@ -150,13 +149,15 @@ bool ReadSectionHeader(const unsigned char* pBytes,
   pOutHeader.mArchiveBlockCount = ReadUint32LE(pBytes + kMetadataOffset + 11u);
   pOutHeader.mArchiveIndex = ReadUint32LE(pBytes + kMetadataOffset + 15u);
   pOutHeader.mBlockIndex = ReadUint32LE(pBytes + kMetadataOffset + 19u);
-  pOutHeader.mArchiveDataBlockCount = ReadUint32LE(pBytes + kMetadataOffset + 23u);
-  pOutHeader.mPreviewManifestBlockCount = ReadUint32LE(pBytes + kMetadataOffset + 27u);
-  pOutHeader.mFolderManifestBlockCount = ReadUint32LE(pBytes + kMetadataOffset + 31u);
-  pOutHeader.mRepairDataBlockCount = ReadUint32LE(pBytes + kMetadataOffset + 35u);
-  pOutHeader.mArchiveFamilyId = ReadUint64LE(pBytes + kMetadataOffset + 39u);
   std::memcpy(
-      pOutHeader.mReserved, pBytes + kMetadataOffset + 47u, sizeof(pOutHeader.mReserved));
+      pOutHeader.mBlockCountMain.mBytes.data(), pBytes + kMetadataOffset + 23u, kPackedUint48BytesV2);
+  std::memcpy(
+      pOutHeader.mBlockCountPreview.mBytes.data(), pBytes + kMetadataOffset + 29u, kPackedUint48BytesV2);
+  std::memcpy(
+      pOutHeader.mBlockCountRepair.mBytes.data(), pBytes + kMetadataOffset + 35u, kPackedUint48BytesV2);
+  pOutHeader.mArchiveFamilyId = ReadUint64LE(pBytes + kMetadataOffset + 41u);
+  std::memcpy(
+      pOutHeader.mReserved, pBytes + kMetadataOffset + 49u, sizeof(pOutHeader.mReserved));
 
   return ValidateSectionHeader(pOutHeader, pOutError);
 }
@@ -235,12 +236,14 @@ bool WriteSectionHeader(const SectionHeaderV2& pHeader,
   WriteUint32LE(pHeader.mArchiveBlockCount, pOutBytes + kMetadataOffset + 11u);
   WriteUint32LE(pHeader.mArchiveIndex, pOutBytes + kMetadataOffset + 15u);
   WriteUint32LE(pHeader.mBlockIndex, pOutBytes + kMetadataOffset + 19u);
-  WriteUint32LE(pHeader.mArchiveDataBlockCount, pOutBytes + kMetadataOffset + 23u);
-  WriteUint32LE(pHeader.mPreviewManifestBlockCount, pOutBytes + kMetadataOffset + 27u);
-  WriteUint32LE(pHeader.mFolderManifestBlockCount, pOutBytes + kMetadataOffset + 31u);
-  WriteUint32LE(pHeader.mRepairDataBlockCount, pOutBytes + kMetadataOffset + 35u);
-  WriteUint64LE(pHeader.mArchiveFamilyId, pOutBytes + kMetadataOffset + 39u);
-  std::memcpy(pOutBytes + kMetadataOffset + 47u,
+  std::memcpy(
+      pOutBytes + kMetadataOffset + 23u, pHeader.mBlockCountMain.mBytes.data(), kPackedUint48BytesV2);
+  std::memcpy(
+      pOutBytes + kMetadataOffset + 29u, pHeader.mBlockCountPreview.mBytes.data(), kPackedUint48BytesV2);
+  std::memcpy(
+      pOutBytes + kMetadataOffset + 35u, pHeader.mBlockCountRepair.mBytes.data(), kPackedUint48BytesV2);
+  WriteUint64LE(pHeader.mArchiveFamilyId, pOutBytes + kMetadataOffset + 41u);
+  std::memcpy(pOutBytes + kMetadataOffset + 49u,
               pHeader.mReserved,
               sizeof(pHeader.mReserved));
 

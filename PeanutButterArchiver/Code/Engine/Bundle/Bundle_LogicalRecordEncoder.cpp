@@ -51,17 +51,6 @@ bool BundleLogicalRecordEncoderV2::Fill(unsigned char* pDestination,
     return false;
   }
 
-  mHasLastFillFirstRecordBoundaryDistance = false;
-  mLastFillFirstRecordBoundaryDistance = 0u;
-
-  auto CaptureBoundaryDistance = [&]() {
-    if (!mHasLastFillFirstRecordBoundaryDistance && pOutBytesWritten > 0u) {
-      mHasLastFillFirstRecordBoundaryDistance = true;
-      mLastFillFirstRecordBoundaryDistance =
-          static_cast<std::uint64_t>(pOutBytesWritten);
-    }
-  };
-
   mPauseAfterCurrentFileRequested = pPauseAfterCurrentFileBoundary;
   mPausedAtBoundary = false;
   if (mNeedsStartNextRecord) {
@@ -127,7 +116,6 @@ bool BundleLogicalRecordEncoderV2::Fill(unsigned char* pDestination,
         if (!memory_layout::TypedRecordTypeIsReferenceV2(mCurrentTypeFlag) &&
             !mWritePreviewPlaceholderByte &&
             !memory_layout::TypedRecordTypeHasFileSizeV2(mCurrentTypeFlag)) {
-          CaptureBoundaryDistance();
           FinishRecord();
         }
         break;
@@ -160,7 +148,6 @@ bool BundleLogicalRecordEncoderV2::Fill(unsigned char* pDestination,
         mReferenceTargetLengthBytesUsed += aChunk;
         if (mReferenceTargetLengthBytesUsed == sizeof(mReferenceTargetLengthLe)) {
           if (mCurrentReferenceTargetLength == 0u) {
-            CaptureBoundaryDistance();
             FinishRecord();
           } else {
             mStage = Stage::kReferenceTargetBytes;
@@ -175,7 +162,6 @@ bool BundleLogicalRecordEncoderV2::Fill(unsigned char* pDestination,
         const std::size_t aChunk = std::min<std::size_t>(aWritable, aRemaining);
         if (aChunk == 0u) {
           if (aRemaining == 0u) {
-            CaptureBoundaryDistance();
             FinishRecord();
           } else {
             pOutPausedAtBoundary = true;
@@ -191,7 +177,6 @@ bool BundleLogicalRecordEncoderV2::Fill(unsigned char* pDestination,
         pOutLogicalBytesWritten += static_cast<std::uint64_t>(aChunk);
         mReferenceTargetBytesUsed += aChunk;
         if (mReferenceTargetBytesUsed == mCurrentReferenceTargetLength) {
-          CaptureBoundaryDistance();
           FinishRecord();
         }
         break;
@@ -208,7 +193,6 @@ bool BundleLogicalRecordEncoderV2::Fill(unsigned char* pDestination,
             static_cast<std::uint64_t>(
                 memory_layout::specs_verified::kPreviewRecordPlaceholderBytesV2);
         if (!memory_layout::TypedRecordTypeHasFileSizeV2(mCurrentTypeFlag)) {
-          CaptureBoundaryDistance();
           FinishRecord();
         } else {
           mStage = Stage::kFileSize;
@@ -231,8 +215,8 @@ bool BundleLogicalRecordEncoderV2::Fill(unsigned char* pDestination,
         pOutLogicalBytesWritten += static_cast<std::uint64_t>(aChunk);
         mFileSizeBytesUsed += aChunk;
         if (mFileSizeBytesUsed == sizeof(mFileSizeLe)) {
-          if (!memory_layout::TypedRecordTypeHasContentBytesV2(mCurrentTypeFlag)) {
-            CaptureBoundaryDistance();
+          if (!memory_layout::TypedRecordTypeHasContentBytesV2(mCurrentTypeFlag) ||
+              mContentBytesRemaining == 0u) {
             FinishRecord();
           } else {
             mStage = Stage::kContentBytes;
@@ -242,24 +226,26 @@ bool BundleLogicalRecordEncoderV2::Fill(unsigned char* pDestination,
       }
 
       case Stage::kContentBytes: {
-        if (mCurrentRead == nullptr || !mCurrentRead->IsReady()) {
-          pOutFailureMessage = "source file stream is not readable.";
-          return false;
-        }
-
         const std::size_t aChunk = static_cast<std::size_t>(
             std::min<std::uint64_t>(static_cast<std::uint64_t>(aWritable),
                                     mContentBytesRemaining));
         if (aChunk == 0u) {
-          CaptureBoundaryDistance();
           FinishRecord();
           break;
         }
-        if (!mCurrentRead->Read(static_cast<std::size_t>(mCurrentFileReadOffset),
-                                pDestination + pOutBytesWritten,
-                                aChunk)) {
-          pOutFailureMessage = "failed reading source file bytes.";
-          return false;
+        bool aReadSucceeded = false;
+        if (mCurrentRead != nullptr && mCurrentRead->IsReady()) {
+          aReadSucceeded = mCurrentRead->Read(
+              static_cast<std::size_t>(mCurrentFileReadOffset),
+              pDestination + pOutBytesWritten,
+              aChunk);
+          if (!aReadSucceeded) {
+            // Keep packing linear and deterministic even when source reads fail.
+            mCurrentRead.reset();
+          }
+        }
+        if (!aReadSucceeded) {
+          std::memset(pDestination + pOutBytesWritten, 0, aChunk);
         }
 
         pOutBytesWritten += aChunk;
@@ -268,7 +254,6 @@ bool BundleLogicalRecordEncoderV2::Fill(unsigned char* pDestination,
         mCurrentFileReadOffset += static_cast<std::uint64_t>(aChunk);
         mContentBytesRemaining -= static_cast<std::uint64_t>(aChunk);
         if (mContentBytesRemaining == 0u) {
-          CaptureBoundaryDistance();
           FinishRecord();
         }
         break;
@@ -324,42 +309,36 @@ std::size_t BundleLogicalRecordEncoderV2::PackedFolderCount() const {
   return mPackedFolderCount;
 }
 
-bool BundleLogicalRecordEncoderV2::TryGetLastFillFirstRecordBoundaryDistance(
-    std::uint64_t& pOutDistanceBytes) const {
-  pOutDistanceBytes = 0u;
-  if (!mHasLastFillFirstRecordBoundaryDistance) {
-    return false;
-  }
-  pOutDistanceBytes = mLastFillFirstRecordBoundaryDistance;
-  return true;
-}
-
-bool BundleLogicalRecordEncoderV2::TryMeasureDistanceToNextRecordStart(
-    std::uint64_t& pOutDistanceBytes) const {
-  pOutDistanceBytes = 0u;
-  if (mDone || mRecordIndex >= mRecords.size()) {
-    return false;
-  }
-  if ((mRecordIndex + 1u) >= mRecords.size()) {
-    return false;
-  }
-
-  const bool aAtRecordStart =
-      mStage == Stage::kPathLength &&
-      mPathLengthBytesUsed == 0u &&
-      mPathBytesUsed == 0u &&
-      mReferenceTargetLengthBytesUsed == 0u &&
-      mReferenceTargetBytesUsed == 0u &&
-      mFileSizeBytesUsed == 0u &&
-      mCurrentFileReadOffset == 0u;
-  if (aAtRecordStart) {
-    // We are positioned exactly at a record boundary already.
-    pOutDistanceBytes = 0u;
-    return true;
-  }
-
-  pOutDistanceBytes = RemainingBytesInCurrentRecordFromCurrentStage();
-  return true;
+void BundleLogicalRecordEncoderV2::Reset() {
+  mRecordIndex = 0u;
+  mStage = Stage::kPathLength;
+  mCurrentRead.reset();
+  mCurrentRecordRelativePath.clear();
+  mCurrentReferenceTargetRelativePath.clear();
+  mCurrentPathLength = 0u;
+  mCurrentReferenceTargetLength = 0u;
+  mCurrentRecordContentLength = 0u;
+  mContentBytesRemaining = 0u;
+  mCurrentFileReadOffset = 0u;
+  std::memset(mPathLengthLe, 0, sizeof(mPathLengthLe));
+  mCurrentReferenceKind = 0u;
+  std::memset(mReferenceTargetLengthLe, 0, sizeof(mReferenceTargetLengthLe));
+  mCurrentTypeFlag = 0u;
+  std::memset(mFileSizeLe, 0, sizeof(mFileSizeLe));
+  mPathLengthBytesUsed = 0u;
+  mPathBytesUsed = 0u;
+  mReferenceTargetLengthBytesUsed = 0u;
+  mReferenceTargetBytesUsed = 0u;
+  mFileSizeBytesUsed = 0u;
+  mCurrentRecordIsDirectory = false;
+  mCurrentRecordIsReference = false;
+  mDone = false;
+  mPauseAfterCurrentFileRequested = false;
+  mPausedAtBoundary = false;
+  mNeedsStartNextRecord = false;
+  mPackedFileCount = 0u;
+  mPackedFolderCount = 0u;
+  StartNextRecord();
 }
 
 void BundleLogicalRecordEncoderV2::StartNextRecord() {
@@ -429,7 +408,8 @@ void BundleLogicalRecordEncoderV2::StartNextRecord() {
                 sizeof(aTargetLengthLe));
   }
 
-  if (memory_layout::TypedRecordTypeHasContentBytesV2(mCurrentTypeFlag)) {
+  if (memory_layout::TypedRecordTypeHasContentBytesV2(mCurrentTypeFlag) &&
+      mContentBytesRemaining > 0u) {
     mCurrentRead = mFileSystem.OpenReadStream(aRecord.mSourcePath);
   }
 
@@ -497,65 +477,6 @@ bool BundleLogicalRecordEncoderV2::EmitRecordEvent(RuntimeEventKindV2 pKind) con
   }
 
   return mObserver(aEvent);
-}
-
-std::uint64_t BundleLogicalRecordEncoderV2::RemainingBytesInCurrentRecordFromCurrentStage() const {
-  if (mDone || mRecordIndex >= mRecords.size()) {
-    return 0u;
-  }
-
-  std::uint64_t aRemaining = 0u;
-  const bool aHasFileSize = memory_layout::TypedRecordTypeHasFileSizeV2(mCurrentTypeFlag);
-  const bool aHasContent = memory_layout::TypedRecordTypeHasContentBytesV2(mCurrentTypeFlag);
-  const std::size_t aStage = static_cast<std::size_t>(mStage);
-
-  if (aStage <= static_cast<std::size_t>(Stage::kPathLength)) {
-    aRemaining += static_cast<std::uint64_t>(sizeof(mPathLengthLe) - mPathLengthBytesUsed);
-  }
-  if (aStage <= static_cast<std::size_t>(Stage::kPathBytes)) {
-    aRemaining += static_cast<std::uint64_t>(mCurrentPathLength - mPathBytesUsed);
-  }
-  if (aStage <= static_cast<std::size_t>(Stage::kTypeFlag)) {
-    aRemaining += 1u;
-  }
-  if (memory_layout::TypedRecordTypeIsReferenceV2(mCurrentTypeFlag)) {
-    if (aStage <= static_cast<std::size_t>(Stage::kReferenceKind)) {
-      aRemaining += 1u;
-    }
-    if (aStage <= static_cast<std::size_t>(Stage::kReferenceTargetLength)) {
-      const std::size_t aReferenceLengthRemaining =
-          aStage == static_cast<std::size_t>(Stage::kReferenceTargetLength)
-              ? (sizeof(mReferenceTargetLengthLe) -
-                 mReferenceTargetLengthBytesUsed)
-              : sizeof(mReferenceTargetLengthLe);
-      aRemaining += static_cast<std::uint64_t>(aReferenceLengthRemaining);
-    }
-    if (aStage <= static_cast<std::size_t>(Stage::kReferenceTargetBytes)) {
-      const std::size_t aReferenceBytesRemaining =
-          aStage == static_cast<std::size_t>(Stage::kReferenceTargetBytes)
-              ? (mCurrentReferenceTargetLength - mReferenceTargetBytesUsed)
-              : mCurrentReferenceTargetLength;
-      aRemaining += static_cast<std::uint64_t>(aReferenceBytesRemaining);
-    }
-    return aRemaining;
-  }
-  if (mWritePreviewPlaceholderByte &&
-      aStage <= static_cast<std::size_t>(Stage::kPreviewPlaceholder)) {
-    aRemaining += static_cast<std::uint64_t>(
-        memory_layout::specs_verified::kPreviewRecordPlaceholderBytesV2);
-  }
-  if (aHasFileSize && aStage <= static_cast<std::size_t>(Stage::kFileSize)) {
-    const std::size_t aFileSizeRemaining =
-        aStage == static_cast<std::size_t>(Stage::kFileSize)
-            ? (sizeof(mFileSizeLe) - mFileSizeBytesUsed)
-            : sizeof(mFileSizeLe);
-    aRemaining += static_cast<std::uint64_t>(aFileSizeRemaining);
-  }
-  if (aHasContent && aStage <= static_cast<std::size_t>(Stage::kContentBytes)) {
-    aRemaining += mContentBytesRemaining;
-  }
-
-  return aRemaining;
 }
 
 }  // namespace peanutbutter

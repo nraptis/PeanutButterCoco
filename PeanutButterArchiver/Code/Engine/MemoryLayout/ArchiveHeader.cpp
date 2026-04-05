@@ -115,14 +115,12 @@ bool ReadArchiveHeader(const unsigned char* pBytes,
 
   std::memcpy(pOutHeader.mArchiveIndex.mBytes.data(), pBytes + 16u, kPackedUint48BytesV2);
   std::memcpy(pOutHeader.mArchiveCount.mBytes.data(), pBytes + 22u, kPackedUint48BytesV2);
+  std::memcpy(pOutHeader.mBlockCountMain.mBytes.data(), pBytes + 28u, kPackedUint48BytesV2);
+  std::memcpy(pOutHeader.mReservedCount0.mBytes.data(), pBytes + 34u, kPackedUint48BytesV2);
   std::memcpy(
-      pOutHeader.mArchiveDataBlockCount.mBytes.data(), pBytes + 28u, kPackedUint48BytesV2);
+      pOutHeader.mBlockCountPreview.mBytes.data(), pBytes + 40u, kPackedUint48BytesV2);
   std::memcpy(
-      pOutHeader.mEmptyFolderBlockCount.mBytes.data(), pBytes + 34u, kPackedUint48BytesV2);
-  std::memcpy(
-      pOutHeader.mPreviewManifestBlockCount.mBytes.data(), pBytes + 40u, kPackedUint48BytesV2);
-  std::memcpy(
-      pOutHeader.mRepairSectorBlockCount.mBytes.data(), pBytes + 46u, kPackedUint48BytesV2);
+      pOutHeader.mBlockCountRepair.mBytes.data(), pBytes + 46u, kPackedUint48BytesV2);
 
   pOutHeader.mArchiveFamilyId = ReadUint64LE(pBytes + 52u);
   pOutHeader.mReserved1 = ReadUint32LE(pBytes + 60u);
@@ -175,14 +173,12 @@ bool WriteArchiveHeader(const ArchiveHeaderV2& pHeader,
 
   std::memcpy(pOutBytes + 16u, pHeader.mArchiveIndex.mBytes.data(), kPackedUint48BytesV2);
   std::memcpy(pOutBytes + 22u, pHeader.mArchiveCount.mBytes.data(), kPackedUint48BytesV2);
+  std::memcpy(pOutBytes + 28u, pHeader.mBlockCountMain.mBytes.data(), kPackedUint48BytesV2);
+  std::memcpy(pOutBytes + 34u, pHeader.mReservedCount0.mBytes.data(), kPackedUint48BytesV2);
   std::memcpy(
-      pOutBytes + 28u, pHeader.mArchiveDataBlockCount.mBytes.data(), kPackedUint48BytesV2);
+      pOutBytes + 40u, pHeader.mBlockCountPreview.mBytes.data(), kPackedUint48BytesV2);
   std::memcpy(
-      pOutBytes + 34u, pHeader.mEmptyFolderBlockCount.mBytes.data(), kPackedUint48BytesV2);
-  std::memcpy(
-      pOutBytes + 40u, pHeader.mPreviewManifestBlockCount.mBytes.data(), kPackedUint48BytesV2);
-  std::memcpy(
-      pOutBytes + 46u, pHeader.mRepairSectorBlockCount.mBytes.data(), kPackedUint48BytesV2);
+      pOutBytes + 46u, pHeader.mBlockCountRepair.mBytes.data(), kPackedUint48BytesV2);
 
   WriteUint64LE(pHeader.mArchiveFamilyId, pOutBytes + 52u);
   WriteUint32LE(pHeader.mReserved1, pOutBytes + 60u);

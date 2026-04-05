@@ -2,17 +2,26 @@
 
 namespace peanutbutter::memory_layout {
 
+std::uint32_t GetSkipRecordArchiveIndex(const SkipRecordV2& pSkipRecord) {
+  return PackedUint24ToUInt32(pSkipRecord.mArchiveIndex);
+}
+
+bool SetSkipRecordArchiveIndex(SkipRecordV2& pSkipRecord,
+                               std::uint32_t pArchiveIndex,
+                               MemoryLayoutErrorInfo* pOutError) {
+  return TrySetPackedUint24(
+      pSkipRecord.mArchiveIndex, pArchiveIndex, pOutError, "SkipRecordArchiveIndex");
+}
+
 std::uint32_t GetSkipRecordByteDistance(const SkipRecordV2& pSkipRecord) {
-  return PackedUint24ToUInt32(pSkipRecord.mByteDistance);
+  return PackedUint24ToUInt32(pSkipRecord.mByteIndex);
 }
 
 bool SetSkipRecordByteDistance(SkipRecordV2& pSkipRecord,
                                std::uint32_t pByteDistance,
                                MemoryLayoutErrorInfo* pOutError) {
-  return TrySetPackedUint24(pSkipRecord.mByteDistance,
-                            pByteDistance,
-                            pOutError,
-                            "SkipRecord.ByteDistance");
+  return TrySetPackedUint24(
+      pSkipRecord.mByteIndex, pByteDistance, pOutError, "SkipRecordByteDistance");
 }
 
 bool ReadSkipRecord(const unsigned char* pBytes,
@@ -43,11 +52,15 @@ bool ReadSkipRecord(const unsigned char* pBytes,
     return false;
   }
 
-  pOutSkipRecord.mArchiveDistance = ReadUint16LE(pBytes + 0u);
-  pOutSkipRecord.mBlockDistance = ReadUint16LE(pBytes + 2u);
-  pOutSkipRecord.mByteDistance.mBytes[0] = static_cast<std::uint8_t>(pBytes[4u]);
-  pOutSkipRecord.mByteDistance.mBytes[1] = static_cast<std::uint8_t>(pBytes[5u]);
-  pOutSkipRecord.mByteDistance.mBytes[2] = static_cast<std::uint8_t>(pBytes[6u]);
+  if (!SetSkipRecordArchiveIndex(
+          pOutSkipRecord, ReadUint24LE(pBytes + 0u), pOutError)) {
+    return false;
+  }
+  pOutSkipRecord.mBlockIndex = ReadUint16LE(pBytes + 3u);
+  if (!SetSkipRecordByteDistance(
+          pOutSkipRecord, ReadUint24LE(pBytes + 5u), pOutError)) {
+    return false;
+  }
   return true;
 }
 
@@ -78,11 +91,9 @@ bool WriteSkipRecord(const SkipRecordV2& pSkipRecord,
     return false;
   }
 
-  WriteUint16LE(pSkipRecord.mArchiveDistance, pOutBytes + 0u);
-  WriteUint16LE(pSkipRecord.mBlockDistance, pOutBytes + 2u);
-  pOutBytes[4u] = static_cast<unsigned char>(pSkipRecord.mByteDistance.mBytes[0]);
-  pOutBytes[5u] = static_cast<unsigned char>(pSkipRecord.mByteDistance.mBytes[1]);
-  pOutBytes[6u] = static_cast<unsigned char>(pSkipRecord.mByteDistance.mBytes[2]);
+  WriteUint24LE(GetSkipRecordArchiveIndex(pSkipRecord), pOutBytes + 0u);
+  WriteUint16LE(pSkipRecord.mBlockIndex, pOutBytes + 3u);
+  WriteUint24LE(GetSkipRecordByteDistance(pSkipRecord), pOutBytes + 5u);
   return true;
 }
 

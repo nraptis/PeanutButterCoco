@@ -33,10 +33,10 @@ struct ArchiveHeaderV2 {
   std::uint8_t mReserved0 = 0u;
   PackedUint48V2 mArchiveIndex{};
   PackedUint48V2 mArchiveCount{};
-  PackedUint48V2 mArchiveDataBlockCount{};
-  PackedUint48V2 mEmptyFolderBlockCount{};
-  PackedUint48V2 mPreviewManifestBlockCount{};
-  PackedUint48V2 mRepairSectorBlockCount{};
+  PackedUint48V2 mBlockCountMain{};
+  PackedUint48V2 mReservedCount0{};
+  PackedUint48V2 mBlockCountPreview{};
+  PackedUint48V2 mBlockCountRepair{};
   std::uint64_t mArchiveFamilyId = 0u;
   std::uint32_t mReserved1 = 0u;
 };

@@ -48,9 +48,8 @@ struct BundleDiscoveryStateV2 {
 struct BundleMemoryPlanV2 {
   std::uint64_t mArchiveDataLogicalBytes = 0u;
   std::uint64_t mEmptyFolderLogicalBytes = 0u;
-  std::uint64_t mArchiveDataBlockCount = 0u;
-  std::uint64_t mEmptyFolderBlockCount = 0u;
-  std::uint64_t mPreviewManifestBlockCount = 0u;
+  std::uint64_t mBlockCountMain = 0u;
+  std::uint64_t mBlockCountPreview = 0u;
   std::uint64_t mNonRepairFamilyBlockCount = 0u;
   std::uint64_t mRepairSectorBlockCount = 0u;
   std::uint64_t mTotalFamilyBlockCount = 0u;
@@ -67,7 +66,7 @@ struct BundleMemoryPlanV2 {
 struct BundleManifestStateV2 {
   std::string mPreviewManifestPayload;
   std::uint64_t mPreviewManifestBytes = 0u;
-  std::uint64_t mPreviewManifestBlockCount = 0u;
+  std::uint64_t mBlockCountPreview = 0u;
   std::uint64_t mFolderPackingBytes = 0u;
   std::uint64_t mFolderPackingBlockCount = 0u;
 };

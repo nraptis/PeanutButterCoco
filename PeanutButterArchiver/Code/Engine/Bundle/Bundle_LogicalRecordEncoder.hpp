@@ -49,10 +49,7 @@ class BundleLogicalRecordEncoderV2 final {
   std::size_t PackedItemCount() const;
   std::size_t PackedFileCount() const;
   std::size_t PackedFolderCount() const;
-  bool TryGetLastFillFirstRecordBoundaryDistance(
-      std::uint64_t& pOutDistanceBytes) const;
-  bool TryMeasureDistanceToNextRecordStart(
-      std::uint64_t& pOutDistanceBytes) const;
+  void Reset();
 
  private:
   enum class Stage {
@@ -62,7 +59,7 @@ class BundleLogicalRecordEncoderV2 final {
     kReferenceKind = 3,
     kReferenceTargetLength = 4,
     kReferenceTargetBytes = 5,
-    kPreviewPlaceholder = 6,
+      kPreviewPlaceholder = 6,
     kFileSize = 7,
     kContentBytes = 8,
   };
@@ -70,7 +67,6 @@ class BundleLogicalRecordEncoderV2 final {
   void StartNextRecord();
   void FinishRecord();
   bool EmitRecordEvent(RuntimeEventKindV2 pKind) const;
-  std::uint64_t RemainingBytesInCurrentRecordFromCurrentStage() const;
 
  private:
   const std::vector<BundleRecordEntryV2>& mRecords;
@@ -108,8 +104,6 @@ class BundleLogicalRecordEncoderV2 final {
   bool mNeedsStartNextRecord = false;
   std::size_t mPackedFileCount = 0u;
   std::size_t mPackedFolderCount = 0u;
-  bool mHasLastFillFirstRecordBoundaryDistance = false;
-  std::uint64_t mLastFillFirstRecordBoundaryDistance = 0u;
   ProgressStageV2 mRuntimeStage = ProgressStageV2::kArchivePacking;
   RuntimeEventKindV2 mStartEventKind = RuntimeEventKindV2::kBundleFileStarted;
   RuntimeEventKindV2 mFinishEventKind = RuntimeEventKindV2::kBundleFileFinished;

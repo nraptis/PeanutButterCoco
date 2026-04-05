@@ -18,8 +18,10 @@ public:
     FakeArchiveBlock();
     ~FakeArchiveBlock();
     
-    FakeSectionHeader                   mHeader;
-    ByteString                          mPayload;
+    FakeSectionHeader                       mHeader;
+    ByteString                              mPayload;
+    
+    int                                     mBlockUUID;
     
 };
 

@@ -218,27 +218,48 @@ CheckSumV2 ComputeSectionCheckSum(const unsigned char* pPayloadBytes,
     return aCheckSum;
   }
 
-  unsigned char aMetaBytes[62] = {};
-  WriteSkipRecord(pHeader.mSkipRecord, aMetaBytes + 0u, kSkipRecordBytesV2, nullptr);
+  // Skip + repair + fixed metadata fields through archive family id.
+  // Reserved bytes are intentionally excluded from checksum material.
+  unsigned char aMetaBytes[kSkipRecordBytesV2 + kRepairRecordBytesV2 + 49u] = {};
+  std::size_t aCursor = 0u;
+  WriteSkipRecord(
+      pHeader.mSkipRecord, aMetaBytes + aCursor, kSkipRecordBytesV2, nullptr);
+  aCursor += kSkipRecordBytesV2;
   WriteRepairRecord(
-      pHeader.mRepairRecord, aMetaBytes + kSkipRecordBytesV2, kRepairRecordBytesV2, nullptr);
-  aMetaBytes[15u] = pHeader.mCheckSumKind;
-  aMetaBytes[16u] = pHeader.mSectionType;
-  aMetaBytes[17u] = pHeader.mSectionFlags;
-  WriteUint32LE(pHeader.mPayloadBytesUsed, aMetaBytes + 18u);
-  WriteUint32LE(pHeader.mArchiveFileCount, aMetaBytes + 22u);
-  WriteUint32LE(pHeader.mArchiveBlockCount, aMetaBytes + 26u);
-  WriteUint32LE(pHeader.mArchiveIndex, aMetaBytes + 30u);
-  WriteUint32LE(pHeader.mBlockIndex, aMetaBytes + 34u);
-  WriteUint32LE(pHeader.mArchiveDataBlockCount, aMetaBytes + 38u);
-  WriteUint32LE(pHeader.mPreviewManifestBlockCount, aMetaBytes + 42u);
-  WriteUint32LE(pHeader.mFolderManifestBlockCount, aMetaBytes + 46u);
-  WriteUint32LE(pHeader.mRepairDataBlockCount, aMetaBytes + 50u);
-  WriteUint64LE(pHeader.mArchiveFamilyId, aMetaBytes + 54u);
+      pHeader.mRepairRecord, aMetaBytes + aCursor, kRepairRecordBytesV2, nullptr);
+  aCursor += kRepairRecordBytesV2;
+
+  aMetaBytes[aCursor++] = pHeader.mCheckSumKind;
+  aMetaBytes[aCursor++] = pHeader.mSectionType;
+  aMetaBytes[aCursor++] = pHeader.mSectionFlags;
+  WriteUint32LE(pHeader.mPayloadBytesUsed, aMetaBytes + aCursor);
+  aCursor += 4u;
+  WriteUint32LE(pHeader.mArchiveFileCount, aMetaBytes + aCursor);
+  aCursor += 4u;
+  WriteUint32LE(pHeader.mArchiveBlockCount, aMetaBytes + aCursor);
+  aCursor += 4u;
+  WriteUint32LE(pHeader.mArchiveIndex, aMetaBytes + aCursor);
+  aCursor += 4u;
+  WriteUint32LE(pHeader.mBlockIndex, aMetaBytes + aCursor);
+  aCursor += 4u;
+  std::memcpy(aMetaBytes + aCursor,
+              pHeader.mBlockCountMain.mBytes.data(),
+              kPackedUint48BytesV2);
+  aCursor += kPackedUint48BytesV2;
+  std::memcpy(aMetaBytes + aCursor,
+              pHeader.mBlockCountPreview.mBytes.data(),
+              kPackedUint48BytesV2);
+  aCursor += kPackedUint48BytesV2;
+  std::memcpy(aMetaBytes + aCursor,
+              pHeader.mBlockCountRepair.mBytes.data(),
+              kPackedUint48BytesV2);
+  aCursor += kPackedUint48BytesV2;
+  WriteUint64LE(pHeader.mArchiveFamilyId, aMetaBytes + aCursor);
+  aCursor += 8u;
 
   Sha256StateV2 aState;
   Sha256UpdateV2(aState, pPayloadBytes, pPayloadLength);
-  Sha256UpdateV2(aState, aMetaBytes, sizeof(aMetaBytes));
+  Sha256UpdateV2(aState, aMetaBytes, aCursor);
   Sha256FinalizeV2(aState, aCheckSum.mBytes.data(), aCheckSum.mBytes.size());
   return aCheckSum;
 }
