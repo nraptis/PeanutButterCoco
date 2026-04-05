@@ -486,8 +486,8 @@ bool TestBundle::PerformMock(JobBundle &pJob, vector<FakeArchive> *pResult, Byte
         
     int aGLobalBlockIndex = 0;
     
-    int aArchiveUUID =  100000;
-    int aBlockUUID =    500000;
+    int aArchiveUUID =  10000;
+    int aBlockUUID =    1000;
     
     for (int aArchiveIndex=0;aArchiveIndex<aArchiveCount;aArchiveIndex++) {
         
@@ -787,6 +787,25 @@ bool TestBundle::GetBlockSpans(JobBundle &pJob, vector<FakeFileBlockSpan> *pBloc
             }
             return false;
         }
+        if (aSpan.mBlockIdentifiers.size() == 0) {
+            if (pError != NULL) {
+                *pError = ByteString("GetBlockSpans final span had no blocks.");
+            }
+            return false;
+        }
+        if (aSpan.mArchiveIdentifiers.size() == 0) {
+            if (pError != NULL) {
+                *pError = ByteString("GetBlockSpans final span had no archives.");
+            }
+            return false;
+        }
+        if (aSpan.mArchiveIdentifiers.size() != aSpan.mBlockIdentifiers.size()) {
+            if (pError != NULL) {
+                *pError = ByteString("GetBlockSpans final span had inequal blocks and archives.");
+            }
+            return false;
+        }
+        
         pBlockSpans->push_back(aSpan);
     }
     

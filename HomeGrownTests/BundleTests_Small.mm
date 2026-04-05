@@ -22,7 +22,7 @@
 @implementation BundleTests_Small
 
 - (int) TEST_C {
-    return 50;
+    return 1024;
 }
 
 - (void) logRegression: (JobBundle &)pJob {
@@ -35,6 +35,10 @@
     
     NSLog(@"    aJob.mPayloadBytesPerBlock = %d;", pJob.mPayloadBytesPerBlock);
     NSLog(@"    aJob.mBlocksPerArchive = %d;", pJob.mBlocksPerArchive);
+    NSLog(@"    aJob.mPreviewEnabled = %d;", pJob.mPreviewEnabled);
+    NSLog(@"    aJob.mRepairCoverage = %d;", pJob.mRepairCoverage);
+    
+    
     NSLog(@"\n    // Files");
     
     // Files
@@ -115,18 +119,22 @@
 
 - (void)test_100_full_spectrum {
     
-    for (int aPayloadBytesPerBlock=1;aPayloadBytesPerBlock<=4;aPayloadBytesPerBlock++) {
+    for (int aPayloadBytesPerBlock=1;aPayloadBytesPerBlock<=16;aPayloadBytesPerBlock++) {
         printf("aPayloadBytesPerBlock = %d\n", aPayloadBytesPerBlock);
         
-        for (int aBlocksPerArchive=1;aBlocksPerArchive<=4;aBlocksPerArchive++) {
+        for (int aBlocksPerArchive=1;aBlocksPerArchive<=16;aBlocksPerArchive++) {
             printf("\taBlocksPerArchive = %d\n", aBlocksPerArchive);
             
             for (int aRepair=0;aRepair<=80;aRepair+=20) {
                 for (int aPreview=0;aPreview<2;aPreview++) {
                     for (int aTestIndex=0;aTestIndex<[self TEST_C];aTestIndex++) {
                         
-                        int aFileCount = Random::Get(1, 8);
-                        vector<FakeFile> aFiles = Words::GetRandomFiles(aFileCount, 1, 4, 0, 8);
+                        int aFileCount = Random::Get(1, 12);
+                        int aFolderCount = Random::Get(0, 4);
+                        
+                        //vector<FakeFile> aFiles = Words::GetRandomFiles(aFileCount, 1, 4, 0, 8);
+                        vector<FakeFile> aFiles = Words::GetRandomFilesAndFolders(aFileCount, 1, 12, 0, 16, aFolderCount, 1, 12);
+                        
                         JobBundle aJob;
                         for (auto aFile: aFiles) {
                             aJob.mFileList.push_back(aFile);

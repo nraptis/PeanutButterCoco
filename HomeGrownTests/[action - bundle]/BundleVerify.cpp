@@ -148,8 +148,6 @@ bool BundleVerify::Execute(JobBundle &pJob, vector<WrappedArchive> pReal, vector
                 return false;
             }
             
-            
-            
             int aRealRepairIndex1 = aRealBlock->mHeader.mRepairRecord.mArchiveIndex;
             int aRealRepairIndex2 = aRealBlock->mHeader.mRepairRecord.mBlockIndex;
             int aMockRepairIndex1 = aMockBlock->mHeader.mRepairRecord.mArchiveIndex;
@@ -202,9 +200,6 @@ bool BundleVerify::Execute(JobBundle &pJob, vector<WrappedArchive> pReal, vector
                     return false;
                 }
             }
-            
-            
-            
             
             int aRealSkipIndex1 = Layout::ToInt(aRealBlock->mHeader.mSkipRecord.mArchiveIndex);
             int aRealSkipIndex2 = aRealBlock->mHeader.mSkipRecord.mBlockIndex;

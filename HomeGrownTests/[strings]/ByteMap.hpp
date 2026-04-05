@@ -67,7 +67,6 @@ public:
     bool                                                                                Get(const ByteString &pKey, FakeFileBlockSpan *pBlockSpan, ByteString *pError);
     bool                                                                                Get(const string &pKey, FakeFileBlockSpan *pBlockSpan, ByteString *pError);
     
-    
     bool                                                                                Exists(const ByteString &pKey);
     bool                                                                                Exists(const string &pKey);
     

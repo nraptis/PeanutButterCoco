@@ -449,6 +449,12 @@ std::vector<BundleRecordEntryV2> BuildPreviewRecords(
   aPreviewRecords.insert(aPreviewRecords.end(),
                          pContext.State().mDiscovery.mFileRecords.begin(),
                          pContext.State().mDiscovery.mFileRecords.end());
+  std::sort(aPreviewRecords.begin(),
+            aPreviewRecords.end(),
+            [](const BundleRecordEntryV2& pLeft,
+               const BundleRecordEntryV2& pRight) {
+              return pLeft.mRelativePath < pRight.mRelativePath;
+            });
   return aPreviewRecords;
 }
 

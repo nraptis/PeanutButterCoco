@@ -231,12 +231,15 @@ bool FakeFile::ToPreviewPayload(ByteString *pPayload, ByteString *pError) {
     if (mIsFolder) {
         unsigned char aType = (unsigned char)TypedRecordTypeV2::kManifestFolder;
         pPayload->Append(&aType, 1);
+        
+        unsigned char aExtra = memory_layout::specs_verified::kPreviewRecordPlaceholderValueV2;
+        pPayload->Append(&aExtra, 1);
+        
         return true;
     }
     
     unsigned char aType = (unsigned char)TypedRecordTypeV2::kManifestFile;
     pPayload->Append(&aType, 1);
-    
     
     unsigned char aExtra = memory_layout::specs_verified::kPreviewRecordPlaceholderValueV2;
     pPayload->Append(&aExtra, 1);

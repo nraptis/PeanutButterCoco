@@ -1,5 +1,0 @@
----
-triple:          'arm64-apple-darwin'
-binary-path:     '/Users/magneto/Desktop/Codex Playground/PeanutButterCoco/build/Release/PeanutButterArchiver.app/Contents/MacOS/PeanutButterArchiver'
-relocations:     []
-...

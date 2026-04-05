@@ -133,22 +133,39 @@ vector<FakeFile> Words::GetRandomFilesAndFolders(int pFileCount,
                                                  int pFolderCount,
                                                  int pFolderNameMinLength, int pFolderNameMaxLength) {
     
-    vector<ByteString> aFileNames = GetRandomFileNames(pFileCount, pFileNameMinLength, pFileNameMaxLength);
-    vector<ByteString> aFolderNames = GetRandomFolderNames(pFolderCount, pFolderNameMinLength, pFolderNameMaxLength);
+    ByteMap aMap;
     vector<FakeFile> aResult;
-    
-    for (int aIndex=0; aIndex<((int)aFolderNames.size()); aIndex++) {
-        FakeFile aFile;
-        aFile.mName.Set(aFolderNames[aIndex]);
-        aFile.mIsFolder = true;
-        aResult.push_back(aFile);
+    int aTries = (pFileCount * 2 + 100);
+    int aFudge = 0;
+    while (((int)(aResult.size()) < pFileCount) && (aFudge < aTries)) {
+        ByteString aName = GetRandomFileName(pFileNameMinLength, pFileNameMaxLength);
+        
+        if (aMap.Exists(aName) == false) {
+            aMap.Add(aName);
+        
+            ByteString aContent = GetRandomFileContent(pContentMinLength, pContentMaxLength);
+            
+            FakeFile aFile;
+            aFile.mName.Set(aName);
+            aFile.mContent.Set(aContent);
+            aFile.mIsFolder = false;
+            aResult.push_back(aFile);
+        }
+        aFudge++;
     }
     
-    for (int aIndex=0; aIndex<((int)aFileNames.size()); aIndex++) {
-        FakeFile aFile;
-        aFile.mName.Set(aFileNames[aIndex]);
-        aFile.mContent.Set(GetRandomFileContent(pContentMinLength, pContentMaxLength));
-        aResult.push_back(aFile);
+    aTries = (pFolderCount * 2 + 100);
+    aFudge = 0;
+    while (((int)(aResult.size()) < pFolderCount) && (aFudge < aTries)) {
+        ByteString aName = GetRandomFileContent(pFolderNameMinLength, pFolderNameMaxLength);
+        if (aMap.Exists(aName) == false) {
+            aMap.Add(aName);
+            FakeFile aFile;
+            aFile.mName.Set(aName);
+            aFile.mIsFolder = true;
+            aResult.push_back(aFile);
+        }
+        aFudge++;
     }
     
     for (int aIndex=0; aIndex<((int)aResult.size()); aIndex++) {

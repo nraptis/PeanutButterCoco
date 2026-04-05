@@ -210,4 +210,40 @@
     }
 }
 
+- (void)test_regression_small_window_l {
+    JobBundle aJob;
+    aJob.mPayloadBytesPerBlock = 4;
+    aJob.mBlocksPerArchive = 4;
+    aJob.mPreviewEnabled = true;
+    aJob.mRepairCoverage = 0;
+    
+    aJob.AddFolder("Talf");
+    aJob.AddFolder("aбb");
+    aJob.AddFolder("oCACM🛸zhQ");
+    aJob.AddFile("бtв.VGod", "sAぽa🏠Mbpz");
+
+    if ([self run:aJob] == NO) {
+        XCTFail(@"Regression test failed.");
+    }
+}
+
+- (void)test_regression_small_window_m {
+    JobBundle aJob;
+    aJob.mPayloadBytesPerBlock = 4;
+    aJob.mBlocksPerArchive = 4;
+    aJob.mPreviewEnabled = true;
+    aJob.mRepairCoverage = 0;
+
+    // Files
+    aJob.AddFile("D.S", "Δجい🏠M");
+    aJob.AddFolder("جSвbгKoka");
+    aJob.AddFolder("ゑبDeゑJ");
+    aJob.AddFolder("🛸jyt");
+
+    if ([self run:aJob] == NO) {
+        XCTFail(@"Regression test failed.");
+    }
+}
+
+
 @end
