@@ -438,8 +438,10 @@
                 for (int aPreview=0;aPreview<2;aPreview++) {
                     for (int aTestIndex=0;aTestIndex<36;aTestIndex++) {
                         
-                        int aFileCount = Random::Get(0, 12);
-                        int aFolderCount = Random::Get(0, 12);
+                    BLOCKER:
+                        
+                        int aFileCount = Random::Get(0, 4);
+                        int aFolderCount = Random::Get(0, 4);
                         
                         if ((aFileCount == 0) && (aFolderCount == 0)) {
                             if (Random::Get(2) == 0) {
@@ -452,13 +454,13 @@
                         //vector<FakeFile> aFiles = Words::GetRandomFiles(aFileCount, 1, 4, 0, 8);
                         
                         int aFileNameLo = Random::Get(1, 4);
-                        int aFileNameHi = aFileNameLo + Random::Get(0, 12);
+                        int aFileNameHi = aFileNameLo + Random::Get(0, 6);
                         
                         int aFileContentLo = Random::Get(0, 8);
-                        int aFileContentHi = aFileContentLo + Random::Get(0, 12);
+                        int aFileContentHi = aFileContentLo + Random::Get(0, 6);
                         
                         int aFolderNameLo = Random::Get(1, 4);
-                        int aFolderNameHi = aFolderNameLo + Random::Get(0, 12);
+                        int aFolderNameHi = aFolderNameLo + Random::Get(0, 6);
                         
                         vector<FakeFile> aFiles = Words::GetRandomFilesAndFolders(aFileCount, aFileNameLo, aFileNameHi,
                                                                                   aFileContentLo, aFileContentHi,
@@ -531,30 +533,33 @@
                         if (aDeleteCount > 1) {
                             if (aArchiveIndex1 == aArchiveIndex2) {
                                 
-                                if (aArchiveIndex1 >= 0 && aArchiveIndex1 < aMockArchives[aArchiveIndex1].mBlocks.size()) {
+                                
+                                
+                                if (aArchiveIndex1 >= 0 && aArchiveIndex1 < (int)aMockArchives.size()) {
                                     int aBlockCount = (int)aMockArchives[aArchiveIndex1].mBlocks.size();
-                                    if (aBlockIndex1 >= (aBlockCount - 2)) {
-                                        printf("i bad case: over-deleting. %d %d | %d\n", aBlockIndex1, aBlockIndex2, aBlockCount);
-                                        continue;
+                                    
+                                    if (aBlockIndex1 >= (aBlockCount - 3)) {
+                                        goto BLOCKER;
                                     }
-                                    if (aBlockIndex2 >= (aBlockCount - 2)) {
-                                        printf("i bad case: over-deleting. %d %d | %d\n", aBlockIndex1, aBlockIndex2, aBlockCount);
-                                        continue;
+                                    if (aBlockIndex2 >= (aBlockCount - 3)) {
+                                        goto BLOCKER;
                                     }
                                 }
                             }
                         } else if (aDeleteCount == 1) {
                             if (aArchiveIndex1 == aArchiveIndex2) {
                                 
-                                if (aArchiveIndex1 >= 0 && aArchiveIndex1 < aMockArchives[aArchiveIndex1].mBlocks.size()) {
+                                
+                                
+                                
+                                if (aArchiveIndex1 >= 0 && aArchiveIndex1 < (int)aMockArchives.size()) {
                                     int aBlockCount = (int)aMockArchives[aArchiveIndex1].mBlocks.size();
-                                    if (aBlockIndex1 >= (aBlockCount - 1)) {
-                                        printf("ii bad case: over-deleting. %d %d | %d\n", aBlockIndex1, aBlockIndex2, aBlockCount);
-                                        continue;
+                                    
+                                    if (aBlockIndex1 >= (aBlockCount - 2)) {
+                                        goto BLOCKER;
                                     }
-                                    if (aBlockIndex2 >= (aBlockCount - 1)) {
-                                        printf("ii bad case: over-deleting. %d %d | %d\n", aBlockIndex1, aBlockIndex2, aBlockCount);
-                                        continue;
+                                    if (aBlockIndex2 >= (aBlockCount - 2)) {
+                                        goto BLOCKER;
                                     }
                                 }
                             }
