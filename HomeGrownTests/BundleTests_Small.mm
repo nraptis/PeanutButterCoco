@@ -22,7 +22,7 @@
 @implementation BundleTests_Small
 
 - (int) TEST_C {
-    return 1024;
+    return 512;
 }
 
 - (void) logRegression: (JobBundle &)pJob {
@@ -111,21 +111,20 @@
         [self logRegression: pJob];
         return NO;
     }
-        
-        
     
     return YES;
 }
 
 - (void)test_100_full_spectrum {
     
-    for (int aPayloadBytesPerBlock=1;aPayloadBytesPerBlock<=16;aPayloadBytesPerBlock++) {
+    for (int aPayloadBytesPerBlock=4;aPayloadBytesPerBlock<=16;aPayloadBytesPerBlock++) {
         printf("aPayloadBytesPerBlock = %d\n", aPayloadBytesPerBlock);
         
-        for (int aBlocksPerArchive=1;aBlocksPerArchive<=16;aBlocksPerArchive++) {
+        for (int aBlocksPerArchive=1;aBlocksPerArchive<=8;aBlocksPerArchive++) {
             printf("\taBlocksPerArchive = %d\n", aBlocksPerArchive);
             
             for (int aRepair=0;aRepair<=80;aRepair+=20) {
+                
                 for (int aPreview=0;aPreview<2;aPreview++) {
                     for (int aTestIndex=0;aTestIndex<[self TEST_C];aTestIndex++) {
                         

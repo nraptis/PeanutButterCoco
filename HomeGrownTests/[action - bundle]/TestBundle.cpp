@@ -317,6 +317,53 @@ bool TestBundle::PerformMock(JobBundle &pJob, vector<FakeArchive> *pResult, Byte
     int aBlockOffset = 0;
     int aPayloadIndex = 0;
     int aPayloadOffset = 0;
+    
+    while ((aBlockIndex < aMainBlockCount) && (aPayloadIndex < aMainPayloadCount)) {
+        int aPayloadLength = aMainPayloadList[aPayloadIndex].mLength;
+        int aCopyAmountChoiceA = (aBlockLength - aBlockOffset);
+        int aCopyAmountChoiceB = (aPayloadLength - aPayloadOffset);
+        int aAmount = min(aCopyAmountChoiceA, aCopyAmountChoiceB);
+        
+        if (aBlockOffset == 0) {
+            if (aBlockIndex == 0) {
+                aSkipTargets.push_back(-1);
+            } else {
+                if (aPayloadOffset == 0) {
+                    aSkipTargets.push_back(aPayloadByteIndex);
+                } else if (aPayloadIndex >= (aMainPayloadCount - 1)) {
+                    aSkipTargets.push_back(-1);
+                } else {
+                    aSkipTargets.push_back(aPayloadByteIndex + aPayloadLength);
+                }
+            }
+        }
+        
+        aBlockOffset += aAmount;
+        if (aBlockOffset >= aBlockLength) {
+            aBlockOffset = 0;
+            ++aBlockIndex;
+        }
+        
+        aPayloadOffset += aAmount;
+        if (aPayloadOffset >= aPayloadLength) {
+            aPayloadByteIndex += aPayloadLength;
+            aPayloadOffset = 0;
+            ++aPayloadIndex;
+        }
+    }
+    
+    // We might need a last skip target.
+    if ((int)aSkipTargets.size() < (aPreviewBlockCount + aMainBlockCount)) {
+        if (aPayloadOffset == 0) {
+            aSkipTargets.push_back(aPayloadByteIndex);
+        } else {
+            aSkipTargets.push_back(-1);
+        }
+    }
+    
+    /*
+    int aPendingPayloadByteIncrement = 0;
+    
     while ((aBlockIndex < aMainBlockCount) && (aPayloadIndex < aMainPayloadCount)) {
         int aPayloadLength = aMainPayloadList[aPayloadIndex].mLength;
         int aCopyAmountChoiceA = (aBlockLength - aBlockOffset);
@@ -338,13 +385,26 @@ bool TestBundle::PerformMock(JobBundle &pJob, vector<FakeArchive> *pResult, Byte
             ++aBlockIndex;
         }
         
+        if (aPendingPayloadByteIncrement > 0) {
+            aPayloadByteIndex += aPendingPayloadByteIncrement;
+        }
+        
         aPayloadOffset += aAmount;
         if (aPayloadOffset >= aPayloadLength) {
-            aPayloadByteIndex += aPayloadLength;
+            aPendingPayloadByteIncrement = aPayloadLength;
+            
+            //aPayloadByteIndex += aPayloadLength;
             aPayloadOffset = 0;
             ++aPayloadIndex;
         }
     }
+    */
+    
+    /*
+    for (int aSkipIndex=0; aSkipIndex<aSkipTargets.size();aSkipIndex++) {
+        printf("aSkipTargets[%d] = %d\n", aSkipIndex, aSkipTargets[aSkipIndex]);
+    }
+    */
     
     // The count without repair blocks.
     int aPartialBlockCount = (int)(aPreviewPayloadBlocks.size() + aMainPayloadBlocks.size());
@@ -543,11 +603,7 @@ bool TestBundle::PerformMock(JobBundle &pJob, vector<FakeArchive> *pResult, Byte
                 return false;
             }
             
-            if (aLoopBlockIndex == aFirstMainBlockIndex) {
-                if (!aBlock.mHeader.mSkipRecord.SetInvalid()) {
-                    return false;
-                }
-            } else if (aSkipTargets[aLoopBlockIndex] == -1) {
+            if (aSkipTargets[aLoopBlockIndex] == -1) {
                 if (!aBlock.mHeader.mSkipRecord.SetInvalid()) {
                     return false;
                 }

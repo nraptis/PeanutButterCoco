@@ -215,7 +215,6 @@
     aJob.mPayloadBytesPerBlock = 4;
     aJob.mBlocksPerArchive = 4;
     aJob.mPreviewEnabled = true;
-    aJob.mRepairCoverage = 0;
     
     aJob.AddFolder("Talf");
     aJob.AddFolder("aбb");
@@ -232,8 +231,8 @@
     aJob.mPayloadBytesPerBlock = 4;
     aJob.mBlocksPerArchive = 4;
     aJob.mPreviewEnabled = true;
-    aJob.mRepairCoverage = 0;
-
+    
+    
     // Files
     aJob.AddFile("D.S", "Δجい🏠M");
     aJob.AddFolder("جSвbгKoka");
@@ -245,5 +244,102 @@
     }
 }
 
+- (void)test_regression_small_window_n {
+    JobBundle aJob;
+    aJob.mPayloadBytesPerBlock = 5;
+    aJob.mBlocksPerArchive = 1;
+    aJob.mPreviewEnabled = false;
+    
+    // Files
+    aJob.AddFile("H.CBewCXzDmw", "Cw");
+    aJob.AddFolder("K");
+    aJob.AddFolder("TI");
+    aJob.AddFolder("いU永Jb");
+
+    if ([self run:aJob] == NO) {
+        XCTFail(@"Regression test failed.");
+    }
+}
+
+- (void)test_regression_small_window_o {
+    JobBundle aJob;
+    aJob.mPayloadBytesPerBlock = 1;
+    aJob.mBlocksPerArchive = 1;
+    aJob.mPreviewEnabled = 0;
+    aJob.mRepairCoverage = 0;
+
+    // Files
+    aJob.AddFile("T", "冰ΩfUvAΞBW");
+    aJob.AddFile("W.fjQo", "🚀BаWh");
+    aJob.AddFile("Xi.AqB", "");
+    aJob.AddFile("u", "бZf冰m");
+    aJob.AddFile("y.تD", "C⭐z力H");
+    aJob.AddFile("yJm.gkA", "⚙️NsO");
+    aJob.AddFile("zO.POQU", "zΞo明تTFZmJ");
+    aJob.AddFile("вΨゑ.гC", "⚙️ΩzvRf");
+    aJob.AddFile("⭐Ω.m", "Fyゑ🧬ゐCh");
+    aJob.AddFile("おz.めk", "S龙NMc🤖تXd");
+
+    if ([self run:aJob] == NO) {
+        XCTFail(@"Regression test failed.");
+    }
+}
+
+- (void)test_regression_small_window_p {
+    JobBundle aJob;
+    aJob.mPayloadBytesPerBlock = 1;
+    aJob.mBlocksPerArchive = 1;
+    aJob.mPreviewEnabled = false;
+    aJob.mRepairCoverage = 0;
+
+    // Minimal boundary case:
+    // "a" folder record = 4 bytes total (2 len + 1 char + 1 type)
+    // "b" folder record starts at global data byte 4 (exact block boundary).
+    aJob.AddFolder("a");
+    aJob.AddFolder("b");
+
+    if ([self run:aJob] == NO) {
+        XCTFail(@"Regression test failed.");
+    }
+}
+
+- (void)test_regression_small_window_q {
+    
+    // Data record bytes (preview disabled):
+    // 1) File "ab" + content "cd" (15 bytes total):
+    //    [02 00] [61 62] [03] [02 00 00 00 00 00 00 00] [63 64]
+    //    global bytes: 0..14
+    //
+    // 2) Folder "e" (4 bytes total):
+    //    [01 00] [65] [04]
+    //    global bytes: 15..18
+    //
+    // 3) Folder "f" (4 bytes total):
+    //    [01 00] [66] [04]
+    //    global bytes: 19..22
+    //
+    // Payload blocks (5 bytes each):
+    // block 0 (bytes 0..4):   02 00 61 62 03
+    // block 1 (bytes 5..9):   02 00 00 00 00
+    // block 2 (bytes 10..14): 00 00 00 63 64
+    // block 3 (bytes 15..19): 01 00 65 04 01
+    // block 4 (bytes 20..24): 00 66 04 00 00   // last 2 bytes are zero padding
+    //
+    // Key boundary: block 3 starts exactly at record-start byte 15.
+
+    JobBundle aJob;
+    aJob.mPayloadBytesPerBlock = 5;
+    aJob.mBlocksPerArchive = 1000;
+    aJob.mPreviewEnabled = false;
+    aJob.mRepairCoverage = 0;
+
+    aJob.AddFile("ab", "cd");
+    aJob.AddFolder("e");
+    aJob.AddFolder("f");
+
+    if ([self run:aJob] == NO) {
+        XCTFail(@"Regression test failed.");
+    }
+}
 
 @end
