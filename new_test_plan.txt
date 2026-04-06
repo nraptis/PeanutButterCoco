@@ -81,6 +81,71 @@ Random strategy
 - Randomize collided filename stems and extensions.
 - Invariant: resolver always picks unused triplet name.
 
+3b) Bundle archive-box mapping under live source-file mutation
+Why this matters
+- Discovery/memory-planning locks in file logical sizes and archive-box layout before packing.
+- Real users can still modify or delete files that have not been packed yet.
+- This is exactly the class of "looks fine until racey user action" failures.
+
+Mapping strategy (what to map before mutating)
+- Build a "record -> archive box" expectation map from:
+  - discovery order / sorted relative paths
+  - logical record bytes (path fields + type + file-size field + content bytes)
+  - section payload bytes and blocks-per-archive
+- Use runtime events to correlate observed writes with plan:
+  - kBundleFileStarted/kBundleFileFinished (relative_path)
+  - kBundleBlockStarted/kBundleBlockFinished (archive_index, block_index, relative_path)
+- Target only files that are not yet packed when mutation is injected.
+
+Deterministic strategy
+- Prepare files with known sizes and distinct byte patterns.
+- Pick a target file "later" in packing order, then mutate in hook callback during "flight" before that file starts:
+  - case A: grow file size (append bytes)
+  - case B: shrink file size (truncate content vector)
+  - case C: delete file
+- Also run one "mid-stream shrink" variant:
+  - wait for kBundleFileStarted on target
+  - after some block progress, truncate/delete to force a surprise EOF while reads are in flight.
+
+Expected behavior note (important)
+- Mid-stream source read failure is effectively undefined as a product contract today.
+- Current engine behavior appears to be:
+  - planned content length stays the discovery-time size
+  - if open/read fails later, packer continues and zero-fills missing bytes
+  - bundle may still complete successfully instead of hard-failing
+- This is likely graceful from a crash-safety perspective, but semantically surprising unless explicitly documented.
+
+Assertions to lock down now
+- Engine behavior: no crash, no hang, deterministic completion path (success or explicit fail, not flaky).
+- Structural behavior: archive headers/sections remain parseable; no broken box indexing.
+- Content behavior by mutation type:
+  - grow-before-read: extra tail bytes are ignored (content capped to planned size)
+  - delete-before-read: planned content region becomes all zero fill
+  - shrink-mid-stream (surprise EOF): prefix real bytes, remaining planned region zero fill
+- Observability behavior:
+  - log/event marker that a source read failed (if not present yet, add as test TODO and track as gap)
+  - regression snippet includes mutation timing + target relative path + archive/block cursor
+
+Random strategy
+- Random campaign over:
+  - mutation type: grow/shrink/delete
+  - timing: before file start vs mid-file
+  - target rank: early/middle/late file in sorted order
+  - payload bytes per block and blocks per archive
+- Invariants:
+  - no crash/hang
+  - archive family remains decodeable
+  - behavior classifies cleanly into full/partial/failed with reproducible seed + mutation plan
+
+Can tests mock bizarre user actions?
+- Yes. Existing bundle hook callback can mutate the source-side MockHardDrive during "flight".
+- Practical actions to simulate "wild" user behavior:
+  - instant delete
+  - truncate to random smaller size
+  - append garbage / rapid grow then shrink
+  - repeated mutate-on-each-batch for one target file
+- This gives a controlled way to emulate Finder/editor/cloud-sync races without flaky OS timing.
+
 4) Recovery tests (DecodeIntent = recover)
 Deterministic strategy
 - Start from known-good bundle.
@@ -170,5 +235,6 @@ Suggested Implementation Order
 1. Cancel clean checkpoint + temp-file hygiene assertions.
 2. Mid-file partial cancel assertions.
 3. Collision-safe partial naming tests (requires clear-destination toggle).
-4. Recover harsh-fault matrix.
-5. Repair hard-fault matrix extension.
+4. Bundle archive-box mapping + source mutation matrix (grow/shrink/delete + surprise EOF).
+5. Recover harsh-fault matrix.
+6. Repair hard-fault matrix extension.
