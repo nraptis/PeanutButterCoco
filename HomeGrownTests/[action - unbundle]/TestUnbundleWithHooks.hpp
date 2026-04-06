@@ -42,14 +42,118 @@ public:
                                              peanutbutter::DecodeStageContextV2 &pContext,
                                              SimpleDecodeRuntime &pRuntime)>;
     
-    static bool PerformReal(JobBundle &pJob,
+    static bool PerformRealUnbundle(JobBundle &pJob,
                             MockFileSystem &pFileSystem,
                             ByteString *pError) {
-        return PerformReal(pJob, pFileSystem, BatchCallback(), pError);
+        return PerformRealUnbundle(pJob, pFileSystem, BatchCallback(), pError);
     }
     
+    static bool PerformRealUnbundle(JobBundle &pJob,
+                            MockFileSystem &pFileSystem,
+                            const BatchCallback &pOnBatch,
+                            ByteString *pError) {
+        return PerformReal(pJob, pFileSystem, DecodeIntentV2::kUnbundle, pOnBatch, pError);
+    }
+    
+    
+    static bool PerformRealRecover(JobBundle &pJob,
+                            MockFileSystem &pFileSystem,
+                            ByteString *pError) {
+        return PerformRealRecover(pJob, pFileSystem, BatchCallback(), pError);
+    }
+    
+    static bool PerformRealRecover(JobBundle &pJob,
+                            MockFileSystem &pFileSystem,
+                            const BatchCallback &pOnBatch,
+                            ByteString *pError) {
+        return PerformReal(pJob, pFileSystem, DecodeIntentV2::kRecover, pOnBatch, pError);
+    }
+    
+    
+    
+    static bool PerformRealRepair(JobBundle &pJob,
+                            MockFileSystem &pFileSystem,
+                            ByteString *pError) {
+        return PerformRealRepair(pJob, pFileSystem, BatchCallback(), pError);
+    }
+    
+    static bool PerformRealRepair(JobBundle &pJob,
+                            MockFileSystem &pFileSystem,
+                            const BatchCallback &pOnBatch,
+                                  ByteString *pError) {
+        return PerformReal(pJob, pFileSystem, DecodeIntentV2::kRepair, pOnBatch, pError);
+    }
+    
+    static bool CollectFiles(JobBundle &pJob,
+                             vector<FakeFile> &pFileList,
+                             MockFileSystem &pFileSystem,
+                             ByteString *pError) {
+        
+        vector<string> aUnbundledFiles = pFileSystem.mDrive->ListFilesRecursive(pJob.mUnarchived.ToString());
+        
+        ByteMap aMap;
+        
+        string aFileRoot = pJob.mUnarchived.ToString();
+        
+        for (int aUnbundledFileIndex=0; aUnbundledFileIndex<((int)aUnbundledFiles.size()); aUnbundledFileIndex++) {
+            string aFileName = aUnbundledFiles[aUnbundledFileIndex];
+            
+            ByteString aName = ByteString(aFileName);
+            
+            if (aMap.Exists(aName)) {
+                if (pError != NULL) {
+                    ByteString aErrorString = ByteString("Collect files loaded same name twice, ") + aName;
+                    pError->Set(aErrorString);
+                }
+                return false;
+            }
+            aMap.Add(aName);
+            
+            ByteString aContent = pFileSystem.Load(aFileName);
+            
+            if (pFileSystem.Exists(aFileName) == false) {
+                if (pError != NULL) {
+                    ByteString aErrorString = ByteString("Collect files found non-existing file, ") + aName;
+                    pError->Set(aErrorString);
+                }
+                return false;
+            }
+            
+            FakeFile aFile;
+            aFile.mName.Set(pFileSystem.RelativeToRoot(aFileRoot, aName.ToString()));
+            aFile.mContent.Set(aContent);
+            aFile.mIsFolder = false;
+            pFileList.push_back(aFile);
+        }
+        
+        vector<string> aUnbundledFolders = pFileSystem.mDrive->ListDirectoriesRecursive(pJob.mUnarchived.ToString());
+        for (int aUnbundledFolderIndex=0; aUnbundledFolderIndex<((int)aUnbundledFolders.size()); aUnbundledFolderIndex++) {
+            string aFolderName = aUnbundledFolders[aUnbundledFolderIndex];
+            
+            ByteString aName = ByteString(aFolderName);
+            
+            if (aMap.Exists(aName)) {
+                if (pError != NULL) {
+                    ByteString aErrorString = ByteString("Collect Folders loaded same name twice, ") + aName;
+                    pError->Set(aErrorString);
+                }
+                return false;
+            }
+            aMap.Add(aName);
+            
+            FakeFile aFile;
+            aFile.mName.Set(pFileSystem.RelativeToRoot(aFileRoot, aName.ToString()));
+            aFile.mIsFolder = true;
+            pFileList.push_back(aFile);
+        }
+        
+        return true;
+    }
+    
+private:
     static bool PerformReal(JobBundle &pJob,
                             MockFileSystem &pFileSystem,
+                            DecodeIntentV2 pIntent,
                             const BatchCallback &pOnBatch,
                             ByteString *pError) {
         
@@ -67,7 +171,7 @@ public:
         aRequest.mClearDestinationBeforeWrite = true;
         aRequest.mEncryptionEnabled = pJob.mEncryptionEnabled;
         aRequest.mPassword = "password";
-        aRequest.mIntent = DecodeIntentV2::kUnbundle;
+        aRequest.mIntent = pIntent;
         
         ArchiveLayoutConfigV2 aLayout;
         aLayout.mArchiveBlockBytes = pJob.mPayloadBytesPerBlock + Layout::SectionHeaderSize();
@@ -190,79 +294,6 @@ public:
         return true;
     }
     
-    static bool CollectFiles(JobBundle &pJob,
-                             vector<FakeFile> &pFileList,
-                             MockFileSystem &pFileSystem,
-                             ByteString *pError) {
-        
-        vector<string> aUnbundledFiles = pFileSystem.mDrive->ListFilesRecursive(pJob.mUnarchived.ToString());
-        
-        ByteMap aMap;
-        
-        string aFileRoot = pJob.mUnarchived.ToString();
-        
-        for (int aUnbundledFileIndex=0; aUnbundledFileIndex<((int)aUnbundledFiles.size()); aUnbundledFileIndex++) {
-            string aFileName = aUnbundledFiles[aUnbundledFileIndex];
-            
-            ByteString aName = ByteString(aFileName);
-            
-            if (aMap.Exists(aName)) {
-                if (pError != NULL) {
-                    ByteString aErrorString = ByteString("Collect files loaded same name twice, ") + aName;
-                    pError->Set(aErrorString);
-                }
-                return false;
-            }
-            aMap.Add(aName);
-            
-            ByteString aContent = pFileSystem.Load(aFileName);
-            
-            if (pFileSystem.Exists(aFileName) == false) {
-                if (pError != NULL) {
-                    ByteString aErrorString = ByteString("Collect files found non-existing file, ") + aName;
-                    pError->Set(aErrorString);
-                }
-                return false;
-            }
-            
-            FakeFile aFile;
-            aFile.mName.Set(pFileSystem.RelativeToRoot(aFileRoot, aName.ToString()));
-            aFile.mContent.Set(aContent);
-            aFile.mIsFolder = false;
-            pFileList.push_back(aFile);
-            
-            
-        }
-        
-        vector<string> aUnbundledFolders = pFileSystem.mDrive->ListDirectoriesRecursive(pJob.mUnarchived.ToString());
-        
-        for (int aUnbundledFolderIndex=0; aUnbundledFolderIndex<((int)aUnbundledFolders.size()); aUnbundledFolderIndex++) {
-            string aFolderName = aUnbundledFolders[aUnbundledFolderIndex];
-            
-            ByteString aName = ByteString(aFolderName);
-            
-            if (aMap.Exists(aName)) {
-                if (pError != NULL) {
-                    ByteString aErrorString = ByteString("Collect Folders loaded same name twice, ") + aName;
-                    pError->Set(aErrorString);
-                }
-                return false;
-            }
-            aMap.Add(aName);
-            
-            FakeFile aFile;
-            
-            
-            aFile.mName.Set(pFileSystem.RelativeToRoot(aFileRoot, aName.ToString()));
-            
-            aFile.mIsFolder = true;
-            pFileList.push_back(aFile);
-        }
-        
-        return true;
-    }
-    
-private:
     static const char *PhaseNameForHook(peanutbutter::ProgressStageV2 pStage) {
         using peanutbutter::ProgressStageV2;
         

@@ -157,6 +157,14 @@ void ByteString::Append(const ByteString &pString) {
     }
 }
 
+void ByteString::Truncate(int pSize) {
+    if (pSize <= 0) {
+        Free();
+    } else if (pSize < mLength) {
+        mLength = pSize;
+    }
+}
+
 void ByteString::ParseInt(int pNumber) {
     // 12 bytes is enough for "-2147483648" and a null terminator
     char aBuffer[16];

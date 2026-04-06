@@ -125,7 +125,7 @@
         return NO;
     }
     
-    if (!TestUnbundleWithHooks::PerformReal(
+    if (!TestUnbundleWithHooks::PerformRealUnbundle(
                                             pJob,
                                             aFileSystem,
                                             [](const TestUnbundleWithHooks::PhaseBatchFeedback &pFeedback,

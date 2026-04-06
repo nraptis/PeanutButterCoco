@@ -27,6 +27,14 @@ public:
     
     bool                    ToPreviewPayload(ByteString *pPayload, ByteString *pError);
     
+    void                    RecoverTruncate(int pSize);
+    void                    RecoverDelete();
+    
+    bool                    mIsRecoverDeleted;
+    bool                    mIsRecoverPartial;
+    
+    
+    
 };
 
 #endif /* FakeFile_hpp */

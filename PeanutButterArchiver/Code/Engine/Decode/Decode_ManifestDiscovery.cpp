@@ -189,11 +189,16 @@ void RefineArchiveWindowFromInspection(DecodeStageContextV2& pContext,
     }
     DiscoveredArchiveFileV2& aSlot =
         aRefined[static_cast<std::size_t>(aArchive.mArchiveIndex)];
+    const std::uint64_t aExpectedBlockCount = aSlot.mArchiveBlockCount;
     if (!aSlot.mIsPresent ||
         (!aSlot.mHasReadableHeader && aArchive.mHasReadableHeader) ||
         (aSlot.mPath.empty() && !aArchive.mPath.empty())) {
       aSlot = aArchive;
       aSlot.mIsPresent = true;
+      if (!aSlot.mHasReadableSection && aExpectedBlockCount != 0u) {
+        aSlot.mArchiveBlockCount =
+            std::max<std::uint64_t>(aSlot.mArchiveBlockCount, aExpectedBlockCount);
+      }
     }
   }
 

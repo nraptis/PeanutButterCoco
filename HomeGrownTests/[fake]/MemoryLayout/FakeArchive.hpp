@@ -24,9 +24,6 @@ public:
     vector<FakeArchiveBlock>                mBlocks;
     
     ByteString                              mFilePath;
-    ByteString                              mFileStem;
-    ByteString                              mFileNumberString;
-    int                                     mFileNumber;
     
     int                                     mArchiveUUID;
     

@@ -71,7 +71,7 @@
         return NO;
     }
     
-    if (!TestUnbundleWithHooks::PerformReal(
+    if (!TestUnbundleWithHooks::PerformRealUnbundle(
                                             pJob,
                                             aFileSystem,
                                             [](const TestUnbundleWithHooks::PhaseBatchFeedback &pFeedback,
@@ -162,6 +162,48 @@
     aJob.AddFile("q", "G");
     aJob.AddFile("ry", "bp");
     aJob.AddFile("t", "");
+
+    if ([self run:aJob] == NO) {
+        XCTFail(@"Regression test failed.");
+    }
+}
+
+- (void)test_unbundle_regression_small_window_d {
+    JobBundle aJob;
+    aJob.mPayloadBytesPerBlock = 1;
+    aJob.mBlocksPerArchive = 1;
+
+    // Files
+    aJob.AddFolder("IgJXyNثFQ");
+    aJob.AddFolder("LqI电jRmV");
+    aJob.AddFile("Y.b", "dΨQh龙iVWjl");
+    aJob.AddFile("Y.r", "sleLjتxA大O");
+    aJob.AddFile("n.a", "ILIvp");
+    aJob.AddFolder("sgmгTvK");
+    aJob.AddFolder("wGzba");
+    aJob.AddFile("x.T", "SSlw");
+
+    if ([self run:aJob] == NO) {
+        XCTFail(@"Regression test failed.");
+    }
+}
+
+- (void)test_unbundle_regression_small_window_e {
+    JobBundle aJob;
+    aJob.mPayloadBytesPerBlock = 1;
+    aJob.mBlocksPerArchive = 1;
+    aJob.mPreviewEnabled = 0;
+    aJob.mRepairCoverage = 0;
+
+    // Files
+    aJob.AddFolder("KrU");
+    aJob.AddFolder("bqp");
+    aJob.AddFolder("iIg");
+    aJob.AddFolder("oHP");
+    aJob.AddFolder("uOL");
+    aJob.AddFolder("wKS");
+    aJob.AddFolder("ΩH");
+    aJob.AddFile("🧬L.q", "u");
 
     if ([self run:aJob] == NO) {
         XCTFail(@"Regression test failed.");

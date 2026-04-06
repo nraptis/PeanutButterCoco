@@ -343,6 +343,15 @@ bool TryReadValidatedSectionHeader(const unsigned char* pBlockBytes,
       pPayloadBytes);
 }
 
+bool HeaderIndexMatchesCursor(const DiscoveredArchiveFileV2& pArchive,
+                              const SectionHeaderV2& pSectionHeader,
+                              std::uint64_t pExpectedBlockIndex) {
+  return pSectionHeader.mArchiveIndex ==
+             static_cast<std::uint32_t>(pArchive.mArchiveIndex) &&
+         pSectionHeader.mBlockIndex ==
+             static_cast<std::uint32_t>(pExpectedBlockIndex);
+}
+
 bool ShouldTryPlaintextPreviewManifestBlock(const DecodeStageContextV2& pContext) {
   const DecodeBootstrapStateV2& aBootstrap = pContext.State().mBootstrap;
   const DecodeManifestStateV2& aManifest = pContext.State().mManifest;
@@ -397,9 +406,17 @@ bool IsExpectedContinuationBlock(const std::vector<DiscoveredArchiveFileV2>& pAr
   }
 
   const DiscoveredArchiveFileV2& aPreviousArchive = pArchives[pPreviousArchiveSlot];
+  const std::uint64_t aPreviousDeclaredBlockCount =
+      aPreviousArchive.mArchiveBlockCount != 0u
+          ? aPreviousArchive.mArchiveBlockCount
+          : aPreviousArchive.mReadableBlockCount;
+  if (aPreviousArchive.mReadableBlockCount < aPreviousDeclaredBlockCount) {
+    // A truncated archive cannot provide a trustworthy continuation boundary
+    // into the next archive because tail bytes are known missing.
+    return false;
+  }
   const std::uint64_t aPreviousArchiveBlockCount =
-      aPreviousArchive.mArchiveBlockCount != 0u ? aPreviousArchive.mArchiveBlockCount
-                                                : aPreviousArchive.mReadableBlockCount;
+      aPreviousDeclaredBlockCount;
   return aPreviousArchiveBlockCount != 0u &&
          (pPreviousBlockIndex + 1u) >= aPreviousArchiveBlockCount;
 }
@@ -414,7 +431,8 @@ bool TryApplyRecoverSkipRecord(DecodeStageContextV2& pContext,
                                DecodeArchiveDecodeCursorV2& pCursor,
                                const SectionHeaderV2& pSectionHeader,
                                std::size_t pCurrentArchiveSlot,
-                               std::uint64_t pCurrentBlockIndex,
+                               std::uint64_t pCurrentPhysicalBlockIndex,
+                               std::uint64_t pCurrentLogicalBlockIndex,
                                std::size_t pCurrentPayloadStart,
                                std::size_t pCurrentPayloadEnd);
 
@@ -429,7 +447,6 @@ bool HandleDamagedBlock(DecodeStageContextV2& pContext,
     return false;
   }
 
-  SwitchToPessimistic(pContext, pReason);
   pContext.RequestBatchYield();
   if (pContext.WantsRuntimeEvent(RuntimeEventKindV2::kDecodeSkipJump)) {
     RuntimeEventV2 aEvent;
@@ -536,6 +553,8 @@ class DecodeArchiveDecodeCursorV2 {
               return pContext.EmitRuntimeEvent(pEvent);
             }),
         mBlockBytes(pContext.Layout().mArchiveBlockBytes) {
+    mArchiveLostBlocksBySlot.assign(
+        pContext.State().mDiscovery.mArchives.size(), 0u);
     mNextArchiveLog = kDecodeProgressArchiveLogIntervalV2;
     mNextFileLog = kDecodeProgressFileLogIntervalV2;
     mNextFolderLog = kDecodeProgressFolderLogIntervalV2;
@@ -568,15 +587,59 @@ class DecodeArchiveDecodeCursorV2 {
   bool mHasForcedBlockPayloadStart = false;
   std::size_t mForcedBlockPayloadStart = 0u;
   bool mPendingRecoverResync = false;
+  bool mHasPendingSkipLandingValidation = false;
+  std::size_t mPendingSkipSourceArchiveSlot = 0u;
+  std::uint64_t mPendingSkipSourceBlockIndex = 0u;
+  std::size_t mPendingSkipTargetArchiveSlot = 0u;
+  std::uint64_t mPendingSkipTargetBlockIndex = 0u;
+  std::vector<std::uint64_t> mArchiveLostBlocksBySlot;
 };
 
 namespace {
+
+std::uint64_t KnownLostBlocksForArchive(
+    const DecodeArchiveDecodeCursorV2& pCursor,
+    std::size_t pArchiveSlot) {
+  if (pArchiveSlot >= pCursor.mArchiveLostBlocksBySlot.size()) {
+    return 0u;
+  }
+  return pCursor.mArchiveLostBlocksBySlot[pArchiveSlot];
+}
+
+std::uint64_t ExpectedLogicalBlockIndexForPhysical(
+    const DecodeArchiveDecodeCursorV2& pCursor,
+    std::size_t pArchiveSlot,
+    std::uint64_t pPhysicalBlockIndex) {
+  return pPhysicalBlockIndex + KnownLostBlocksForArchive(pCursor, pArchiveSlot);
+}
+
+std::uint64_t LogicalToPhysicalBlockIndexWithKnownLoss(
+    const DecodeArchiveDecodeCursorV2& pCursor,
+    std::size_t pArchiveSlot,
+    std::uint64_t pLogicalBlockIndex) {
+  const std::uint64_t aKnownLost = KnownLostBlocksForArchive(pCursor, pArchiveSlot);
+  if (pLogicalBlockIndex <= aKnownLost) {
+    return 0u;
+  }
+  return pLogicalBlockIndex - aKnownLost;
+}
+
+void ResetArchiveDataRecordStateAfterDamagedBlock(
+    DecodeArchiveDecodeCursorV2& pCursor) {
+  if (!pCursor.mFileDecoder.IsInsideFile()) {
+    pCursor.mFileDecoder.ResetAfterParseError();
+  }
+  pCursor.mHasOpenFileContinuation = false;
+  pCursor.mContinuationArchiveSlot = 0u;
+  pCursor.mContinuationBlockIndex = 0u;
+}
 
 bool TryApplyRecoverSkipRecord(DecodeStageContextV2& pContext,
                                DecodeArchiveDecodeCursorV2& pCursor,
                                const SectionHeaderV2& pSectionHeader,
                                std::size_t pCurrentArchiveSlot,
-                               std::uint64_t pCurrentBlockIndex,
+                               std::uint64_t pCurrentPhysicalBlockIndex,
+                               std::uint64_t pCurrentLogicalBlockIndex,
                                std::size_t pCurrentPayloadStart,
                                std::size_t pCurrentPayloadEnd) {
   if (!DecodeIntentAllowsSalvageV2(pContext.Request().mIntent) ||
@@ -586,6 +649,8 @@ bool TryApplyRecoverSkipRecord(DecodeStageContextV2& pContext,
 
   const std::vector<DiscoveredArchiveFileV2>& aArchives =
       pContext.State().mDiscovery.mArchives;
+  const bool aPessimistic =
+      pContext.State().mDiscovery.mMode == DecodeModeV2::kPessimistic;
   const std::size_t aTargetArchiveSlot =
       static_cast<std::size_t>(GetSkipRecordArchiveIndex(pSectionHeader.mSkipRecord));
   const std::uint64_t aTargetBlockIndex =
@@ -593,6 +658,20 @@ bool TryApplyRecoverSkipRecord(DecodeStageContextV2& pContext,
   const std::size_t aTargetPayloadOffset = static_cast<std::size_t>(
       GetSkipRecordByteDistance(pSectionHeader.mSkipRecord));
   const std::size_t aPayloadBytesPerBlock = pContext.Layout().SectionPayloadBytes();
+  const std::uint64_t aTargetPhysicalBlockIndex =
+      LogicalToPhysicalBlockIndexWithKnownLoss(
+          pCursor, aTargetArchiveSlot, aTargetBlockIndex);
+  const bool aTargetsCurrentBlock =
+      aTargetArchiveSlot == pCurrentArchiveSlot &&
+      aTargetBlockIndex == pCurrentLogicalBlockIndex;
+
+  if (aPessimistic && !aTargetsCurrentBlock) {
+    pContext.EmitLog(
+        LogLevelV2::kWarning,
+        DecodeStagePrefix(pContext.Request().mIntent, ProgressStageV2::kArchiveDecode) +
+            " Ignoring skip record: pessimistic mode only permits intra-block targets.");
+    return false;
+  }
 
   if (aTargetArchiveSlot >= aArchives.size()) {
     pContext.EmitLog(
@@ -610,19 +689,19 @@ bool TryApplyRecoverSkipRecord(DecodeStageContextV2& pContext,
   }
 
   const DiscoveredArchiveFileV2& aTargetArchive = aArchives[aTargetArchiveSlot];
-  if (aTargetBlockIndex >= aTargetArchive.mReadableBlockCount) {
+  if (aTargetPhysicalBlockIndex >= aTargetArchive.mReadableBlockCount) {
     pContext.EmitLog(
         LogLevelV2::kWarning,
         DecodeStagePrefix(pContext.Request().mIntent, ProgressStageV2::kArchiveDecode) +
-            " Ignoring skip record: target block index out of readable range.");
+            " Ignoring skip record: target block index out of readable range after drift mapping.");
     return false;
   }
 
   const bool aForward =
       (aTargetArchiveSlot > pCurrentArchiveSlot) ||
       (aTargetArchiveSlot == pCurrentArchiveSlot &&
-       (aTargetBlockIndex > pCurrentBlockIndex ||
-        (aTargetBlockIndex == pCurrentBlockIndex &&
+       (aTargetBlockIndex > pCurrentLogicalBlockIndex ||
+        (aTargetBlockIndex == pCurrentLogicalBlockIndex &&
          aTargetPayloadOffset > pCurrentPayloadStart)));
   if (!aForward) {
     pContext.EmitLog(
@@ -633,7 +712,12 @@ bool TryApplyRecoverSkipRecord(DecodeStageContextV2& pContext,
   }
 
   if (aTargetArchiveSlot == pCurrentArchiveSlot &&
-      aTargetBlockIndex == pCurrentBlockIndex) {
+      aTargetBlockIndex == pCurrentLogicalBlockIndex) {
+    pCursor.mHasPendingSkipLandingValidation = false;
+    pCursor.mPendingSkipSourceArchiveSlot = 0u;
+    pCursor.mPendingSkipSourceBlockIndex = 0u;
+    pCursor.mPendingSkipTargetArchiveSlot = 0u;
+    pCursor.mPendingSkipTargetBlockIndex = 0u;
     if (aTargetPayloadOffset >= pCurrentPayloadEnd) {
       pContext.EmitLog(
           LogLevelV2::kWarning,
@@ -649,9 +733,14 @@ bool TryApplyRecoverSkipRecord(DecodeStageContextV2& pContext,
     pCursor.mHasForcedBlockPayloadStart = false;
     pCursor.mForcedBlockPayloadStart = 0u;
   } else {
+    pCursor.mHasPendingSkipLandingValidation = true;
+    pCursor.mPendingSkipSourceArchiveSlot = pCurrentArchiveSlot;
+    pCursor.mPendingSkipSourceBlockIndex = pCurrentPhysicalBlockIndex;
+    pCursor.mPendingSkipTargetArchiveSlot = aTargetArchiveSlot;
+    pCursor.mPendingSkipTargetBlockIndex = aTargetPhysicalBlockIndex;
     pCursor.mRead.reset();
     pCursor.mArchiveSlot = aTargetArchiveSlot;
-    pCursor.mBlockIndex = aTargetBlockIndex;
+    pCursor.mBlockIndex = aTargetPhysicalBlockIndex;
     pCursor.mArchiveBlocksRead = 0u;
     pCursor.mArchiveAnnounced = false;
     pCursor.mHasPausedBlockBoundary = false;
@@ -672,7 +761,8 @@ bool TryApplyRecoverSkipRecord(DecodeStageContextV2& pContext,
       DecodeStagePrefix(pContext.Request().mIntent, ProgressStageV2::kArchiveDecode) +
           " Applied skip record jump to archive slot " +
           std::to_string(aTargetArchiveSlot) + ", block " +
-          std::to_string(aTargetBlockIndex) + ", payload offset " +
+          std::to_string(aTargetBlockIndex) + " (physical " +
+          std::to_string(aTargetPhysicalBlockIndex) + "), payload offset " +
           std::to_string(aTargetPayloadOffset) + ".");
   return true;
 }
@@ -697,11 +787,68 @@ void AdvanceDecodeArchiveCursor(DecodeArchiveDecodeCursorV2& pCursor) {
   pCursor.mPausedBlockPayloadOffset = 0u;
   pCursor.mPausedBlockPayloadEnd = 0u;
   pCursor.mPausedBoundaryRecordReference.clear();
+  pCursor.mHasForcedBlockPayloadStart = false;
+  pCursor.mForcedBlockPayloadStart = 0u;
+  pCursor.mHasPendingSkipLandingValidation = false;
+  pCursor.mPendingSkipSourceArchiveSlot = 0u;
+  pCursor.mPendingSkipSourceBlockIndex = 0u;
+  pCursor.mPendingSkipTargetArchiveSlot = 0u;
+  pCursor.mPendingSkipTargetBlockIndex = 0u;
 }
 
 bool CloseDecodeArchiveForCursor(DecodeStageContextV2& pContext,
                                  DecodeArchiveDecodeCursorV2& pCursor,
                                  const DiscoveredArchiveFileV2& pArchive) {
+  if (DecodeIntentAllowsSalvageV2(pContext.Request().mIntent)) {
+    const std::uint64_t aDeclaredBlockCount =
+        pArchive.mArchiveBlockCount != 0u ? pArchive.mArchiveBlockCount
+                                          : pArchive.mReadableBlockCount;
+    if (pArchive.mReadableBlockCount < aDeclaredBlockCount) {
+      const std::uint64_t aLostTailBlocks =
+          aDeclaredBlockCount - pArchive.mReadableBlockCount;
+      if (pCursor.mArchiveSlot < pCursor.mArchiveLostBlocksBySlot.size()) {
+        pCursor.mArchiveLostBlocksBySlot[pCursor.mArchiveSlot] += aLostTailBlocks;
+      }
+
+      if (pCursor.mFileDecoder.IsInsideFile()) {
+        const std::string aPartialReference =
+            pCursor.mFileDecoder.CurrentFileReference();
+        const bool aPromotedPartial = pCursor.mFileDecoder.AbortCurrentFile();
+        EmitDecodeErrorMarkerEvent(
+            pContext,
+            "file_data_error",
+            "Decode file encountered missing archive-tail block(s).",
+            pArchive,
+            pCursor.mArchiveSlot,
+            pArchive.mReadableBlockCount,
+            SectionTypeLabel(SectionTypeV2::kArchiveData),
+            aPartialReference);
+        if (aPromotedPartial) {
+          EmitDecodeErrorMarkerEvent(
+              pContext,
+              "file_closed_partial",
+              "Decode closed file as partial after missing archive-tail block(s).",
+              pArchive,
+              pCursor.mArchiveSlot,
+              pArchive.mReadableBlockCount,
+              SectionTypeLabel(SectionTypeV2::kArchiveData),
+              aPartialReference);
+        }
+      }
+      ResetArchiveDataRecordStateAfterDamagedBlock(pCursor);
+      SwitchToPessimistic(
+          pContext,
+          "archive ended before declared block count; inferred deleted tail block(s).");
+      pCursor.mPendingRecoverResync = true;
+      pContext.EmitLog(
+          LogLevelV2::kWarning,
+          DecodeStagePrefix(pContext.Request().mIntent, ProgressStageV2::kArchiveDecode) +
+              " Inferred " + std::to_string(aLostTailBlocks) +
+              " deleted tail block(s) in archive slot " +
+              std::to_string(pCursor.mArchiveSlot) + ".");
+    }
+  }
+
   if (pContext.WantsRuntimeEvent(RuntimeEventKindV2::kDecodeArchiveFinished)) {
     EmitDecodeArchiveFinishedEvent(
         pContext, pArchive, pCursor.mArchiveSlot, pCursor.mArchiveBlocksRead);
@@ -736,6 +883,70 @@ bool ContinueAfterDamagedBlock(DecodeStageContextV2& pContext,
     return true;
   }
   return false;
+}
+
+bool ContinueAfterDamagedBlockWithSkipLandingFallback(
+    DecodeStageContextV2& pContext,
+    DecodeArchiveDecodeCursorV2& pCursor,
+    const DiscoveredArchiveFileV2& pArchive) {
+  const bool aAtPendingSkipTarget =
+      pCursor.mHasPendingSkipLandingValidation &&
+      pCursor.mArchiveSlot == pCursor.mPendingSkipTargetArchiveSlot &&
+      pCursor.mBlockIndex == pCursor.mPendingSkipTargetBlockIndex;
+  if (!aAtPendingSkipTarget) {
+    return ContinueAfterDamagedBlock(pContext, pCursor, pArchive);
+  }
+
+  const std::vector<DiscoveredArchiveFileV2>& aArchives =
+      pContext.State().mDiscovery.mArchives;
+  const std::size_t aSourceArchiveSlot = pCursor.mPendingSkipSourceArchiveSlot;
+  const std::uint64_t aSourceBlockIndex = pCursor.mPendingSkipSourceBlockIndex;
+
+  pCursor.mHasPendingSkipLandingValidation = false;
+  pCursor.mPendingSkipSourceArchiveSlot = 0u;
+  pCursor.mPendingSkipSourceBlockIndex = 0u;
+  pCursor.mPendingSkipTargetArchiveSlot = 0u;
+  pCursor.mPendingSkipTargetBlockIndex = 0u;
+
+  if (aSourceArchiveSlot >= aArchives.size()) {
+    pContext.EmitLog(
+        LogLevelV2::kWarning,
+        DecodeStagePrefix(pContext.Request().mIntent, ProgressStageV2::kArchiveDecode) +
+            " Skip-record landing block failed, but source was unavailable. "
+            "Continuing from current damaged block.");
+    return ContinueAfterDamagedBlock(pContext, pCursor, pArchive);
+  }
+
+  SwitchToPessimistic(
+      pContext, "skip-record landing block failed validation/parse.");
+  pContext.EmitLog(
+      LogLevelV2::kWarning,
+      DecodeStagePrefix(pContext.Request().mIntent, ProgressStageV2::kArchiveDecode) +
+          " Skip-record landing block failed; resuming pessimistic walk from "
+          "source block + 1.");
+
+  pCursor.mRead.reset();
+  pCursor.mArchiveSlot = aSourceArchiveSlot;
+  pCursor.mBlockIndex = aSourceBlockIndex;
+  pCursor.mArchiveBlocksRead = 0u;
+  pCursor.mArchiveAnnounced = false;
+  pCursor.mHasPausedBlockBoundary = false;
+  pCursor.mPausedSectionHeader = SectionHeaderV2{};
+  pCursor.mPausedBlockPayloadOffset = 0u;
+  pCursor.mPausedBlockPayloadEnd = 0u;
+  pCursor.mPausedBoundaryRecordReference.clear();
+  pCursor.mHasForcedBlockPayloadStart = false;
+  pCursor.mForcedBlockPayloadStart = 0u;
+  pCursor.mHasOpenFileContinuation = false;
+  pCursor.mContinuationArchiveSlot = 0u;
+  pCursor.mContinuationBlockIndex = 0u;
+  // We are resuming from source block + 1 after a failed skip landing.
+  // Keep recover-resync enabled so pessimistic mode can immediately evaluate
+  // intra-block skip guidance on the resumed walk.
+  pCursor.mPendingRecoverResync = true;
+
+  return ContinueAfterDamagedBlock(
+      pContext, pCursor, aArchives[aSourceArchiveSlot]);
 }
 
 bool HandlePausedDecodeCheckpointCancel(DecodeStageContextV2& pContext,
@@ -800,13 +1011,60 @@ bool FinalizeDecodeArchivePhase(DecodeStageContextV2& pContext,
     return false;
   }
   if (!aCursor.mFileDecoder.Finalize(aFinalizeError)) {
-    if (aCursor.mFileDecoder.IsInsideFile()) {
-      (void)aCursor.mFileDecoder.AbortCurrentFile();
+    if (DecodeIntentAllowsSalvageV2(pContext.Request().mIntent)) {
+      const bool aInsideFile = aCursor.mFileDecoder.IsInsideFile();
+      const std::string aPartialReference =
+          aCursor.mFileDecoder.CurrentFileReference();
+      const bool aPromotedPartial =
+          aInsideFile ? aCursor.mFileDecoder.AbortCurrentFile() : false;
+      if (!aInsideFile) {
+        aCursor.mFileDecoder.ResetAfterParseError();
+      }
+      aCursor.mHasOpenFileContinuation = false;
+      aCursor.mContinuationArchiveSlot = 0u;
+      aCursor.mContinuationBlockIndex = 0u;
+      aCursor.mPendingRecoverResync = false;
+
+      if (aInsideFile) {
+        pContext.EmitLog(
+            LogLevelV2::kWarning,
+            DecodeStagePrefix(pContext.Request().mIntent,
+                              ProgressStageV2::kArchiveDecode) +
+                " Reached end of readable blocks while writing '" +
+                aPartialReference + "'. Keeping partial output and continuing.");
+        if (!aPromotedPartial) {
+          pContext.EmitLog(
+              LogLevelV2::kWarning,
+              DecodeStagePrefix(pContext.Request().mIntent,
+                                ProgressStageV2::kArchiveDecode) +
+                  " Partial output could not be promoted with its usual partial-file "
+                  "rename marker.");
+        }
+      } else {
+        pContext.EmitLog(
+            LogLevelV2::kWarning,
+            DecodeStagePrefix(pContext.Request().mIntent,
+                              ProgressStageV2::kArchiveDecode) +
+                " Reached end of readable blocks mid-record; discarding trailing "
+                "incomplete record and continuing.");
+      }
+
+      aFinalizeError.clear();
+      if (!aCursor.mFileDecoder.Finalize(aFinalizeError)) {
+        pContext.EmitLog(LogLevelV2::kError,
+                         "Archive decode failed: " + aFinalizeError);
+        pCursorPtr.reset();
+        return false;
+      }
+    } else {
+      if (aCursor.mFileDecoder.IsInsideFile()) {
+        (void)aCursor.mFileDecoder.AbortCurrentFile();
+      }
+      pContext.EmitLog(LogLevelV2::kError,
+                       "Archive decode failed: " + aFinalizeError);
+      pCursorPtr.reset();
+      return false;
     }
-    pContext.EmitLog(LogLevelV2::kError,
-                     "Archive decode failed: " + aFinalizeError);
-    pCursorPtr.reset();
-    return false;
   }
 
   SnapshotDecodeOutput(pContext, aCursor);
@@ -908,6 +1166,7 @@ bool DecodeArchiveDecodeV2::Run(DecodeStageContextV2& pContext) {
     SectionHeaderV2 aSectionHeader;
     std::size_t aBlockPayloadStart = 0u;
     std::size_t aBlockPayloadEnd = 0u;
+    std::uint64_t aLogicalBlockIndex = aCursor.mBlockIndex;
     const bool aResumingPausedBlock = aCursor.mHasPausedBlockBoundary;
     if (!aResumingPausedBlock) {
       if (pContext.WantsRuntimeEvent(RuntimeEventKindV2::kDecodeBlockStarted)) {
@@ -925,7 +1184,6 @@ bool DecodeArchiveDecodeV2::Run(DecodeStageContextV2& pContext) {
           const std::string aPartialReference =
               aCursor.mFileDecoder.CurrentFileReference();
           const bool aPromotedPartial = aCursor.mFileDecoder.AbortCurrentFile();
-          aCursor.mHasOpenFileContinuation = false;
           EmitDecodeErrorMarkerEvent(
               pContext,
               "file_data_error",
@@ -947,6 +1205,7 @@ bool DecodeArchiveDecodeV2::Run(DecodeStageContextV2& pContext) {
                 aPartialReference);
           }
         }
+        ResetArchiveDataRecordStateAfterDamagedBlock(aCursor);
         EmitDecodeErrorMarkerEvent(
             pContext,
             "block_missing",
@@ -962,7 +1221,10 @@ bool DecodeArchiveDecodeV2::Run(DecodeStageContextV2& pContext) {
           aCursorPtr.reset();
           return false;
         }
-        if (ContinueAfterDamagedBlock(pContext, aCursor, aArchive)) {
+        SwitchToPessimistic(pContext, "a block could not be read from disk.");
+        aCursor.mPendingRecoverResync = true;
+        if (ContinueAfterDamagedBlockWithSkipLandingFallback(
+                pContext, aCursor, aArchive)) {
           return true;
         }
         break;
@@ -997,7 +1259,6 @@ bool DecodeArchiveDecodeV2::Run(DecodeStageContextV2& pContext) {
             const std::string aPartialReference =
                 aCursor.mFileDecoder.CurrentFileReference();
             const bool aPromotedPartial = aCursor.mFileDecoder.AbortCurrentFile();
-            aCursor.mHasOpenFileContinuation = false;
             EmitDecodeErrorMarkerEvent(
                 pContext,
                 "file_data_error",
@@ -1019,6 +1280,7 @@ bool DecodeArchiveDecodeV2::Run(DecodeStageContextV2& pContext) {
                   aPartialReference);
             }
           }
+          ResetArchiveDataRecordStateAfterDamagedBlock(aCursor);
           EmitDecodeErrorMarkerEvent(
               pContext,
               "block_bad_checksum",
@@ -1039,7 +1301,8 @@ bool DecodeArchiveDecodeV2::Run(DecodeStageContextV2& pContext) {
             return false;
           }
           aCursor.mPendingRecoverResync = true;
-          if (ContinueAfterDamagedBlock(pContext, aCursor, aArchive)) {
+          if (ContinueAfterDamagedBlockWithSkipLandingFallback(
+                  pContext, aCursor, aArchive)) {
             return true;
           }
           break;
@@ -1058,7 +1321,6 @@ bool DecodeArchiveDecodeV2::Run(DecodeStageContextV2& pContext) {
             const std::string aPartialReference =
                 aCursor.mFileDecoder.CurrentFileReference();
             const bool aPromotedPartial = aCursor.mFileDecoder.AbortCurrentFile();
-            aCursor.mHasOpenFileContinuation = false;
             EmitDecodeErrorMarkerEvent(
                 pContext,
                 "file_data_error",
@@ -1080,6 +1342,7 @@ bool DecodeArchiveDecodeV2::Run(DecodeStageContextV2& pContext) {
                   aPartialReference);
             }
           }
+          ResetArchiveDataRecordStateAfterDamagedBlock(aCursor);
           EmitDecodeErrorMarkerEvent(
               pContext,
               "block_bad_checksum",
@@ -1096,12 +1359,134 @@ bool DecodeArchiveDecodeV2::Run(DecodeStageContextV2& pContext) {
             return false;
           }
           aCursor.mPendingRecoverResync = true;
-          if (ContinueAfterDamagedBlock(pContext, aCursor, aArchive)) {
+          if (ContinueAfterDamagedBlockWithSkipLandingFallback(
+                  pContext, aCursor, aArchive)) {
             return true;
           }
           break;
         }
       }
+
+      const std::uint64_t aExpectedLogicalBlockIndex =
+          ExpectedLogicalBlockIndexForPhysical(
+              aCursor, aCursor.mArchiveSlot, aCursor.mBlockIndex);
+      const bool aHeaderIndexMatches =
+          HeaderIndexMatchesCursor(
+              aArchive, aSectionHeader, aExpectedLogicalBlockIndex);
+      if (!aHeaderIndexMatches) {
+        const bool aArchiveIndexMatched =
+            aSectionHeader.mArchiveIndex ==
+            static_cast<std::uint32_t>(aArchive.mArchiveIndex);
+        const std::uint64_t aHeaderLogicalBlockIndex =
+            static_cast<std::uint64_t>(aSectionHeader.mBlockIndex);
+        const bool aCanInferLostBlocks =
+            DecodeIntentAllowsSalvageV2(pContext.Request().mIntent) &&
+            aArchiveIndexMatched &&
+            aHeaderLogicalBlockIndex > aExpectedLogicalBlockIndex;
+        if (aCanInferLostBlocks) {
+          const std::uint64_t aLostDelta =
+              aHeaderLogicalBlockIndex - aExpectedLogicalBlockIndex;
+          if (aCursor.mArchiveSlot < aCursor.mArchiveLostBlocksBySlot.size()) {
+            aCursor.mArchiveLostBlocksBySlot[aCursor.mArchiveSlot] += aLostDelta;
+          }
+
+          if (aCursor.mFileDecoder.IsInsideFile()) {
+            const std::string aPartialReference =
+                aCursor.mFileDecoder.CurrentFileReference();
+            const bool aPromotedPartial = aCursor.mFileDecoder.AbortCurrentFile();
+            EmitDecodeErrorMarkerEvent(
+                pContext,
+                "file_data_error",
+                "Decode file encountered inferred missing block(s) before current header index.",
+                aArchive,
+                aCursor.mArchiveSlot,
+                aCursor.mBlockIndex,
+                SectionTypeLabel(SectionTypeV2::kArchiveData),
+                aPartialReference);
+            if (aPromotedPartial) {
+              EmitDecodeErrorMarkerEvent(
+                  pContext,
+                  "file_closed_partial",
+                  "Decode closed file as partial after inferred missing block(s).",
+                  aArchive,
+                  aCursor.mArchiveSlot,
+                  aCursor.mBlockIndex,
+                  SectionTypeLabel(SectionTypeV2::kArchiveData),
+                  aPartialReference);
+            }
+          }
+          ResetArchiveDataRecordStateAfterDamagedBlock(aCursor);
+
+          SwitchToPessimistic(
+              pContext,
+              "section header index jumped forward; inferred deleted block(s).");
+          pContext.EmitLog(
+              LogLevelV2::kWarning,
+              DecodeStagePrefix(pContext.Request().mIntent,
+                                ProgressStageV2::kArchiveDecode) +
+                  " Inferred " + std::to_string(aLostDelta) +
+                  " deleted block(s) in archive slot " +
+                  std::to_string(aCursor.mArchiveSlot) +
+                  " from section header index jump (expected logical " +
+                  std::to_string(aExpectedLogicalBlockIndex) + ", observed " +
+                  std::to_string(aHeaderLogicalBlockIndex) + ").");
+          aCursor.mPendingRecoverResync = true;
+        } else {
+          if (aCursor.mFileDecoder.IsInsideFile()) {
+            const std::string aPartialReference =
+                aCursor.mFileDecoder.CurrentFileReference();
+            const bool aPromotedPartial = aCursor.mFileDecoder.AbortCurrentFile();
+            EmitDecodeErrorMarkerEvent(
+                pContext,
+                "file_data_error",
+                "Decode file encountered data error due to section-index mismatch.",
+                aArchive,
+                aCursor.mArchiveSlot,
+                aCursor.mBlockIndex,
+                SectionTypeLabel(SectionTypeV2::kArchiveData),
+                aPartialReference);
+            if (aPromotedPartial) {
+              EmitDecodeErrorMarkerEvent(
+                  pContext,
+                  "file_closed_partial",
+                  "Decode closed file as partial after section-index mismatch.",
+                  aArchive,
+                  aCursor.mArchiveSlot,
+                  aCursor.mBlockIndex,
+                  SectionTypeLabel(SectionTypeV2::kArchiveData),
+                  aPartialReference);
+            }
+          }
+          ResetArchiveDataRecordStateAfterDamagedBlock(aCursor);
+          EmitDecodeErrorMarkerEvent(
+              pContext,
+              "block_index_mismatch",
+              "Decode section header index mismatch at archive slot " +
+                  std::to_string(aCursor.mArchiveSlot) + ", block " +
+                  std::to_string(aCursor.mBlockIndex) + ".",
+              aArchive,
+              aCursor.mArchiveSlot,
+              aCursor.mBlockIndex,
+              nullptr,
+              std::string());
+          if (!HandleDamagedBlock(
+                  pContext,
+                  "a section header index disagreed with archive/block position.")) {
+            aCursorPtr.reset();
+            return false;
+          }
+          SwitchToPessimistic(
+              pContext,
+              "section header index mismatched expected archive/block position.");
+          aCursor.mPendingRecoverResync = true;
+          if (ContinueAfterDamagedBlockWithSkipLandingFallback(
+                  pContext, aCursor, aArchive)) {
+            return true;
+          }
+          break;
+        }
+      }
+      aLogicalBlockIndex = static_cast<std::uint64_t>(aSectionHeader.mBlockIndex);
 
       const std::string aFileReferenceBeforeDecode =
           static_cast<SectionTypeV2>(aSectionHeader.mSectionType) ==
@@ -1131,7 +1516,8 @@ bool DecodeArchiveDecodeV2::Run(DecodeStageContextV2& pContext) {
             aCursorPtr.reset();
             return false;
           }
-          if (ContinueAfterDamagedBlock(pContext, aCursor, aArchive)) {
+          if (ContinueAfterDamagedBlockWithSkipLandingFallback(
+                  pContext, aCursor, aArchive)) {
             return true;
           }
           break;
@@ -1142,6 +1528,7 @@ bool DecodeArchiveDecodeV2::Run(DecodeStageContextV2& pContext) {
       aSectionHeader = aCursor.mPausedSectionHeader;
       aBlockPayloadStart = aCursor.mPausedBlockPayloadOffset;
       aBlockPayloadEnd = aCursor.mPausedBlockPayloadEnd;
+      aLogicalBlockIndex = static_cast<std::uint64_t>(aSectionHeader.mBlockIndex);
       aCursor.mHasPausedBlockBoundary = false;
       aCursor.mPausedSectionHeader = SectionHeaderV2{};
       aCursor.mPausedBlockPayloadOffset = 0u;
@@ -1157,6 +1544,7 @@ bool DecodeArchiveDecodeV2::Run(DecodeStageContextV2& pContext) {
                                                           aSectionHeader,
                                                           aCursor.mArchiveSlot,
                                                           aCursor.mBlockIndex,
+                                                          aLogicalBlockIndex,
                                                           aBlockPayloadStart,
                                                           aBlockPayloadEnd);
       aCursor.mPendingRecoverResync = false;
@@ -1194,7 +1582,7 @@ bool DecodeArchiveDecodeV2::Run(DecodeStageContextV2& pContext) {
                                       aCursor.mContinuationArchiveSlot,
                                       aCursor.mContinuationBlockIndex,
                                       aCursor.mArchiveSlot,
-                                      aCursor.mBlockIndex);
+                                      aLogicalBlockIndex);
       if (!aExpectedContinuation) {
         if (aPhysicalRepairZone && !aCursor.mFileDecoder.IsInsideFile()) {
           aCursor.mHasOpenFileContinuation = false;
@@ -1229,7 +1617,8 @@ bool DecodeArchiveDecodeV2::Run(DecodeStageContextV2& pContext) {
           aCursorPtr.reset();
           return false;
         }
-        if (ContinueAfterDamagedBlock(pContext, aCursor, aArchive)) {
+        if (ContinueAfterDamagedBlockWithSkipLandingFallback(
+                pContext, aCursor, aArchive)) {
           return true;
         }
         break;
@@ -1325,7 +1714,8 @@ bool DecodeArchiveDecodeV2::Run(DecodeStageContextV2& pContext) {
               aCursor.mBlockIndex,
               SectionTypeLabel(SectionTypeV2::kPreviewManifest),
               aCursor.mPreviewDecoder.CurrentFileReference());
-          if (ContinueAfterDamagedBlock(pContext, aCursor, aArchive)) {
+          if (ContinueAfterDamagedBlockWithSkipLandingFallback(
+                  pContext, aCursor, aArchive)) {
             return true;
           }
           aParseError = false;
@@ -1405,6 +1795,7 @@ bool DecodeArchiveDecodeV2::Run(DecodeStageContextV2& pContext) {
                                         aSectionHeader,
                                         aCursor.mArchiveSlot,
                                         aCursor.mBlockIndex,
+                                        aLogicalBlockIndex,
                                         aBlockPayloadStart,
                                         aBlockPayloadEnd)) {
             aCursor.mPendingRecoverResync = false;
@@ -1413,7 +1804,8 @@ bool DecodeArchiveDecodeV2::Run(DecodeStageContextV2& pContext) {
             return true;
           }
           aCursor.mPendingRecoverResync = true;
-          if (ContinueAfterDamagedBlock(pContext, aCursor, aArchive)) {
+          if (ContinueAfterDamagedBlockWithSkipLandingFallback(
+                  pContext, aCursor, aArchive)) {
             return true;
           }
           aParseError = false;
@@ -1514,9 +1906,19 @@ bool DecodeArchiveDecodeV2::Run(DecodeStageContextV2& pContext) {
     if (aCursor.mFileDecoder.IsInsideFile()) {
       aCursor.mHasOpenFileContinuation = true;
       aCursor.mContinuationArchiveSlot = aCursor.mArchiveSlot;
-      aCursor.mContinuationBlockIndex = aCursor.mBlockIndex;
+      aCursor.mContinuationBlockIndex = aLogicalBlockIndex;
     } else {
       aCursor.mHasOpenFileContinuation = false;
+    }
+
+    if (aCursor.mHasPendingSkipLandingValidation &&
+        aCursor.mArchiveSlot == aCursor.mPendingSkipTargetArchiveSlot &&
+        aCursor.mBlockIndex == aCursor.mPendingSkipTargetBlockIndex) {
+      aCursor.mHasPendingSkipLandingValidation = false;
+      aCursor.mPendingSkipSourceArchiveSlot = 0u;
+      aCursor.mPendingSkipSourceBlockIndex = 0u;
+      aCursor.mPendingSkipTargetArchiveSlot = 0u;
+      aCursor.mPendingSkipTargetBlockIndex = 0u;
     }
 
     ++aCursor.mBlockIndex;

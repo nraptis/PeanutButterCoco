@@ -29,7 +29,7 @@ public:
     static bool                         PerformMock(JobBundle &pJob, vector<FakeArchive> *pResult, ByteString *pError);
     
     static bool                         GetBlockSpans(JobBundle &pJob, vector<FakeFileBlockSpan> *pBlockSpans, vector<FakeArchive> *pArchiveList, ByteString *pError);
-    
+    static bool                         GetBlockSpansExt(JobBundle &pJob, vector<FakeFileBlockSpan> *pBlockSpans, vector<FakeArchive> *pArchiveList, ByteString *pError);
     
 };
 

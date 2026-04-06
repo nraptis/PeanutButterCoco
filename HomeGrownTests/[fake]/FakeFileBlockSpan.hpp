@@ -22,6 +22,11 @@ public:
     
     vector<int>                 mArchiveIdentifiers;
     vector<int>                 mBlockIdentifiers;
+    // Per-entry payload byte range for this file inside the matching block: [start, end).
+    vector<int>                 mStartIndex;
+    vector<int>                 mEndIndex;
+    
+    static int                  PartialRecoverMinimumLength(int pNameLength);
     
 };
 

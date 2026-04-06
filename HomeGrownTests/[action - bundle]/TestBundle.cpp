@@ -504,7 +504,7 @@ bool TestBundle::PerformMock(JobBundle &pJob, vector<FakeArchive> *pResult, Byte
     int aBlockUUID =    1000;
     
     for (int aArchiveIndex=0;aArchiveIndex<aArchiveCount;aArchiveIndex++) {
-        
+    
         int aBlockCount = (aTotalBlockCount - aGLobalBlockIndex);
         if (aBlockCount > pJob.mBlocksPerArchive) {
             aBlockCount = pJob.mBlocksPerArchive;
@@ -580,10 +580,25 @@ bool TestBundle::PerformMock(JobBundle &pJob, vector<FakeArchive> *pResult, Byte
         aGLobalBlockIndex += pJob.mBlocksPerArchive;
     }
     
+    int aZeroCount = Layout::GetZeroCount(aArchiveCount);
+    
+    MockHardDrive aHardDrive;
+    for (int aArchiveIndex=0;aArchiveIndex<aArchiveCount;aArchiveIndex++) {
+        ByteString aZeroString = Layout::GetZeroPadded(aArchiveIndex, aZeroCount);
+        ByteString aNameString = pJob.mFilePrefix + aZeroString;
+        ByteString aExtensionString = ByteString(string(kArchiveFileSuffixV2));
+        ByteString aFileStem = aNameString + aExtensionString;
+        (*pResult)[aArchiveIndex].mFilePath = ByteString(aHardDrive.JoinPath(pJob.mArchived.ToString(), aFileStem.ToString()));
+    }
+    
     return true;
 }
 
 bool TestBundle::GetBlockSpans(JobBundle &pJob, vector<FakeFileBlockSpan> *pBlockSpans, vector<FakeArchive> *pArchiveList, ByteString *pError) {
+    return GetBlockSpansExt(pJob, pBlockSpans, pArchiveList, pError);
+}
+
+bool TestBundle::GetBlockSpansExt(JobBundle &pJob, vector<FakeFileBlockSpan> *pBlockSpans, vector<FakeArchive> *pArchiveList, ByteString *pError) {
 
     if (pBlockSpans == NULL) {
         if (pError != NULL) {
@@ -761,10 +776,26 @@ bool TestBundle::GetBlockSpans(JobBundle &pJob, vector<FakeFileBlockSpan> *pBloc
                 aAppend = false;
             }
         }
+        
+        const int aStartIndex = aPayloadOffset;
+        const int aEndIndex = (aPayloadOffset + aAmount);
+        
         if (aAppend) {
             aSpan.mArchiveIdentifiers.push_back(aChosenArchive.mArchiveUUID);
             aSpan.mBlockIdentifiers.push_back(aChosenBlock.mBlockUUID);
+            aSpan.mStartIndex.push_back(aStartIndex);
+            aSpan.mEndIndex.push_back(aEndIndex);
+        } else {
+            const int aLastSpanIndex = (int)aSpan.mEndIndex.size() - 1;
+            if (aLastSpanIndex < 0) {
+                if (pError != NULL) {
+                    pError->Set("GetBlockSpansExt span append state was invalid.");
+                }
+                return false;
+            }
+            aSpan.mEndIndex[aLastSpanIndex] = aEndIndex;
         }
+        
         aMap.Add(aChosenFile.mName, aSpan);
         
         aBlockOffset += aAmount;
@@ -815,7 +846,38 @@ bool TestBundle::GetBlockSpans(JobBundle &pJob, vector<FakeFileBlockSpan> *pBloc
             }
             return false;
         }
-        
+        if (aSpan.mStartIndex.size() == 0) {
+            if (pError != NULL) {
+                *pError = ByteString("GetBlockSpans final span had no start indexes.");
+            }
+            return false;
+        }
+        if (aSpan.mEndIndex.size() == 0) {
+            if (pError != NULL) {
+                *pError = ByteString("GetBlockSpans final span had no end indexes.");
+            }
+            return false;
+        }
+        if (aSpan.mStartIndex.size() != aSpan.mArchiveIdentifiers.size()) {
+            if (pError != NULL) {
+                *pError = ByteString("GetBlockSpans final span had inequal starts and archives.");
+            }
+            return false;
+        }
+        if (aSpan.mEndIndex.size() != aSpan.mArchiveIdentifiers.size()) {
+            if (pError != NULL) {
+                *pError = ByteString("GetBlockSpans final span had inequal ends and archives.");
+            }
+            return false;
+        }
+        for (int aSpanIndex=0; aSpanIndex<(int)aSpan.mStartIndex.size(); aSpanIndex++) {
+            if (aSpan.mStartIndex[aSpanIndex] >= aSpan.mEndIndex[aSpanIndex]) {
+                if (pError != NULL) {
+                    *pError = ByteString("GetBlockSpans final span had non-positive range.");
+                }
+                return false;
+            }
+        }
         pBlockSpans->push_back(aSpan);
     }
     

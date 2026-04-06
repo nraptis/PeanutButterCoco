@@ -410,6 +410,83 @@ bool BuildPreviewManifestBlock(BundleStageContextV2& pContext,
   return true;
 }
 
+bool RetargetRebuiltRepairBlock(BundleStageContextV2& pContext,
+                                const PlannedArchiveFileV2& pDestinationArchive,
+                                std::uint32_t pDestinationLocalBlockIndex,
+                                const PlannedArchiveFileV2& pSourceArchive,
+                                std::uint32_t pSourceLocalBlockIndex,
+                                bool pSourceWasPreviewBlock,
+                                FixedBlockBufferV2& pInOutBlockBytes,
+                                std::string& pOutFailureMessage) {
+  pOutFailureMessage.clear();
+  if (pInOutBlockBytes.Empty()) {
+    pOutFailureMessage = "rebuild buffer was empty while retargeting repair block.";
+    return false;
+  }
+
+  SectionHeaderV2 aHeader{};
+  if (!ReadSectionHeader(
+          pInOutBlockBytes.Data(), kSectionHeaderBytesV2, aHeader, nullptr)) {
+    pOutFailureMessage = "failed reading rebuilt repair block header.";
+    return false;
+  }
+
+  const std::uint32_t aPayloadBytesUsed = aHeader.mPayloadBytesUsed;
+  aHeader.mSkipRecord = MakeInvalidSkipRecord(pContext);
+  aHeader.mSectionType =
+      static_cast<std::uint8_t>(SectionTypeV2::kRepairData);
+  PopulateSectionBootstrapFields(pContext,
+                                 pDestinationArchive,
+                                 pDestinationLocalBlockIndex,
+                                 aPayloadBytesUsed,
+                                 aHeader);
+  if (!TrySetRepairRecordTarget(
+          pSourceArchive.mArchiveIndex,
+          pSourceLocalBlockIndex,
+          aHeader,
+          pOutFailureMessage)) {
+    return false;
+  }
+
+  const std::size_t aSectionPayloadBytes = pContext.Layout().SectionPayloadBytes();
+  unsigned char* aPayload = pInOutBlockBytes.Data() + kSectionHeaderBytesV2;
+  aHeader.mCheckSum =
+      ComputeSectionCheckSum(aPayload, aSectionPayloadBytes, aHeader);
+
+  if (!WriteSectionHeader(
+          aHeader, pInOutBlockBytes.Data(), kSectionHeaderBytesV2, nullptr)) {
+    pOutFailureMessage = "failed writing retargeted repair block header.";
+    return false;
+  }
+
+  if (pContext.Request().mEncryptionEnabled && !pSourceWasPreviewBlock) {
+    if (!pContext.State().mCipher.mAssembled) {
+      pOutFailureMessage = "repair retarget expected an assembled cipher.";
+      return false;
+    }
+    if (pContext.State().mCipher.mWorkerBuffer.Size() <
+        pContext.Layout().mArchiveBlockBytes) {
+      pOutFailureMessage =
+          "cipher worker buffer is too small while retargeting repair block.";
+      return false;
+    }
+
+    std::string aSealError;
+    if (!pContext.State().mCipher.mCipher.Seal(
+            pInOutBlockBytes.Data(),
+            pContext.State().mCipher.mWorkerBuffer.Data(),
+            pInOutBlockBytes.Data(),
+            pContext.Layout().mArchiveBlockBytes,
+            &aSealError)) {
+      pOutFailureMessage =
+          "failed sealing retargeted repair block: " + aSealError;
+      return false;
+    }
+  }
+
+  return true;
+}
+
 std::string BuildRepairPackingProgressLabel(std::uint64_t pPacked,
                                             std::uint64_t pTotal) {
   return "Packing repair copies: " + std::to_string(pPacked) + "/" +
@@ -521,11 +598,13 @@ class BundleRepairSourceRebuildCursorV2 {
                  const BundleMemoryPlanV2& pMemoryPlan,
                  std::size_t& pOutArchiveIndex,
                  std::uint32_t& pOutLocalBlockIndex,
+                 bool& pOutIsPreviewBlock,
                  bool& pOutHasBlock,
                  std::string& pOutFailureMessage) {
     pOutFailureMessage.clear();
     pOutArchiveIndex = 0u;
     pOutLocalBlockIndex = 0u;
+    pOutIsPreviewBlock = false;
     pOutHasBlock = false;
 
     while (mArchiveIndex < pMemoryPlan.mArchives.size()) {
@@ -540,6 +619,7 @@ class BundleRepairSourceRebuildCursorV2 {
 
       const bool aIsPreviewBlock =
           mGlobalBlockIndex < pMemoryPlan.mBlockCountPreview;
+      pOutIsPreviewBlock = aIsPreviewBlock;
       if (aIsPreviewBlock) {
         if (!BuildPreviewManifestBlock(pContext,
                                        aArchive,
@@ -557,7 +637,7 @@ class BundleRepairSourceRebuildCursorV2 {
                                mGlobalBlockIndex,
                                mLocalBlockIndex,
                                aEncoder,
-                               pContext.Request().mEncryptionEnabled,
+                               false,
                                mBlockBytes,
                                pOutFailureMessage)) {
           return false;
@@ -728,15 +808,18 @@ bool BundleRepairPackingV2::Run(BundleStageContextV2& pContext) {
 
     std::size_t aSourceArchiveIndex = 0u;
     std::uint32_t aSourceLocalBlockIndex = 0u;
+    bool aSourceWasPreviewBlock = false;
     std::size_t aCopyIndex = kInvalidCopyIndex;
     bool aFoundCopySource = false;
     while (!aFoundCopySource) {
       std::string aBuildError;
+      bool aCurrentSourceWasPreviewBlock = false;
       bool aHasSourceBlock = false;
       if (!aCursor.mSourceRebuild.NextBlock(pContext,
                                             aMemoryPlan,
                                             aSourceArchiveIndex,
                                             aSourceLocalBlockIndex,
+                                            aCurrentSourceWasPreviewBlock,
                                             aHasSourceBlock,
                                             aBuildError)) {
         pContext.EmitLog(
@@ -762,6 +845,7 @@ bool BundleRepairPackingV2::Run(BundleStageContextV2& pContext) {
       if (aCopyIndex == kInvalidCopyIndex) {
         continue;
       }
+      aSourceWasPreviewBlock = aCurrentSourceWasPreviewBlock;
       aFoundCopySource = true;
     }
 
@@ -794,6 +878,24 @@ bool BundleRepairPackingV2::Run(BundleStageContextV2& pContext) {
         aMemoryPlan.mArchives[aDestination.mArchiveIndex];
     const PlannedArchiveFileV2& aSourceArchive =
         aMemoryPlan.mArchives[aSourceArchiveIndex];
+
+    std::string aRetargetError;
+    if (!RetargetRebuiltRepairBlock(pContext,
+                                    aDestinationArchive,
+                                    aDestination.mLocalBlockIndex,
+                                    aSourceArchive,
+                                    aSourceLocalBlockIndex,
+                                    aSourceWasPreviewBlock,
+                                    aCursor.mSourceRebuild.mBlockBytes,
+                                    aRetargetError)) {
+      pContext.EmitLog(
+          LogLevelV2::kError,
+          LogPhaseFailedV2(LogActionV2::kBundle,
+                           ProgressStageV2::kRepairPacking,
+                           aRetargetError));
+      aCursorPtr.reset();
+      return false;
+    }
 
     if (pContext.WantsRuntimeEvent(RuntimeEventKindV2::kBundleRepairBlockStarted)) {
       EmitBundleRepairBlockEvent(pContext,

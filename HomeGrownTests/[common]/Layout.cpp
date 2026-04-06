@@ -51,3 +51,32 @@ int Layout::ToInt(const PackedUint48V2& pValue) {
     }
     return static_cast<int>(value);
 }
+
+int Layout::GetZeroCount(int pMaximum) {
+    if (pMaximum == 0) {
+        return 1;
+    }
+    
+    int aValue = pMaximum;
+    int aResult = 0;
+    while (aValue > 0) {
+        aValue /= 10;
+        aResult++;
+    }
+    return aResult;
+}
+
+ByteString Layout::GetZeroPadded(int pNumber, int pZeroCount) {
+    ByteString aNumberString = ByteString(pNumber);
+    if (aNumberString.mLength < pZeroCount) {
+        ByteString aResult;
+        aResult.Append(string(pZeroCount - aNumberString.mLength, '0'));
+        aResult.Append(aNumberString);
+        
+        
+        //= ByteString(string(pZeroCount - aNumberString.mLength, '0'));
+        return aResult;
+    } else {
+        return aNumberString;
+    }
+}

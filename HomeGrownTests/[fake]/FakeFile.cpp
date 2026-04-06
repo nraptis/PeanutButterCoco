@@ -10,10 +10,11 @@
 #include "namespaces.hpp"
 #include "FormatUtilities.hpp"
 
-FakeFile::
-
 FakeFile::FakeFile() {
     mIsFolder = false;
+    
+    mIsRecoverDeleted = false;
+    mIsRecoverPartial = false;
 }
 
 FakeFile::~FakeFile() {
@@ -261,3 +262,16 @@ bool FakeFile::ToPreviewPayload(ByteString *pPayload, ByteString *pError) {
     
     return true;
 }
+
+void FakeFile::RecoverTruncate(int pSize) {
+    if (pSize < mContent.mLength) {
+        mIsRecoverPartial = true;
+        mContent.Truncate(pSize);
+    }
+}
+
+void FakeFile::RecoverDelete() {
+    mIsRecoverDeleted = true;
+}
+
+

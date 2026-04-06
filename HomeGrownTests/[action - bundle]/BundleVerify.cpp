@@ -343,6 +343,18 @@ bool BundleVerify::Execute(JobBundle &pJob, vector<WrappedArchive> pReal, vector
         }
         
         
+        if (aReal->mFilePath != aMock->mFilePath) {
+            if (pError != NULL) {
+                ByteString aError = ByteString("At archive ") + ByteString(aRealIndex) +
+                ByteString(", real archive file name (") + aReal->mFilePath +
+                ByteString(") was not equal to mock archive file name (") + aMock->mFilePath
+                + ByteString(")");
+                pError->Set(aError);
+            }
+            return false;
+        }
+        
+        
         ++aRealIndex;
         ++aMockIndex;
     }

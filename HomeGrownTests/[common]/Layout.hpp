@@ -9,6 +9,7 @@
 #define Layout_hpp
 
 #include "Primatives.hpp"
+#include "ByteString.hpp"
 
 using namespace std;
 using namespace peanutbutter::memory_layout;
@@ -25,6 +26,9 @@ public:
     
     static int              ToInt(const PackedUint24V2& pValue);
     static int              ToInt(const PackedUint48V2& pValue);
+    
+    static int              GetZeroCount(int pMaximum);
+    static ByteString       GetZeroPadded(int pNumber, int pZeroCount);
     
 
 };

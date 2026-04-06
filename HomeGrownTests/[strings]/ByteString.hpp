@@ -37,6 +37,8 @@ public:
     void                                Append(const unsigned char* pString, int pLength);
     void                                Append(const string &pString);
     void                                Append(const ByteString &pString);
+    
+    void                                Truncate(int pSize);
         
     inline void                         ParseInt(int pNumber);
     inline void                         ParseFloat(float pFloat, int pDecimalCount);

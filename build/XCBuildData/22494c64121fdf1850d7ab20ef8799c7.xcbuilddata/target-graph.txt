@@ -1,4 +1,0 @@
-Target dependency graph (2 targets)
-Target 'HomeGrownTests' in project 'PeanutButterArchiver'
-➜ Explicit dependency on target 'PeanutButterArchiver' in project 'PeanutButterArchiver'
-Target 'PeanutButterArchiver' in project 'PeanutButterArchiver' (no dependencies)
