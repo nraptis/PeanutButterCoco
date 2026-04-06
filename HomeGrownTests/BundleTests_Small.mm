@@ -21,10 +21,6 @@
 
 @implementation BundleTests_Small
 
-- (int) TEST_C {
-    return 512;
-}
-
 - (void) logRegression: (JobBundle &)pJob {
     
     NSLog(@"\n🔥 TEST FAILURE REPRO CODE 🔥\n");
@@ -75,7 +71,7 @@
     NSLog(@"\n🔥 END REPRO CODE 🔥\n");
 }
 
-- (BOOL) run: (JobBundle &)pJob {
+- (BOOL)run: (JobBundle &)pJob {
     
     MockHardDrive aHardDrive;
     MockFileSystem aFileSystem(&aHardDrive);
@@ -117,22 +113,43 @@
 
 - (void)test_100_full_spectrum {
     
-    for (int aPayloadBytesPerBlock=4;aPayloadBytesPerBlock<=16;aPayloadBytesPerBlock++) {
+    for (int aPayloadBytesPerBlock=4;aPayloadBytesPerBlock<=24;aPayloadBytesPerBlock+=4) {
         printf("aPayloadBytesPerBlock = %d\n", aPayloadBytesPerBlock);
         
-        for (int aBlocksPerArchive=1;aBlocksPerArchive<=8;aBlocksPerArchive++) {
+        for (int aBlocksPerArchive=4;aBlocksPerArchive<=8;aBlocksPerArchive+=4) {
             printf("\taBlocksPerArchive = %d\n", aBlocksPerArchive);
             
             for (int aRepair=0;aRepair<=80;aRepair+=20) {
+            //for (int aRepair=0;aRepair<=60;aRepair+=40) {
                 
                 for (int aPreview=0;aPreview<2;aPreview++) {
-                    for (int aTestIndex=0;aTestIndex<[self TEST_C];aTestIndex++) {
+                    for (int aTestIndex=0;aTestIndex<4;aTestIndex++) {
                         
-                        int aFileCount = Random::Get(1, 12);
-                        int aFolderCount = Random::Get(0, 4);
+                        int aFileCount = Random::Get(0, 12);
+                        int aFolderCount = Random::Get(0, 12);
+                        
+                        if ((aFileCount == 0) && (aFolderCount == 0)) {
+                            if (Random::Get(2) == 0) {
+                                aFileCount = 1;
+                            } else {
+                                aFolderCount = 1;
+                            }
+                        }
                         
                         //vector<FakeFile> aFiles = Words::GetRandomFiles(aFileCount, 1, 4, 0, 8);
-                        vector<FakeFile> aFiles = Words::GetRandomFilesAndFolders(aFileCount, 1, 12, 0, 16, aFolderCount, 1, 12);
+                        
+                        int aFileNameLo = Random::Get(1, 4);
+                        int aFileNameHi = aFileNameLo + Random::Get(0, 12);
+                        
+                        int aFileContentLo = Random::Get(0, 8);
+                        int aFileContentHi = aFileContentLo + Random::Get(0, 12);
+                        
+                        int aFolderNameLo = Random::Get(1, 4);
+                        int aFolderNameHi = aFolderNameLo + Random::Get(0, 12);
+                        
+                        vector<FakeFile> aFiles = Words::GetRandomFilesAndFolders(aFileCount, aFileNameLo, aFileNameHi,
+                                                                                  aFileContentLo, aFileContentHi,
+                                                                                  aFolderCount, aFolderNameLo, aFolderNameHi);
                         
                         JobBundle aJob;
                         for (auto aFile: aFiles) {
