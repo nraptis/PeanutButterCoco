@@ -449,6 +449,22 @@ bool DecodeLogicalRecordDecoderV2::Consume(const unsigned char* pData,
         }
         EmitRecordStartEvent();
         mContentBytesRemaining = mCurrentFileSize;
+        if (mContentBytesRemaining == 0u) {
+          bool aShouldContinue = true;
+          std::string aFinishedReference;
+          if (!FinishFileRecord(
+                  aShouldContinue, aFinishedReference, pOutParseErrorMessage)) {
+            pOutParseError = true;
+            return false;
+          }
+          if (!aShouldContinue) {
+            pOutPausedAtBoundary = true;
+            pOutResumeOffset = aOffset;
+            pOutPausedRecordReference = aFinishedReference;
+            return true;
+          }
+          break;
+        }
         mStage = Stage::kContentBytes;
         break;
       }

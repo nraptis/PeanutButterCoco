@@ -55,15 +55,12 @@ bool FakeSkipRecord::SetValid(int pPayloadDistance,
     // Store raw
     mPayloadDistance = pPayloadDistance;
     
-    int aStart = 0;
-    int aEnd = pPayloadDistance;
-    
     // Decompose
     int aBytesPerArchive = pBlocksPerArchive * pPayloadBytesPerBlock;
     
-    mArchiveIndex = aEnd / aBytesPerArchive;
+    mArchiveIndex = pPayloadDistance / aBytesPerArchive;
     
-    int aRemainder = aEnd % aBytesPerArchive;
+    int aRemainder = pPayloadDistance % aBytesPerArchive;
     
     mBlockIndex = aRemainder / pPayloadBytesPerBlock;
     mByteIndex  = aRemainder % pPayloadBytesPerBlock;

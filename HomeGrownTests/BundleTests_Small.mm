@@ -12,6 +12,7 @@
 #include "Random.hpp"
 #include "Words.hpp"
 #include "TestBundle.hpp"
+#include "TestBundleWithHooks.hpp"
 #include "JobBundle.hpp"
 #include "WrappedArchiveAssembler.hpp"
 #include "BundleVerify.hpp"
@@ -77,13 +78,35 @@
     MockFileSystem aFileSystem(&aHardDrive);
     ByteString aErrorString;
     
-    if (!TestBundle::PerformReal(pJob, aFileSystem, &aErrorString)) {
-        printf("Error: %.*s\n", aErrorString.mLength, (char*)aErrorString.mData);
-        [self logRegression: pJob];
-        return NO;
-    }
+    if (!TestBundleWithHooks::PerformReal(
+            pJob,
+            aFileSystem,
+            [](const TestBundleWithHooks::PhaseBatchFeedback &pFeedback,
+               peanutbutter::BundleStageContextV2 &pContext,
+               SimpleBundleRuntime &pRuntime) {
+                (void)pContext;
+                (void)pRuntime;
+                
+                /*
+                if (pFeedback.mBatch == 1u) {
+                    printf("[bundle-hooks] phase start: %s\n", pFeedback.mPhase);
+                }
+                
+                printf("[bundle-hooks] phase tick: %s batch=%zu\n",
+                       pFeedback.mPhase,
+                       pFeedback.mBatch);
+                
+                if (!pFeedback.mNeedsMoreHeartbeats) {
+                    printf("[bundle-hooks] phase end: %s\n", pFeedback.mPhase);
+                }
+                */
+            },
+                                          &aErrorString)) {
+                                              printf("Error: %.*s\n", aErrorString.mLength, (char*)aErrorString.mData);
+                                              return NO;
+                                          }
     
-    vector<WrappedArchive> aRealArchives = WrappedArchiveAssembler::Get(pJob.mDestination.ToString(),
+    vector<WrappedArchive> aRealArchives = WrappedArchiveAssembler::Get(pJob.mArchived.ToString(),
                                                                         aFileSystem,
                                                                         pJob.mBlocksPerArchive,
                                                                         pJob.mPayloadBytesPerBlock + Layout::SectionHeaderSize());
@@ -113,14 +136,14 @@
 
 - (void)test_100_full_spectrum {
     
-    for (int aPayloadBytesPerBlock=4;aPayloadBytesPerBlock<=24;aPayloadBytesPerBlock+=4) {
+    for (int aPayloadBytesPerBlock=1;aPayloadBytesPerBlock<=12;aPayloadBytesPerBlock+=1) {
         printf("aPayloadBytesPerBlock = %d\n", aPayloadBytesPerBlock);
         
-        for (int aBlocksPerArchive=4;aBlocksPerArchive<=8;aBlocksPerArchive+=4) {
+        for (int aBlocksPerArchive=4;aBlocksPerArchive<=8;aBlocksPerArchive+=1) {
             printf("\taBlocksPerArchive = %d\n", aBlocksPerArchive);
             
-            for (int aRepair=0;aRepair<=80;aRepair+=20) {
-            //for (int aRepair=0;aRepair<=60;aRepair+=40) {
+            //for (int aRepair=0;aRepair<=80;aRepair+=20) {
+            for (int aRepair=0;aRepair<=60;aRepair+=40) {
                 
                 for (int aPreview=0;aPreview<2;aPreview++) {
                     for (int aTestIndex=0;aTestIndex<4;aTestIndex++) {

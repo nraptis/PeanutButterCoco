@@ -115,7 +115,7 @@
         return;
     }
     
-    auto a = WrappedArchiveAssembler::Get(aJob.mDestination.ToString(),
+    auto a = WrappedArchiveAssembler::Get(aJob.mArchived.ToString(),
                                           aFileSystem,
                                           aJob.mBlocksPerArchive,
                                           aJob.mPayloadBytesPerBlock + Layout::SectionHeaderSize());
@@ -162,7 +162,7 @@
         return;
     }
     
-    auto a = WrappedArchiveAssembler::Get(aJob.mDestination.ToString(),
+    auto a = WrappedArchiveAssembler::Get(aJob.mArchived.ToString(),
                                           aFileSystem,
                                           aJob.mBlocksPerArchive,
                                           aJob.mPayloadBytesPerBlock + Layout::SectionHeaderSize());

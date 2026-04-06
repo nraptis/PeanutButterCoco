@@ -1,0 +1,174 @@
+New Test Plan (Dirrrrty)
+Date: 2026-04-06
+Scope: HomeGrownTests strategy map for cancel/partial/recover/repair hardening.
+
+Goals
+- Keep current workflow: broad random sweeps, then promote failures to small deterministic regressions.
+- Add focused coverage for cancel/temp-file behavior and collision handling.
+- Expand recover/repair damage matrices with clear expected outcomes.
+
+Current Harness Strengths We Should Reuse
+- Random matrix loops and auto-regression logging in:
+  - HomeGrownTests/BundleTests_Small.mm
+  - HomeGrownTests/UnbundleTests_Small.mm
+- Phase/batch hooks for cancel and instrumentation in:
+  - HomeGrownTests/[action - bundle]/TestBundleWithHooks.hpp
+  - HomeGrownTests/[action - unbundle]/TestUnbundleWithHooks.hpp
+- Disk fault tools in:
+  - HomeGrownTests/[mocks]/MockHardDrive.hpp
+  - MangleBlock, DeleteBlock, DeleteBlockGhost, MangleFile, SwapBlocks
+- End-to-end repair/recover examples in:
+  - HomeGrownTests/demo.mm
+
+Minimal Harness Additions (Recommended First)
+1. Add helper scanners:
+   - AssertNoTempFiles(path): fails if any file contains "$WRITING_" or "$PARTIAL_".
+   - CollectTempFiles(path): returns exact temp-file paths for targeted assertions.
+2. Add cancel plan metadata in random logs:
+   - phase, batch, mode (boundary vs mid-file), seed.
+3. Add mutation plan metadata in random logs:
+   - archive slot, block index, mutation type, seed.
+4. Add optional clear-destination toggle to unbundle helper:
+   - Needed for pre-existing collision tests.
+
+1) Cancel: verify no temp files after clean checkpoint stop
+Deterministic strategy
+- Create job with mixed files/folders (including tiny and zero-byte files).
+- Trigger cancel at checkpoint boundary using unbundle hook:
+  - phase = "flight"
+  - cancel only when boundary-safe condition is reached (after completed record boundary).
+- Assert:
+  - operation ends in canceled path (not crash).
+  - no "$WRITING_" and no "$PARTIAL_" under destination.
+  - completed files are valid (subset of source or full set depending cancel timing).
+
+Random strategy
+- Randomize: payload size, blocks/archive, file count, path lengths, preview on/off.
+- Randomize cancel point: batch number in archive-decode phase.
+- Invariant on every canceled run: no temp files left behind.
+
+2) Partial: cancel in middle of file
+Deterministic strategy
+- Force a long file to span many data blocks (small payload bytes + large file).
+- Cancel while file is open (mid-stream) via unbundle hook.
+- Assert:
+  - exactly one new partial file for the interrupted target.
+  - no "$WRITING_" remains.
+  - partial byte count > 0 and < original byte count.
+  - unrelated files are either complete or absent, never temp.
+
+Random strategy
+- Randomize target file position in sorted order and file sizes.
+- Randomize cancel batch within archive decode.
+- Invariant: any mid-file cancel yields partial file, never orphan writing file.
+
+3) Partial overwrite collision: pre-existing "$PARTIAL_a"
+Deterministic strategy
+- Pre-seed destination with:
+  - "a"
+  - "$PARTIAL_a"
+  - optional "$WRITING_a"
+- Disable clear-destination for this test only.
+- Trigger mid-file interruption for logical file "a".
+- Assert:
+  - existing "$PARTIAL_a" remains untouched.
+  - new partial lands on conflict-safe name (for example "$PARTIAL_a_1", or next ordinal).
+  - no overwrite of existing final/partial/writing colliders.
+
+Random strategy
+- Randomize number of pre-existing ordinals:
+  - "$PARTIAL_a", "$PARTIAL_a_1", "$PARTIAL_a_2", ...
+- Randomize collided filename stems and extensions.
+- Invariant: resolver always picks unused triplet name.
+
+4) Recovery tests (DecodeIntent = recover)
+Deterministic strategy
+- Start from known-good bundle.
+- Apply one mutation at a time (missing block, mangled payload, swapped blocks, missing archive file).
+- Run recover in both aggressive=false and aggressive=true modes.
+- Assert:
+  - recover either succeeds with salvage semantics or fails with explicit failure message.
+  - output never contains orphan "$WRITING_" files.
+  - when partial salvage occurs, partial files are clearly marked.
+
+Random strategy
+- Generate N random mutations per run across random archive slots.
+- Use weighted mutation probabilities to keep runs productive:
+  - common: single-block mangle/delete
+  - less common: whole-file mangle, multi-block swaps, multi-archive mixed faults
+- Invariant categories:
+  - success/full
+  - success/partial
+  - explicit failure
+  - never crash/hang.
+
+5) Repair tests (DecodeIntent = repair)
+Deterministic strategy
+- Bundle with repair coverage {20, 40, 60, 80}, preview on/off, encryption on/off.
+- Corrupt main-data blocks only.
+- Run repair with aggressive=false/true.
+- Assert:
+  - repaired output archive set is produced.
+  - repaired blocks and bytes counters are coherent in result state.
+  - repaired archives can be unbundled and match source where expected.
+
+Random strategy
+- Randomize repair coverage and corruption distribution.
+- Randomize whether corruption is clustered vs spread.
+- Invariant: repaired outputs are structurally valid and decodeable.
+
+6) Harsh recoveries (mangled blocks, missing blocks/files)
+Deterministic strategy
+- Multi-fault scenarios:
+  - missing archive + mangled block in another archive
+  - block swap plus checksum damage
+  - header-valid but payload-bad combinations
+- Assert:
+  - no infinite loop, no crash.
+  - clear classification of output state (full, partial, fail).
+  - temp-file hygiene still holds.
+
+Random strategy
+- K-fault campaigns (K=2..6 faults per run) with controlled seed.
+- Bias toward cross-archive combinations to stress continuation/skip logic.
+
+7) Hard repairs (repair-block corruption and pointer weirdness)
+Baseline
+- This area already has coverage according to your note.
+
+Strategy to extend, not duplicate
+- Add targeted tests for:
+  - repair block checksum bad
+  - repair block section type mismatch
+  - repair pointer archive index out of range
+  - repair pointer block index out of range
+  - family-id mismatch in repair block
+- Assert:
+  - invalid repair blocks are skipped safely.
+  - valid repair blocks still apply when mixed with invalid ones.
+  - aggressive/non-aggressive behavior differences are preserved.
+
+Random -> Regression Promotion Workflow
+1. Run random campaign with fixed seed list + one time-based seed.
+2. On first failure, emit reproducible snippet (already done by logRegression in small tests).
+3. Also log:
+   - seed
+   - cancel plan (phase, batch, mode)
+   - mutation plan (type, archive, block)
+   - intent (unbundle/recover/repair), aggressive flag, coverage, preview
+4. Triage failure into bucket:
+   - engine bug
+   - harness bug
+   - expectation mismatch
+5. Promote engine-bug failures into deterministic tests:
+   - UnbundleTests_Regression.mm
+   - BundleTests_Regression.mm
+   - add future Repair/Recover regression files if volume grows.
+6. Keep a lightweight corpus file of known seeds/signatures for reruns.
+
+Suggested Implementation Order
+1. Cancel clean checkpoint + temp-file hygiene assertions.
+2. Mid-file partial cancel assertions.
+3. Collision-safe partial naming tests (requires clear-destination toggle).
+4. Recover harsh-fault matrix.
+5. Repair hard-fault matrix extension.

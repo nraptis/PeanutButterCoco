@@ -12,6 +12,8 @@
 #include <set>
 #include <string>
 #include <vector>
+#include "ByteString.hpp"
+#include "JobBundle.hpp"
 
 using namespace std;
 
@@ -68,4 +70,34 @@ public:
     
     std::map<std::string, std::vector<unsigned char>> mFiles;
     std::set<std::string> mDirectories;
+    
+    
+    bool MangleBlock(const std::string& pPath,
+                     int pBlockIndex,
+                     const JobBundle &pJob,
+                     ByteString *pError); // Make all bytes in this block FF.
+    bool DeleteBlock(const std::string& pPath,
+                     int pBlockIndex,
+                     const JobBundle &pJob,
+                     ByteString *pError); // Remove all bytes from this block; file becomes smaller.
+    
+    bool DeleteBlockGhost(const std::string& pPath,
+                     int pBlockIndex,
+                     const JobBundle &pJob,
+                     ByteString *pError); // Remove this block, then append a duplicate of the original end block.
+    
+    bool MangleFile(const std::string& pPath,
+                    ByteString *pError); // Make all file bytes FF.
+    
+    bool SwapBlocks(const std::string& pPath,
+                    int pBlockIndexA,
+                    int pBlockIndexB,
+                    const JobBundle &pJob,
+                    ByteString *pError); // Swap two full blocks in-place.
+    
+    
+    
+    
+    
+    
 };

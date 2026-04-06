@@ -75,4 +75,27 @@ public:
     std::unordered_map<ByteString, FakeFileBlockSpan, ByteStringHash, ByteStringEqual>  mMap;
 };
 
+class FileMap {
+public:
+    
+    FileMap();
+    ~FileMap();
+    
+    void                                                                                Add(const ByteString &pKey, FakeFile &pFile);
+    void                                                                                Add(const string &pKey, FakeFile &pFile);
+    
+    bool                                                                                TryGet(const ByteString &pKey, FakeFile *pFile);
+    bool                                                                                TryGet(const string &pKey, FakeFile *pFile);
+    
+    bool                                                                                Get(const ByteString &pKey, FakeFile *pFile, ByteString *pError);
+    bool                                                                                Get(const string &pKey, FakeFile *pFile, ByteString *pError);
+    
+    bool                                                                                Exists(const ByteString &pKey);
+    bool                                                                                Exists(const string &pKey);
+    
+    void                                                                                Clear();
+    
+    std::unordered_map<ByteString, FakeFile, ByteStringHash, ByteStringEqual>           mMap;
+};
+
 #endif

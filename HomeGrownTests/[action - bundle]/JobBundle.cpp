@@ -10,8 +10,9 @@
 #include <algorithm>
 
 JobBundle::JobBundle() {
-    mSource = "/root/input";
-    mDestination = "/root/archived";
+    mInput = "/root/input";
+    mArchived = "/root/archived";
+    mUnarchived = "/root/unarchived";
     mFilePrefix = "bdl_";
     mPayloadBytesPerBlock = 18;
     mMaxPathLength = 128;

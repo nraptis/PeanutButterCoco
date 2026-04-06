@@ -37,8 +37,10 @@ public:
     void                            AddFolder(string pName);
     void                            AddFolder(ByteString pName);
     
-    ByteString                      mSource;
-    ByteString                      mDestination;
+    ByteString                      mInput;
+    ByteString                      mArchived;
+    ByteString                      mUnarchived;
+    
     
     ByteString                      mFilePrefix;
     

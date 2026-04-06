@@ -8,6 +8,87 @@
 #include "MockHardDrive.hpp"
 #include <algorithm>
 
+namespace {
+
+bool FailBlockMutation(ByteString *pError, const std::string &pMessage) {
+    if (pError != nullptr) {
+        pError->Set(pMessage);
+    }
+    return false;
+}
+
+bool ResolveBlockRange(MockHardDrive &pDrive,
+                       const std::string &pPath,
+                       int pBlockIndex,
+                       const JobBundle &pJob,
+                       ByteString *pError,
+                       std::string *pOutPath,
+                       std::size_t *pOutBlockOffset,
+                       std::size_t *pOutBlockSize) {
+    if (pBlockIndex < 0) {
+        return FailBlockMutation(pError, "Block mutation failed: block index must be >= 0.");
+    }
+    if (pJob.mBlocksPerArchive <= 0) {
+        return FailBlockMutation(pError, "Block mutation failed: job block count per archive must be positive.");
+    }
+    if (pJob.mPayloadBytesPerBlock <= 0) {
+        return FailBlockMutation(pError, "Block mutation failed: job payload bytes per block must be positive.");
+    }
+    
+    const int aDerivedArchiveHeaderSize = Layout::ArchiveHeaderSize();
+    const int aDerivedSectionHeaderSize = Layout::SectionHeaderSize();
+    if (aDerivedArchiveHeaderSize <= 0 || aDerivedSectionHeaderSize <= 0) {
+        return FailBlockMutation(pError, "Block mutation failed: invalid layout header sizes.");
+    }
+    
+    const std::size_t aArchiveHeaderSize =
+        static_cast<std::size_t>(aDerivedArchiveHeaderSize);
+    const std::size_t aBlockSize = static_cast<std::size_t>(
+        aDerivedSectionHeaderSize + pJob.mPayloadBytesPerBlock);
+    
+    const std::string aPath = pDrive.Normalize(pPath);
+    if (!pDrive.HasFile(aPath)) {
+        return FailBlockMutation(pError, "Block mutation failed: target path is not a file.");
+    }
+    
+    const std::size_t aFileSize = pDrive.GetFileLength(aPath);
+    if (aFileSize < (aArchiveHeaderSize + aBlockSize)) {
+        return FailBlockMutation(pError, "Block mutation failed: file is too small to contain any full blocks.");
+    }
+    
+    const std::size_t aDataBytes = aFileSize - aArchiveHeaderSize;
+    const std::size_t aWholeBlockCount = aDataBytes / aBlockSize;
+    if (aWholeBlockCount == 0u) {
+        return FailBlockMutation(pError, "Block mutation failed: no complete blocks in target file.");
+    }
+    if (static_cast<std::size_t>(pBlockIndex) >= aWholeBlockCount) {
+        return FailBlockMutation(
+            pError,
+            "Block mutation failed: block index is out of range for the target file.");
+    }
+    
+    const std::size_t aBlockOffset =
+        aArchiveHeaderSize + static_cast<std::size_t>(pBlockIndex) * aBlockSize;
+    if (aBlockOffset > aFileSize || aBlockSize > (aFileSize - aBlockOffset)) {
+        return FailBlockMutation(
+            pError,
+            "Block mutation failed: block index is out of range for the target file.");
+    }
+    
+    if (pOutPath != nullptr) {
+        *pOutPath = aPath;
+    }
+    if (pOutBlockOffset != nullptr) {
+        *pOutBlockOffset = aBlockOffset;
+    }
+    if (pOutBlockSize != nullptr) {
+        *pOutBlockSize = aBlockSize;
+    }
+    return true;
+}
+
+} // namespace
+
 MockHardDrive::MockHardDrive() {
   mDirectories.insert("/");
 }
@@ -491,4 +572,162 @@ void MockHardDrive::EnsureParents(const std::string& pPath) {
     }
     aParent = ParentPath(aParent);
   }
+}
+
+bool MockHardDrive::MangleBlock(const std::string& pPath,
+                                int pBlockIndex,
+                                const JobBundle &pJob,
+                                ByteString *pError) {
+    std::string aPath;
+    std::size_t aBlockOffset = 0u;
+    std::size_t aBlockSize = 0u;
+    if (!ResolveBlockRange(*this,
+                           pPath,
+                           pBlockIndex,
+                           pJob,
+                           pError,
+                           &aPath,
+                           &aBlockOffset,
+                           &aBlockSize)) {
+        return false;
+    }
+    
+    std::vector<unsigned char> &aBytes = mFiles[aPath];
+    std::fill(aBytes.begin() + static_cast<std::ptrdiff_t>(aBlockOffset),
+              aBytes.begin() + static_cast<std::ptrdiff_t>(aBlockOffset + aBlockSize),
+              static_cast<unsigned char>(0xFF));
+    return true;
+}
+
+bool MockHardDrive::DeleteBlock(const std::string& pPath,
+                                int pBlockIndex,
+                                const JobBundle &pJob,
+                                ByteString *pError) {
+    std::string aPath;
+    std::size_t aBlockOffset = 0u;
+    std::size_t aBlockSize = 0u;
+    if (!ResolveBlockRange(*this,
+                           pPath,
+                           pBlockIndex,
+                           pJob,
+                           pError,
+                           &aPath,
+                           &aBlockOffset,
+                           &aBlockSize)) {
+        return false;
+    }
+    
+    std::vector<unsigned char> &aBytes = mFiles[aPath];
+    aBytes.erase(aBytes.begin() + static_cast<std::ptrdiff_t>(aBlockOffset),
+                 aBytes.begin() + static_cast<std::ptrdiff_t>(aBlockOffset + aBlockSize));
+    return true;
+}
+
+bool MockHardDrive::DeleteBlockGhost(const std::string& pPath,
+                                     int pBlockIndex,
+                                     const JobBundle &pJob,
+                                     ByteString *pError) {
+    std::string aPath;
+    std::size_t aBlockOffset = 0u;
+    std::size_t aBlockSize = 0u;
+    if (!ResolveBlockRange(*this,
+                           pPath,
+                           pBlockIndex,
+                           pJob,
+                           pError,
+                           &aPath,
+                           &aBlockOffset,
+                           &aBlockSize)) {
+        return false;
+    }
+    
+    std::vector<unsigned char> &aBytes = mFiles[aPath];
+    if (aBytes.size() < aBlockSize) {
+        return FailBlockMutation(pError, "DeleteBlockGhost failed: file too small.");
+    }
+    
+    const std::vector<unsigned char> aTailBlock(
+        aBytes.end() - static_cast<std::ptrdiff_t>(aBlockSize),
+        aBytes.end());
+    
+    aBytes.erase(aBytes.begin() + static_cast<std::ptrdiff_t>(aBlockOffset),
+                 aBytes.begin() + static_cast<std::ptrdiff_t>(aBlockOffset + aBlockSize));
+    aBytes.insert(aBytes.end(), aTailBlock.begin(), aTailBlock.end());
+    return true;
+}
+
+bool MockHardDrive::MangleFile(const std::string& pPath,
+                               ByteString *pError) {
+    const std::string aPath = Normalize(pPath);
+    if (!HasFile(aPath)) {
+        return FailBlockMutation(pError, "MangleFile failed: target path is not a file.");
+    }
+    
+    std::vector<unsigned char> &aBytes = mFiles[aPath];
+    std::fill(aBytes.begin(), aBytes.end(), static_cast<unsigned char>(0xFF));
+    return true;
+}
+
+bool MockHardDrive::SwapBlocks(const std::string& pPath,
+                               int pBlockIndexA,
+                               int pBlockIndexB,
+                               const JobBundle &pJob,
+                               ByteString *pError) {
+    if (pBlockIndexA == pBlockIndexB) {
+        return true;
+    }
+    
+    std::string aPathA;
+    std::size_t aOffsetA = 0u;
+    std::size_t aBlockSizeA = 0u;
+    if (!ResolveBlockRange(*this,
+                           pPath,
+                           pBlockIndexA,
+                           pJob,
+                           pError,
+                           &aPathA,
+                           &aOffsetA,
+                           &aBlockSizeA)) {
+        return false;
+    }
+    
+    std::string aPathB;
+    std::size_t aOffsetB = 0u;
+    std::size_t aBlockSizeB = 0u;
+    if (!ResolveBlockRange(*this,
+                           pPath,
+                           pBlockIndexB,
+                           pJob,
+                           pError,
+                           &aPathB,
+                           &aOffsetB,
+                           &aBlockSizeB)) {
+        return false;
+    }
+    
+    if (aPathA != aPathB) {
+        return FailBlockMutation(pError, "SwapBlocks failed: resolved paths did not match.");
+    }
+    if (aBlockSizeA != aBlockSizeB) {
+        return FailBlockMutation(pError, "SwapBlocks failed: block sizes differ.");
+    }
+    
+    std::vector<unsigned char> &aBytes = mFiles[aPathA];
+    const std::ptrdiff_t aBeginA = static_cast<std::ptrdiff_t>(aOffsetA);
+    const std::ptrdiff_t aBeginB = static_cast<std::ptrdiff_t>(aOffsetB);
+    const std::ptrdiff_t aBlockSize = static_cast<std::ptrdiff_t>(aBlockSizeA);
+    
+    if (aBeginA < 0 || aBeginB < 0 || aBlockSize <= 0) {
+        return FailBlockMutation(pError, "SwapBlocks failed: invalid swap range.");
+    }
+    if (static_cast<std::size_t>(aBeginA + aBlockSize) > aBytes.size() ||
+        static_cast<std::size_t>(aBeginB + aBlockSize) > aBytes.size()) {
+        return FailBlockMutation(pError, "SwapBlocks failed: swap range out of bounds.");
+    }
+    
+    for (std::ptrdiff_t i = 0; i < aBlockSize; ++i) {
+        std::swap(aBytes[static_cast<std::size_t>(aBeginA + i)],
+                  aBytes[static_cast<std::size_t>(aBeginB + i)]);
+    }
+    return true;
 }

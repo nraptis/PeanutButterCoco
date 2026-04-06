@@ -30,8 +30,8 @@ bool TestBundle::PerformReal(JobBundle &pJob, MockFileSystem &pFileSystem, ByteS
     
     pJob.SortFiles();
     
-    string aSourceFolder = pJob.mSource.ToString();
-    string aDestinationFolder = pJob.mDestination.ToString();
+    string aSourceFolder = pJob.mInput.ToString();
+    string aDestinationFolder = pJob.mArchived.ToString();
     
     for (int aFileIndex=0; aFileIndex<((int)pJob.mFileList.size()); aFileIndex++) {
         FakeFile aFile = pJob.mFileList[aFileIndex];
@@ -245,8 +245,8 @@ bool TestBundle::PerformMock(JobBundle &pJob, vector<FakeArchive> *pResult, Byte
     
     int aBlockLength = pJob.mPayloadBytesPerBlock;
     
-    string aSourceFolder = pJob.mSource.ToString();
-    string aDestinationFolder = pJob.mDestination.ToString();
+    string aSourceFolder = pJob.mInput.ToString();
+    string aDestinationFolder = pJob.mArchived.ToString();
     
     vector<int> aSkipTargets;
     

@@ -8,11 +8,11 @@
 #import <Foundation/Foundation.h>
 #import <XCTest/XCTest.h>
 #include "TestBundle.hpp"
+#include "TestBundleWithHooks.hpp"
 #include "JobBundle.hpp"
 #include "WrappedArchiveAssembler.hpp"
 #include "BundleVerify.hpp"
 #include "FakeFile.hpp"
-
 
 @interface BundleTests_Regression : XCTestCase
 @end
@@ -25,12 +25,36 @@
     MockFileSystem aFileSystem(&aHardDrive);
     ByteString aErrorString;
     
-    if (!TestBundle::PerformReal(pJob, aFileSystem, &aErrorString)) {
+    
+    if (!TestBundleWithHooks::PerformReal(
+            pJob,
+            aFileSystem,
+            [](const TestBundleWithHooks::PhaseBatchFeedback &pFeedback,
+               peanutbutter::BundleStageContextV2 &pContext,
+               SimpleBundleRuntime &pRuntime) {
+                (void)pContext;
+                (void)pRuntime;
+                
+                /*
+                if (pFeedback.mBatch == 1u) {
+                    printf("[bundle-hooks] phase start: %s\n", pFeedback.mPhase);
+                }
+                
+                printf("[bundle-hooks] phase tick: %s batch=%zu\n",
+                       pFeedback.mPhase,
+                       pFeedback.mBatch);
+                
+                if (!pFeedback.mNeedsMoreHeartbeats) {
+                    printf("[bundle-hooks] phase end: %s\n", pFeedback.mPhase);
+                }
+                */
+            },
+            &aErrorString)) {
         printf("Error: %.*s\n", aErrorString.mLength, (char*)aErrorString.mData);
         return NO;
     }
     
-    vector<WrappedArchive> aRealArchives = WrappedArchiveAssembler::Get(pJob.mDestination.ToString(),
+    vector<WrappedArchive> aRealArchives = WrappedArchiveAssembler::Get(pJob.mArchived.ToString(),
                                                                         aFileSystem,
                                                                         pJob.mBlocksPerArchive,
                                                                         pJob.mPayloadBytesPerBlock + Layout::SectionHeaderSize());
@@ -49,7 +73,7 @@
     return YES;
 }
 
-- (void)test_regression_small_window_a {
+- (void)test_bundle_regression_small_window_a {
     JobBundle aJob;
     aJob.mPayloadBytesPerBlock = 1;
     aJob.mBlocksPerArchive = 1;
@@ -57,12 +81,13 @@
     aJob.AddFile("V.s", "龙PA");
     aJob.AddFile("c.g", "Z永g");
     aJob.AddFile("rI", "");
+    aJob.mBatchSize = 20;
     if ([self run:aJob] == NO) {
         XCTFail(@"Regression test failed.");
     }
 }
 
-- (void)test_regression_small_window_b {
+- (void)test_bundle_regression_small_window_b {
     JobBundle aJob;
     aJob.mPayloadBytesPerBlock = 1;
     aJob.mBlocksPerArchive = 1;
@@ -72,7 +97,7 @@
     }
 }
 
-- (void)test_regression_small_window_c {
+- (void)test_bundle_regression_small_window_c {
     JobBundle aJob;
     aJob.mPayloadBytesPerBlock = 1;
     aJob.mBlocksPerArchive = 1;
@@ -83,7 +108,7 @@
     }
 }
 
-- (void)test_regression_small_window_d {
+- (void)test_bundle_regression_small_window_d {
     JobBundle aJob;
     aJob.mPayloadBytesPerBlock = 1;
     aJob.mBlocksPerArchive = 1;
@@ -94,7 +119,7 @@
     }
 }
 
-- (void)test_regression_small_window_e {
+- (void)test_bundle_regression_small_window_e {
     JobBundle aJob;
     aJob.mPayloadBytesPerBlock = 4;
     aJob.mBlocksPerArchive = 4096;
@@ -106,7 +131,7 @@
     }
 }
 
-- (void)test_regression_small_window_f {
+- (void)test_bundle_regression_small_window_f {
     JobBundle aJob;
     aJob.mPayloadBytesPerBlock = 2;
     aJob.mBlocksPerArchive = 4096;
@@ -119,7 +144,7 @@
     }
 }
 
-- (void)test_regression_small_window_g {
+- (void)test_bundle_regression_small_window_g {
     JobBundle aJob;
     aJob.mPayloadBytesPerBlock = 1;
     aJob.mBlocksPerArchive = 1;
@@ -140,7 +165,7 @@
     }
 }
 
-- (void)test_regression_small_window_h {
+- (void)test_bundle_regression_small_window_h {
     JobBundle aJob;
     aJob.mPayloadBytesPerBlock = 1;
     aJob.mBlocksPerArchive = 1;
@@ -153,7 +178,7 @@
     }
 }
 
-- (void)test_regression_small_window_i {
+- (void)test_bundle_regression_small_window_i {
     JobBundle aJob;
     aJob.mPayloadBytesPerBlock = 1;
     aJob.mBlocksPerArchive = 1;
@@ -166,7 +191,7 @@
     }
 }
 
-- (void)test_regression_small_window_j {
+- (void)test_bundle_regression_small_window_j {
     JobBundle aJob;
     aJob.mPayloadBytesPerBlock = 1;
     aJob.mBlocksPerArchive = 1;
@@ -188,7 +213,7 @@
     }
 }
 
-- (void)test_regression_small_window_k {
+- (void)test_bundle_regression_small_window_k {
     JobBundle aJob;
     aJob.mPayloadBytesPerBlock = 1;
     aJob.mBlocksPerArchive = 1;
@@ -210,7 +235,7 @@
     }
 }
 
-- (void)test_regression_small_window_l {
+- (void)test_bundle_regression_small_window_l {
     JobBundle aJob;
     aJob.mPayloadBytesPerBlock = 4;
     aJob.mBlocksPerArchive = 4;
@@ -226,7 +251,7 @@
     }
 }
 
-- (void)test_regression_small_window_m {
+- (void)test_bundle_regression_small_window_m {
     JobBundle aJob;
     aJob.mPayloadBytesPerBlock = 4;
     aJob.mBlocksPerArchive = 4;
@@ -244,7 +269,7 @@
     }
 }
 
-- (void)test_regression_small_window_n {
+- (void)test_bundle_regression_small_window_n {
     JobBundle aJob;
     aJob.mPayloadBytesPerBlock = 5;
     aJob.mBlocksPerArchive = 1;
@@ -261,7 +286,7 @@
     }
 }
 
-- (void)test_regression_small_window_o {
+- (void)test_bundle_regression_small_window_o {
     JobBundle aJob;
     aJob.mPayloadBytesPerBlock = 1;
     aJob.mBlocksPerArchive = 1;
@@ -285,7 +310,7 @@
     }
 }
 
-- (void)test_regression_small_window_p {
+- (void)test_bundle_regression_small_window_p {
     JobBundle aJob;
     aJob.mPayloadBytesPerBlock = 1;
     aJob.mBlocksPerArchive = 1;
@@ -303,7 +328,7 @@
     }
 }
 
-- (void)test_regression_small_window_q {
+- (void)test_bundle_regression_small_window_q {
     
     // Data record bytes (preview disabled):
     // 1) File "ab" + content "cd" (15 bytes total):
