@@ -190,6 +190,7 @@ NSString *NSStringFromStdString(const std::string& value) {
         peanutbutter::NSStringFromStdString(_configState.mBundlePassword);
     _rootViewController.unbundlePasswordDefault =
         peanutbutter::NSStringFromStdString(_configState.mUnbundlePassword);
+    _rootViewController.unbundleRecoverDefault = _configState.mUnbundleRecover;
     _rootViewController.bundleBlockCountDefault =
         peanutbutter::NSStringFromStdString(_configState.mBundleBlockCount);
     _rootViewController.bundleEncryptionStrengthDefault =

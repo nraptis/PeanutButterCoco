@@ -4,8 +4,10 @@
 #include <array>
 #include <cctype>
 #include <cstring>
+#include <iomanip>
 #include <limits>
 #include <memory>
+#include <sstream>
 #include <vector>
 
 #include "../../Knobs.hpp"
@@ -26,6 +28,15 @@ constexpr std::uint64_t kDecodeProgressFolderLogIntervalV2 =
     knobs::kDecodeArchiveProgressFolderLogIntervalV2;
 constexpr std::uint64_t kDecodeProgressByteLogIntervalV2 =
     knobs::kDecodeArchiveProgressByteLogIntervalV2;
+constexpr std::uint64_t kHealingProgressByteLogIntervalV2 =
+    knobs::kDecodeArchiveProgressByteLogIntervalV2;
+constexpr std::size_t kRecoverLedgerDigitsV2 = 5u;
+
+std::string ZeroPadNumber(std::uint64_t pValue, std::size_t pDigits) {
+  std::ostringstream aOut;
+  aOut << std::setw(static_cast<int>(pDigits)) << std::setfill('0') << pValue;
+  return aOut.str();
+}
 
 const char* SectionTypeLabel(SectionTypeV2 pSectionType) {
   switch (pSectionType) {
@@ -694,8 +705,7 @@ bool HandleDamagedBlock(DecodeStageContextV2& pContext,
 }
 
 bool ShouldStopAfterFirstDamagedBlock(const DecodeStageContextV2& pContext) {
-  return pContext.Request().mIntent == DecodeIntentV2::kUnbundle &&
-         pContext.State().mCancel.mShouldFinalizeAfterCancel;
+  return pContext.Request().mIntent == DecodeIntentV2::kUnbundle;
 }
 
 bool HandleArchiveDecodeCancel(DecodeStageContextV2& pContext,
@@ -840,6 +850,10 @@ class DecodeArchiveDecodeCursorV2 {
       aRemainingNonRepair -= aNonRepairHere;
     }
     mDeepRegularSlotFilledByArchive.resize(aArchives.size());
+    mDeepRegularFilledCountByArchive.assign(aArchives.size(), 0u);
+    mDeepArchiveSealedBySlot.assign(aArchives.size(), 0u);
+    mDeepArchiveSealFloorBySlot.assign(
+        aArchives.size(), std::numeric_limits<std::uint64_t>::max());
     for (std::size_t aSlot = 0u; aSlot < aArchives.size(); ++aSlot) {
       const std::uint64_t aRegularSlotCount =
           mDeepArchiveNonRepairCountBySlot[aSlot];
@@ -895,14 +909,22 @@ class DecodeArchiveDecodeCursorV2 {
   std::uint64_t mPendingSkipSourceBlockIndex = 0u;
   std::size_t mPendingSkipTargetArchiveSlot = 0u;
   std::uint64_t mPendingSkipTargetBlockIndex = 0u;
+  std::uint64_t mPendingSkipTargetLogicalBlockIndex = 0u;
+  std::size_t mPendingSkipTargetPayloadOffset = 0u;
+  std::size_t mLastSkipFallbackSourceArchiveSlot = kInvalidArchiveSlot;
+  std::uint64_t mLastSkipFallbackSourceBlockIndex =
+      std::numeric_limits<std::uint64_t>::max();
   std::vector<unsigned char> mPendingSingleByteTypePayload;
   std::vector<std::uint64_t> mArchiveLostBlocksBySlot;
   std::vector<std::size_t> mArchiveSlotByArchiveIndex;
   std::vector<std::string> mDeepTempArchivePathBySlot;
   std::vector<std::uint64_t> mDeepArchiveNonRepairPrefixBySlot;
   std::vector<std::uint64_t> mDeepArchiveNonRepairCountBySlot;
+  std::vector<std::uint64_t> mDeepRegularFilledCountByArchive;
   std::vector<std::vector<std::uint8_t>> mDeepRegularSlotFilledByArchive;
   std::vector<std::vector<std::uint8_t>> mDeepPhysicalSlotFilledByArchive;
+  std::vector<std::uint8_t> mDeepArchiveSealedBySlot;
+  std::vector<std::uint64_t> mDeepArchiveSealFloorBySlot;
   std::string mDeepTempRoot;
   bool mDeepScanActive = false;
   bool mDeepTriggered = false;
@@ -910,15 +932,184 @@ class DecodeArchiveDecodeCursorV2 {
   bool mDeepDecodeFromTemp = false;
   bool mDeepOutputReplayActive = false;
   bool mReadFromDeepTemp = false;
+  std::uint64_t mDeepStagedBlockCount = 0u;
+  std::uint64_t mDeepStagedByteCount = 0u;
+  std::uint64_t mNextHealingProgressByteLog = 0u;
+  bool mDeepCancelFinalizeRequested = false;
 };
 
 namespace {
 
+std::string MakeUniquePath(FileSystemV2& pFileSystem,
+                           const std::string& pDirectory,
+                           const std::string& pBaseName,
+                           const std::string& pExtension) {
+  std::string aCandidateName = pBaseName + pExtension;
+  std::string aCandidatePath = pFileSystem.JoinPath(pDirectory, aCandidateName);
+  if (!pFileSystem.Exists(aCandidatePath)) {
+    return aCandidatePath;
+  }
+
+  for (std::uint64_t aSuffix = 1u; aSuffix < 1000000u; ++aSuffix) {
+    aCandidateName = pBaseName + "_" + std::to_string(aSuffix) + pExtension;
+    aCandidatePath = pFileSystem.JoinPath(pDirectory, aCandidateName);
+    if (!pFileSystem.Exists(aCandidatePath)) {
+      return aCandidatePath;
+    }
+  }
+
+  return pFileSystem.JoinPath(
+      pDirectory, pBaseName + "_" + std::to_string(std::numeric_limits<std::uint64_t>::max()) +
+                      pExtension);
+}
+
+void ResetPendingSkipLandingValidation(DecodeArchiveDecodeCursorV2& pCursor) {
+  pCursor.mHasPendingSkipLandingValidation = false;
+  pCursor.mPendingSkipSourceArchiveSlot = 0u;
+  pCursor.mPendingSkipSourceBlockIndex = 0u;
+  pCursor.mPendingSkipTargetArchiveSlot = 0u;
+  pCursor.mPendingSkipTargetBlockIndex = 0u;
+  pCursor.mPendingSkipTargetLogicalBlockIndex = 0u;
+  pCursor.mPendingSkipTargetPayloadOffset = 0u;
+}
+
+void EmitAppliedRecoverSkipRecordLog(DecodeStageContextV2& pContext,
+                                     std::size_t pTargetArchiveSlot,
+                                     std::uint64_t pTargetLogicalBlockIndex,
+                                     std::uint64_t pTargetPhysicalBlockIndex,
+                                     std::size_t pTargetPayloadOffset) {
+  pContext.EmitLog(
+      LogLevelV2::kInfo,
+      DecodeStagePrefix(pContext.Request().mIntent, ProgressStageV2::kArchiveDecode) +
+          " Applied skip record jump to archive slot " +
+          std::to_string(pTargetArchiveSlot) + ", block " +
+          std::to_string(pTargetLogicalBlockIndex) + " (physical " +
+          std::to_string(pTargetPhysicalBlockIndex) + "), payload offset " +
+          std::to_string(pTargetPayloadOffset) + ".");
+}
+
+bool ShouldLogSkipLandingFallback(DecodeArchiveDecodeCursorV2& pCursor,
+                                  std::size_t pSourceArchiveSlot,
+                                  std::uint64_t pSourceBlockIndex) {
+  if (pCursor.mLastSkipFallbackSourceArchiveSlot == pSourceArchiveSlot &&
+      pCursor.mLastSkipFallbackSourceBlockIndex == pSourceBlockIndex) {
+    return false;
+  }
+  pCursor.mLastSkipFallbackSourceArchiveSlot = pSourceArchiveSlot;
+  pCursor.mLastSkipFallbackSourceBlockIndex = pSourceBlockIndex;
+  return true;
+}
+
+void ResetHealingProgress(DecodeArchiveDecodeCursorV2& pCursor) {
+  pCursor.mDeepStagedBlockCount = 0u;
+  pCursor.mDeepStagedByteCount = 0u;
+  pCursor.mNextHealingProgressByteLog = kHealingProgressByteLogIntervalV2;
+}
+
+void EmitHealingProgressLog(DecodeStageContextV2& pContext,
+                            const DecodeArchiveDecodeCursorV2& pCursor) {
+  pContext.EmitLog(LogLevelV2::kInfo,
+                   LogHealingScanProgressV2(
+                       pCursor.mDeepStagedBlockCount, pCursor.mDeepStagedByteCount));
+}
+
+void MaybeEmitHealingProgressLog(DecodeStageContextV2& pContext,
+                                 DecodeArchiveDecodeCursorV2& pCursor,
+                                 bool pForce = false) {
+  if (!pForce && pCursor.mDeepStagedByteCount < pCursor.mNextHealingProgressByteLog) {
+    return;
+  }
+  EmitHealingProgressLog(pContext, pCursor);
+  while (pCursor.mNextHealingProgressByteLog <= pCursor.mDeepStagedByteCount) {
+    pCursor.mNextHealingProgressByteLog += kHealingProgressByteLogIntervalV2;
+  }
+}
+
+void NoteDeepRecoverStagedPhysicalBlock(DecodeStageContextV2& pContext,
+                                        DecodeArchiveDecodeCursorV2& pCursor,
+                                        bool pWasAlreadyFilled) {
+  if (pWasAlreadyFilled) {
+    return;
+  }
+  ++pCursor.mDeepStagedBlockCount;
+  pCursor.mDeepStagedByteCount +=
+      static_cast<std::uint64_t>(pContext.Layout().mArchiveBlockBytes);
+  MaybeEmitHealingProgressLog(pContext, pCursor);
+}
+
+void EmitDecodeHealingModeEnteredEvent(DecodeStageContextV2& pContext,
+                                       const DecodeArchiveDecodeCursorV2& pCursor,
+                                       const std::string& pReason) {
+  if (pContext.WantsRuntimeEvent(RuntimeEventKindV2::kDecodeHealingModeEntered)) {
+    RuntimeEventV2 aEvent;
+    aEvent.mKind = RuntimeEventKindV2::kDecodeHealingModeEntered;
+    aEvent.mStage = ProgressStageV2::kArchiveDecode;
+    aEvent.mLabel = "Decode switched to healing mode.";
+    aEvent.SetInfo("reason", pReason);
+    aEvent.SetInfo("waiting_archive_slot",
+                   static_cast<std::uint64_t>(pCursor.mArchiveSlot));
+    aEvent.SetInfo("waiting_block_index", pCursor.mBlockIndex);
+    aEvent.SetInfo("temp_root", pCursor.mDeepTempRoot);
+    pContext.EmitRuntimeEvent(aEvent);
+  }
+  pContext.RequestBatchYield();
+}
+
+void EmitDecodeHealingArchiveSealedEvent(DecodeStageContextV2& pContext,
+                                         const DecodeArchiveDecodeCursorV2& pCursor,
+                                         const DiscoveredArchiveFileV2& pArchive,
+                                         std::size_t pArchiveSlot) {
+  if (pContext.WantsRuntimeEvent(RuntimeEventKindV2::kDecodeHealingArchiveSealed)) {
+    RuntimeEventV2 aEvent;
+    aEvent.mKind = RuntimeEventKindV2::kDecodeHealingArchiveSealed;
+    aEvent.mStage = ProgressStageV2::kArchiveDecode;
+    aEvent.mLabel = "Decode sealed healing archive " + std::to_string(pArchiveSlot) + ".";
+    aEvent.SetInfo("archive_slot", static_cast<std::uint64_t>(pArchiveSlot));
+    aEvent.SetInfo("archive_index", pArchive.mArchiveIndex);
+    if (pArchiveSlot < pCursor.mDeepTempArchivePathBySlot.size()) {
+      aEvent.SetInfo("temp_archive_path", pCursor.mDeepTempArchivePathBySlot[pArchiveSlot]);
+    }
+    if (pArchiveSlot < pCursor.mDeepArchiveNonRepairCountBySlot.size()) {
+      aEvent.SetInfo("regular_block_count",
+                     pCursor.mDeepArchiveNonRepairCountBySlot[pArchiveSlot]);
+    }
+    if (pArchiveSlot < pCursor.mDeepRegularFilledCountByArchive.size()) {
+      aEvent.SetInfo("regular_blocks_filled",
+                     pCursor.mDeepRegularFilledCountByArchive[pArchiveSlot]);
+    }
+    pContext.EmitRuntimeEvent(aEvent);
+  }
+  pContext.RequestBatchYield();
+}
+
+void EmitDecodeHealingModeExitedEvent(DecodeStageContextV2& pContext,
+                                      const DecodeArchiveDecodeCursorV2& pCursor,
+                                      const char* pResumeMode) {
+  if (pContext.WantsRuntimeEvent(RuntimeEventKindV2::kDecodeHealingModeExited)) {
+    RuntimeEventV2 aEvent;
+    aEvent.mKind = RuntimeEventKindV2::kDecodeHealingModeExited;
+    aEvent.mStage = ProgressStageV2::kArchiveDecode;
+    aEvent.mLabel = "Decode switched from healing mode.";
+    aEvent.SetInfo("resume_archive_slot",
+                   static_cast<std::uint64_t>(pCursor.mArchiveSlot));
+    aEvent.SetInfo("resume_block_index", pCursor.mBlockIndex);
+    aEvent.SetInfo("resume_mode", pResumeMode);
+    pContext.EmitRuntimeEvent(aEvent);
+  }
+  pContext.RequestBatchYield();
+}
+
 bool CanActivateDeepRecoverHealing(const DecodeStageContextV2& pContext,
                                    const DecodeArchiveDecodeCursorV2& pCursor) {
-  return !pCursor.mDeepDecodeFromTemp &&
-         pContext.Request().mIntent != DecodeIntentV2::kUnbundle &&
-         DecodeIntentAllowsSalvageV2(pContext.Request().mIntent);
+  if (pContext.Request().mIntent == DecodeIntentV2::kUnbundle ||
+      !DecodeIntentAllowsSalvageV2(pContext.Request().mIntent)) {
+    return false;
+  }
+  if (pCursor.mDeepOutputReplayActive || pCursor.mDeepScanExhausted ||
+      pCursor.mDeepScanActive) {
+    return false;
+  }
+  return !pCursor.mDeepTriggered || pCursor.mDeepDecodeFromTemp;
 }
 
 std::uint64_t KnownLostBlocksForArchive(
@@ -1148,6 +1339,17 @@ bool IsDeepRecoverRegularSlotFilled(const DecodeArchiveDecodeCursorV2& pCursor,
   return aFlags[static_cast<std::size_t>(pBlockIndex)] != 0u;
 }
 
+bool IsDeepRecoverArchiveSealed(const DecodeArchiveDecodeCursorV2& pCursor,
+                                std::size_t pArchiveSlot) {
+  if (pArchiveSlot >= pCursor.mDeepArchiveSealedBySlot.size() ||
+      pArchiveSlot >= pCursor.mDeepArchiveSealFloorBySlot.size()) {
+    return false;
+  }
+  return pCursor.mDeepArchiveSealedBySlot[pArchiveSlot] != 0u &&
+         pCursor.mDeepArchiveSealFloorBySlot[pArchiveSlot] !=
+             std::numeric_limits<std::uint64_t>::max();
+}
+
 bool IsDeepRecoverPhysicalSlotFilled(const DecodeArchiveDecodeCursorV2& pCursor,
                                      std::size_t pArchiveSlot,
                                      std::uint64_t pBlockIndex) {
@@ -1162,21 +1364,28 @@ bool IsDeepRecoverPhysicalSlotFilled(const DecodeArchiveDecodeCursorV2& pCursor,
   return aFlags[static_cast<std::size_t>(pBlockIndex)] != 0u;
 }
 
-void MarkDeepRecoverRegularSlotFilled(DecodeArchiveDecodeCursorV2& pCursor,
+bool MarkDeepRecoverRegularSlotFilled(DecodeArchiveDecodeCursorV2& pCursor,
                                       std::size_t pArchiveSlot,
                                       std::uint64_t pBlockIndex) {
   if (!IsDeepRecoverRegularSlot(pCursor, pArchiveSlot, pBlockIndex)) {
-    return;
+    return false;
   }
   if (pArchiveSlot >= pCursor.mDeepRegularSlotFilledByArchive.size()) {
-    return;
+    return false;
   }
   std::vector<std::uint8_t>& aFlags =
       pCursor.mDeepRegularSlotFilledByArchive[pArchiveSlot];
   if (pBlockIndex >= static_cast<std::uint64_t>(aFlags.size())) {
-    return;
+    return false;
+  }
+  if (aFlags[static_cast<std::size_t>(pBlockIndex)] != 0u) {
+    return false;
   }
   aFlags[static_cast<std::size_t>(pBlockIndex)] = 1u;
+  if (pArchiveSlot < pCursor.mDeepRegularFilledCountByArchive.size()) {
+    ++pCursor.mDeepRegularFilledCountByArchive[pArchiveSlot];
+  }
+  return true;
 }
 
 void MarkDeepRecoverPhysicalSlotFilled(DecodeArchiveDecodeCursorV2& pCursor,
@@ -1191,6 +1400,219 @@ void MarkDeepRecoverPhysicalSlotFilled(DecodeArchiveDecodeCursorV2& pCursor,
     return;
   }
   aFlags[static_cast<std::size_t>(pBlockIndex)] = 1u;
+}
+
+bool IsDeepRecoverArchiveFullyPacked(const DecodeArchiveDecodeCursorV2& pCursor,
+                                     std::size_t pArchiveSlot) {
+  if (pArchiveSlot >= pCursor.mDeepArchiveNonRepairCountBySlot.size() ||
+      pArchiveSlot >= pCursor.mDeepRegularFilledCountByArchive.size()) {
+    return false;
+  }
+  const std::uint64_t aRegularSlotCount =
+      pCursor.mDeepArchiveNonRepairCountBySlot[pArchiveSlot];
+  return aRegularSlotCount > 0u &&
+         pCursor.mDeepRegularFilledCountByArchive[pArchiveSlot] >= aRegularSlotCount;
+}
+
+bool IsDeepRecoverArchiveFilledFromBlock(const DecodeArchiveDecodeCursorV2& pCursor,
+                                         std::size_t pArchiveSlot,
+                                         std::uint64_t pStartBlockIndex) {
+  if (pArchiveSlot >= pCursor.mDeepRegularSlotFilledByArchive.size()) {
+    return false;
+  }
+  const std::vector<std::uint8_t>& aFlags =
+      pCursor.mDeepRegularSlotFilledByArchive[pArchiveSlot];
+  if (pStartBlockIndex >= static_cast<std::uint64_t>(aFlags.size())) {
+    return false;
+  }
+  for (std::uint64_t aBlockIndex = pStartBlockIndex;
+       aBlockIndex < static_cast<std::uint64_t>(aFlags.size());
+       ++aBlockIndex) {
+    if (aFlags[static_cast<std::size_t>(aBlockIndex)] == 0u) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool TrySealDeepRecoverArchiveIfReady(DecodeStageContextV2& pContext,
+                                      DecodeArchiveDecodeCursorV2& pCursor,
+                                      std::size_t pArchiveSlot) {
+  const std::vector<DiscoveredArchiveFileV2>& aArchives =
+      pContext.State().mDiscovery.mArchives;
+  if (pArchiveSlot >= aArchives.size() ||
+      pArchiveSlot >= pCursor.mDeepTempArchivePathBySlot.size()) {
+    return false;
+  }
+  if (IsDeepRecoverArchiveSealed(pCursor, pArchiveSlot) ||
+      pCursor.mDeepTempArchivePathBySlot[pArchiveSlot].empty() ||
+      !IsDeepRecoverArchiveFullyPacked(pCursor, pArchiveSlot)) {
+    return false;
+  }
+  if (!pCursor.mDeepScanExhausted && pCursor.mDeepScanArchiveSlot <= pArchiveSlot) {
+    return false;
+  }
+  pCursor.mDeepArchiveSealedBySlot[pArchiveSlot] = 1u;
+  pCursor.mDeepArchiveSealFloorBySlot[pArchiveSlot] = 0u;
+  pContext.EmitLog(LogLevelV2::kInfo,
+                   LogHealingArchiveSealedV2(static_cast<std::uint64_t>(pArchiveSlot)));
+  EmitDecodeHealingArchiveSealedEvent(
+      pContext, pCursor, aArchives[pArchiveSlot], pArchiveSlot);
+  return true;
+}
+
+bool TrySealDeepRecoverArchiveForResumeIfReady(
+    DecodeStageContextV2& pContext,
+    DecodeArchiveDecodeCursorV2& pCursor,
+    std::size_t pArchiveSlot,
+    std::uint64_t pStartBlockIndex) {
+  const std::vector<DiscoveredArchiveFileV2>& aArchives =
+      pContext.State().mDiscovery.mArchives;
+  if (pArchiveSlot >= aArchives.size() ||
+      pArchiveSlot >= pCursor.mDeepTempArchivePathBySlot.size()) {
+    return false;
+  }
+  if (IsDeepRecoverArchiveSealed(pCursor, pArchiveSlot) ||
+      pCursor.mDeepTempArchivePathBySlot[pArchiveSlot].empty() ||
+      !IsDeepRecoverRegularSlot(pCursor, pArchiveSlot, pStartBlockIndex) ||
+      !IsDeepRecoverArchiveFilledFromBlock(pCursor, pArchiveSlot, pStartBlockIndex)) {
+    return false;
+  }
+  if (!pCursor.mDeepScanExhausted && pCursor.mDeepScanArchiveSlot <= pArchiveSlot) {
+    return false;
+  }
+  pCursor.mDeepArchiveSealedBySlot[pArchiveSlot] = 1u;
+  pCursor.mDeepArchiveSealFloorBySlot[pArchiveSlot] = pStartBlockIndex;
+  pContext.EmitLog(LogLevelV2::kInfo,
+                   LogHealingArchiveSealedV2(static_cast<std::uint64_t>(pArchiveSlot)));
+  EmitDecodeHealingArchiveSealedEvent(
+      pContext, pCursor, aArchives[pArchiveSlot], pArchiveSlot);
+  return true;
+}
+
+bool ShouldDecodeBlockFromDeepTemp(const DecodeArchiveDecodeCursorV2& pCursor,
+                                   std::size_t pArchiveSlot,
+                                   std::uint64_t pBlockIndex) {
+  if (!pCursor.mDeepDecodeFromTemp) {
+    return false;
+  }
+  if (pCursor.mDeepOutputReplayActive) {
+    return pArchiveSlot < pCursor.mDeepTempArchivePathBySlot.size() &&
+           !pCursor.mDeepTempArchivePathBySlot[pArchiveSlot].empty();
+  }
+  return IsDeepRecoverArchiveSealed(pCursor, pArchiveSlot) &&
+         pArchiveSlot < pCursor.mDeepArchiveSealFloorBySlot.size() &&
+         pBlockIndex >= pCursor.mDeepArchiveSealFloorBySlot[pArchiveSlot] &&
+         IsDeepRecoverRegularSlotFilled(pCursor, pArchiveSlot, pBlockIndex);
+}
+
+bool CanResumeDecodeFromSealedHealingArchive(
+    const DecodeArchiveDecodeCursorV2& pCursor,
+    std::size_t pArchiveSlot,
+    std::uint64_t pBlockIndex) {
+  return ShouldDecodeBlockFromDeepTemp(pCursor, pArchiveSlot, pBlockIndex);
+}
+
+bool ResolveDeepRecoverResumePoint(const DecodeStageContextV2& pContext,
+                                   const DecodeArchiveDecodeCursorV2& pCursor,
+                                   std::size_t& pOutArchiveSlot,
+                                   std::uint64_t& pOutBlockIndex) {
+  pOutArchiveSlot = pCursor.mArchiveSlot;
+  pOutBlockIndex = pCursor.mBlockIndex;
+  if (!IsDeepRecoverRegularSlot(pCursor, pOutArchiveSlot, pOutBlockIndex)) {
+    return false;
+  }
+
+  const std::uint64_t aPreviewBlockCount =
+      pContext.State().mBootstrap.mExpectedPreviewManifestBlockCount;
+  if (aPreviewBlockCount == 0u ||
+      pOutArchiveSlot >= pCursor.mDeepArchiveNonRepairPrefixBySlot.size()) {
+    return true;
+  }
+
+  const std::uint64_t aCurrentGlobalBlockIndex =
+      pCursor.mDeepArchiveNonRepairPrefixBySlot[pOutArchiveSlot] + pOutBlockIndex;
+  if (aCurrentGlobalBlockIndex >= aPreviewBlockCount) {
+    return true;
+  }
+
+  std::uint64_t aRemainingPreviewBlocks = aPreviewBlockCount;
+  for (std::size_t aSlot = 0u;
+       aSlot < pCursor.mDeepArchiveNonRepairCountBySlot.size();
+       ++aSlot) {
+    const std::uint64_t aRegularCount =
+        pCursor.mDeepArchiveNonRepairCountBySlot[aSlot];
+    if (aRegularCount == 0u) {
+      continue;
+    }
+    if (aRemainingPreviewBlocks >= aRegularCount) {
+      aRemainingPreviewBlocks -= aRegularCount;
+      continue;
+    }
+    pOutArchiveSlot = aSlot;
+    pOutBlockIndex = aRemainingPreviewBlocks;
+    return true;
+  }
+
+  return false;
+}
+
+bool TrySealDeepRecoverArchiveForActiveResumeIfReady(
+    DecodeStageContextV2& pContext,
+    DecodeArchiveDecodeCursorV2& pCursor) {
+  std::size_t aResumeArchiveSlot = 0u;
+  std::uint64_t aResumeBlockIndex = 0u;
+  if (!ResolveDeepRecoverResumePoint(
+          pContext, pCursor, aResumeArchiveSlot, aResumeBlockIndex)) {
+    return false;
+  }
+  return TrySealDeepRecoverArchiveForResumeIfReady(
+      pContext, pCursor, aResumeArchiveSlot, aResumeBlockIndex);
+}
+
+bool TryMoveDecodeCursorToSealedHealingResumePoint(
+    const DecodeStageContextV2& pContext,
+    DecodeArchiveDecodeCursorV2& pCursor) {
+  std::size_t aResumeArchiveSlot = 0u;
+  std::uint64_t aResumeBlockIndex = 0u;
+  if (!ResolveDeepRecoverResumePoint(
+          pContext, pCursor, aResumeArchiveSlot, aResumeBlockIndex) ||
+      !CanResumeDecodeFromSealedHealingArchive(
+          pCursor, aResumeArchiveSlot, aResumeBlockIndex)) {
+    return false;
+  }
+
+  if (aResumeArchiveSlot == pCursor.mArchiveSlot &&
+      aResumeBlockIndex == pCursor.mBlockIndex) {
+    return true;
+  }
+
+  pCursor.mRead.reset();
+  pCursor.mReadFromDeepTemp = false;
+  pCursor.mArchiveSlot = aResumeArchiveSlot;
+  pCursor.mBlockIndex = aResumeBlockIndex;
+  pCursor.mArchiveBlocksRead = 0u;
+  pCursor.mArchiveAnnounced = false;
+  pCursor.mHasPausedBlockBoundary = false;
+  pCursor.mPausedSectionHeader = SectionHeaderV2{};
+  pCursor.mPausedBlockPayloadOffset = 0u;
+  pCursor.mPausedBlockPayloadEnd = 0u;
+  pCursor.mPausedBoundaryRecordReference.clear();
+  pCursor.mHasForcedBlockPayloadStart = false;
+  pCursor.mForcedBlockPayloadStart = 0u;
+  pCursor.mPendingRecoverResync = false;
+  pCursor.mPreviewDecoder.ResetAfterParseError();
+  pCursor.mFolderDecoder.ResetAfterParseError();
+  if (!pCursor.mFileDecoder.IsInsideFile()) {
+    pCursor.mFileDecoder.ResetAfterParseError();
+  }
+  pCursor.mHasOpenFileContinuation = false;
+  pCursor.mContinuationArchiveSlot = 0u;
+  pCursor.mContinuationBlockIndex = 0u;
+  pCursor.mPendingSingleByteTypeGap = false;
+  pCursor.mPendingSingleByteTypePayload.clear();
+  ResetPendingSkipLandingValidation(pCursor);
+  return true;
 }
 
 bool BuildPatchedPlainTargetBlockFromRepairForDeepRecover(
@@ -1275,17 +1697,34 @@ void ResetDecodeCursorForArchiveWalk(DecodeArchiveDecodeCursorV2& pCursor) {
   pCursor.mPendingRecoverResync = false;
   pCursor.mPendingSingleByteTypeGap = false;
   pCursor.mPendingSingleByteTypePayload.clear();
-  pCursor.mHasPendingSkipLandingValidation = false;
-  pCursor.mPendingSkipSourceArchiveSlot = 0u;
-  pCursor.mPendingSkipSourceBlockIndex = 0u;
-  pCursor.mPendingSkipTargetArchiveSlot = 0u;
-  pCursor.mPendingSkipTargetBlockIndex = 0u;
+  ResetPendingSkipLandingValidation(pCursor);
   pCursor.mHasOpenFileContinuation = false;
   pCursor.mContinuationArchiveSlot = 0u;
   pCursor.mContinuationBlockIndex = 0u;
+  pCursor.mLastSkipFallbackSourceArchiveSlot =
+      DecodeArchiveDecodeCursorV2::kInvalidArchiveSlot;
+  pCursor.mLastSkipFallbackSourceBlockIndex =
+      std::numeric_limits<std::uint64_t>::max();
   pCursor.mDeepScanExhausted = false;
   pCursor.mDeepDecodeFromTemp = false;
   pCursor.mDeepOutputReplayActive = false;
+  pCursor.mDeepStagedBlockCount = 0u;
+  pCursor.mDeepStagedByteCount = 0u;
+  pCursor.mNextHealingProgressByteLog = 0u;
+  pCursor.mDeepCancelFinalizeRequested = false;
+  pCursor.mLastSkipFallbackSourceArchiveSlot =
+      DecodeArchiveDecodeCursorV2::kInvalidArchiveSlot;
+  pCursor.mLastSkipFallbackSourceBlockIndex =
+      std::numeric_limits<std::uint64_t>::max();
+  std::fill(pCursor.mDeepArchiveSealedBySlot.begin(),
+            pCursor.mDeepArchiveSealedBySlot.end(),
+            0u);
+  std::fill(pCursor.mDeepArchiveSealFloorBySlot.begin(),
+            pCursor.mDeepArchiveSealFloorBySlot.end(),
+            std::numeric_limits<std::uint64_t>::max());
+  std::fill(pCursor.mDeepRegularFilledCountByArchive.begin(),
+            pCursor.mDeepRegularFilledCountByArchive.end(),
+            0u);
   std::fill(
       pCursor.mArchiveLostBlocksBySlot.begin(), pCursor.mArchiveLostBlocksBySlot.end(), 0u);
 }
@@ -1317,15 +1756,49 @@ void StartUnbundleArchiveWalkAtFirstMainBlock(
 }
 
 std::string BuildDeepRecoverTempRootPath(DecodeStageContextV2& pContext) {
-  const std::string aSourceRoot = pContext.FileSystem().IsDirectory(
-                                      pContext.Request().mSourcePath)
-                                      ? pContext.Request().mSourcePath
-                                      : pContext.FileSystem().ParentPath(
-                                            pContext.Request().mSourcePath);
-  const std::string aBaseRoot = aSourceRoot.empty()
-                                    ? pContext.Request().mDestinationDirectory
-                                    : aSourceRoot;
-  return pContext.FileSystem().JoinPath(aBaseRoot, ".pbc_recover_temp_archives_v2");
+  return MakeUniquePath(
+      pContext.FileSystem(), pContext.Request().mDestinationDirectory, "$RECOVER", std::string());
+}
+
+std::string BuildDeepRecoverLedgerPath(DecodeStageContextV2& pContext,
+                                       const DecodeArchiveDecodeCursorV2& pCursor,
+                                       std::size_t pArchiveSlot) {
+  const std::string aOrdinal =
+      ZeroPadNumber(static_cast<std::uint64_t>(pArchiveSlot) + 1u, kRecoverLedgerDigitsV2);
+  return MakeUniquePath(pContext.FileSystem(),
+                        pCursor.mDeepTempRoot,
+                        "$RECOVER_data_" + aOrdinal,
+                        ".dat");
+}
+
+bool ClearDirectoryPreservingPath(DecodeStageContextV2& pContext,
+                                  const std::string& pDirectoryPath,
+                                  const std::string& pPreservePath,
+                                  std::string& pOutError) {
+  pOutError.clear();
+  if (pPreservePath.empty()) {
+    if (!pContext.FileSystem().ClearDirectory(pDirectoryPath)) {
+      pOutError = "failed clearing directory";
+      return false;
+    }
+    return true;
+  }
+  if (!pContext.FileSystem().EnsureDirectory(pDirectoryPath)) {
+    pOutError = "failed ensuring directory";
+    return false;
+  }
+  const std::vector<DirectoryEntryV2> aEntries =
+      pContext.FileSystem().ListDirectoryEntries(pDirectoryPath);
+  for (const DirectoryEntryV2& aEntry : aEntries) {
+    if (aEntry.mPath == pPreservePath) {
+      continue;
+    }
+    if (!pContext.FileSystem().RemovePath(aEntry.mPath)) {
+      pOutError = "failed removing path while clearing destination: " + aEntry.mPath;
+      return false;
+    }
+  }
+  return true;
 }
 
 bool WriteZerosToFile(FileWriteStreamV2& pWrite,
@@ -1361,18 +1834,53 @@ bool PrepareDeepRecoverTempArchives(DecodeStageContextV2& pContext,
                                     DecodeArchiveDecodeCursorV2& pCursor,
                                     std::string& pOutError) {
   pOutError.clear();
+  const auto aCleanupTempRoot = [&]() {
+    if (!pCursor.mDeepTempRoot.empty()) {
+      if (!pContext.FileSystem().RemovePath(pCursor.mDeepTempRoot)) {
+        (void)pContext.FileSystem().ClearDirectory(pCursor.mDeepTempRoot);
+      }
+    }
+    pCursor.mDeepTempRoot.clear();
+    std::fill(pCursor.mDeepTempArchivePathBySlot.begin(),
+              pCursor.mDeepTempArchivePathBySlot.end(),
+              std::string());
+    pCursor.mDeepPhysicalSlotFilledByArchive.clear();
+    std::fill(pCursor.mDeepArchiveSealedBySlot.begin(),
+              pCursor.mDeepArchiveSealedBySlot.end(),
+              0u);
+    std::fill(pCursor.mDeepArchiveSealFloorBySlot.begin(),
+              pCursor.mDeepArchiveSealFloorBySlot.end(),
+              std::numeric_limits<std::uint64_t>::max());
+    std::fill(pCursor.mDeepRegularFilledCountByArchive.begin(),
+              pCursor.mDeepRegularFilledCountByArchive.end(),
+              0u);
+  };
+  const auto aFailPrep = [&](const std::string& pMessage) {
+    pOutError = pMessage;
+    aCleanupTempRoot();
+    return false;
+  };
+
   pCursor.mDeepTempRoot = BuildDeepRecoverTempRootPath(pContext);
   if (!pContext.FileSystem().EnsureDirectory(pCursor.mDeepTempRoot) ||
       !pContext.FileSystem().ClearDirectory(pCursor.mDeepTempRoot)) {
-    pOutError = "failed preparing deep-recover temp directory: " +
-                pCursor.mDeepTempRoot;
-    return false;
+    return aFailPrep("failed preparing deep-recover temp directory: " +
+                     pCursor.mDeepTempRoot);
   }
 
   const std::vector<DiscoveredArchiveFileV2>& aArchives =
       pContext.State().mDiscovery.mArchives;
   pCursor.mDeepPhysicalSlotFilledByArchive.clear();
   pCursor.mDeepPhysicalSlotFilledByArchive.resize(aArchives.size());
+  std::fill(pCursor.mDeepArchiveSealedBySlot.begin(),
+            pCursor.mDeepArchiveSealedBySlot.end(),
+            0u);
+  std::fill(pCursor.mDeepArchiveSealFloorBySlot.begin(),
+            pCursor.mDeepArchiveSealFloorBySlot.end(),
+            std::numeric_limits<std::uint64_t>::max());
+  std::fill(pCursor.mDeepRegularFilledCountByArchive.begin(),
+            pCursor.mDeepRegularFilledCountByArchive.end(),
+            0u);
   for (std::size_t aSlot = 0u; aSlot < pCursor.mDeepRegularSlotFilledByArchive.size();
        ++aSlot) {
     std::fill(pCursor.mDeepRegularSlotFilledByArchive[aSlot].begin(),
@@ -1393,21 +1901,13 @@ bool PrepareDeepRecoverTempArchives(DecodeStageContextV2& pContext,
       continue;
     }
 
-    const bool aHasSourceArchive = aArchive.mIsPresent && !aArchive.mPath.empty();
-    const std::string aSourceName =
-        aHasSourceArchive ? pContext.FileSystem().FileName(aArchive.mPath) : std::string();
-    const std::string aTempName =
-        "slot_" + std::to_string(aSlot) + "_" +
-        (aSourceName.empty() ? ("archive_" + std::to_string(aArchive.mArchiveIndex) + ".PBTR")
-                             : aSourceName);
     const std::string aTempPath =
-        pContext.FileSystem().JoinPath(pCursor.mDeepTempRoot, aTempName);
+        BuildDeepRecoverLedgerPath(pContext, pCursor, aSlot);
 
     std::unique_ptr<FileWriteStreamV2> aTempWrite =
         pContext.FileSystem().OpenWriteStream(aTempPath);
     if (aTempWrite == nullptr || !aTempWrite->IsReady()) {
-      pOutError = "failed creating temp archive write stream: " + aTempPath;
-      return false;
+      return aFailPrep("failed creating temp archive write stream: " + aTempPath);
     }
     const std::uint64_t aTempFileLengthByBlocks =
         static_cast<std::uint64_t>(kArchiveHeaderBytesV2) +
@@ -1418,34 +1918,32 @@ bool PrepareDeepRecoverTempArchives(DecodeStageContextV2& pContext,
     std::string aZeroFillError;
     if (!WriteZerosToFile(
             *aTempWrite, pCursor.mDeepZeroChunk, aTempFileLength, aZeroFillError)) {
-      pOutError = "failed writing temp archive " + aTempPath + ": " + aZeroFillError;
-      return false;
+      return aFailPrep("failed writing temp archive " + aTempPath + ": " +
+                       aZeroFillError);
     }
     if (!aTempWrite->Close()) {
-      pOutError = "failed closing temp archive " + aTempPath + ": " +
-                  aTempWrite->LastErrorMessage();
-      return false;
+      return aFailPrep("failed closing temp archive " + aTempPath + ": " +
+                       aTempWrite->LastErrorMessage());
     }
 
     ArchiveHeaderV2 aSyntheticHeader;
     std::string aHeaderError;
     if (!BuildSyntheticArchiveHeaderForDeepRecover(
             pContext, aArchive.mArchiveIndex, aSyntheticHeader, aHeaderError)) {
-      pOutError = "failed building synthetic temp archive header: " + aHeaderError;
-      return false;
+      return aFailPrep("failed building synthetic temp archive header: " +
+                       aHeaderError);
     }
     std::array<unsigned char, kArchiveHeaderBytesV2> aHeaderBytes{};
     if (!WriteArchiveHeader(aSyntheticHeader,
                             aHeaderBytes.data(),
                             aHeaderBytes.size(),
                             nullptr)) {
-      pOutError = "failed serializing synthetic temp archive header";
-      return false;
+      return aFailPrep("failed serializing synthetic temp archive header");
     }
     if (!pContext.FileSystem().OverwriteFileRegion(
             aTempPath, 0u, aHeaderBytes.data(), aHeaderBytes.size())) {
-      pOutError = "failed writing synthetic header into temp archive: " + aTempPath;
-      return false;
+      return aFailPrep("failed writing synthetic header into temp archive: " +
+                       aTempPath);
     }
 
     pCursor.mDeepTempArchivePathBySlot[aSlot] = aTempPath;
@@ -1475,12 +1973,17 @@ bool StageRawBlockIntoDeepRecoverTemp(DecodeStageContextV2& pContext,
   if (aTempPath.empty()) {
     return true;
   }
+  if (IsDeepRecoverArchiveSealed(pCursor, pTargetArchiveSlot)) {
+    return true;
+  }
 
   const std::uint64_t aPhysicalCapacity =
       DeepRecoverTempBlockCapacity(pContext, aTargetArchive);
   if (pTargetBlockIndex >= aPhysicalCapacity) {
     return true;
   }
+  const bool aWasAlreadyFilled =
+      IsDeepRecoverPhysicalSlotFilled(pCursor, pTargetArchiveSlot, pTargetBlockIndex);
 
   const std::size_t aOffset = static_cast<std::size_t>(
       kArchiveHeaderBytesV2 +
@@ -1494,6 +1997,7 @@ bool StageRawBlockIntoDeepRecoverTemp(DecodeStageContextV2& pContext,
     return false;
   }
   MarkDeepRecoverPhysicalSlotFilled(pCursor, pTargetArchiveSlot, pTargetBlockIndex);
+  NoteDeepRecoverStagedPhysicalBlock(pContext, pCursor, aWasAlreadyFilled);
   return true;
 }
 
@@ -1514,23 +2018,30 @@ std::uint64_t CurrentDecodeReadableBlockCountForArchive(
   if (!pCursor.mDeepDecodeFromTemp) {
     return pArchive.mReadableBlockCount;
   }
-  return DeepRecoverTempBlockCapacity(pContext, pArchive);
+  if (pCursor.mDeepOutputReplayActive ||
+      IsDeepRecoverArchiveSealed(pCursor, pCursor.mArchiveSlot)) {
+    return DeepRecoverTempBlockCapacity(pContext, pArchive);
+  }
+  return pArchive.mReadableBlockCount;
 }
 
 bool ShouldDecodeArchiveFromDeepTemp(const DecodeArchiveDecodeCursorV2& pCursor,
-                                     std::size_t pArchiveSlot) {
-  return pCursor.mDeepDecodeFromTemp &&
-         pArchiveSlot < pCursor.mDeepTempArchivePathBySlot.size() &&
-         !pCursor.mDeepTempArchivePathBySlot[pArchiveSlot].empty();
+                                     std::size_t pArchiveSlot,
+                                     std::uint64_t pBlockIndex) {
+  return ShouldDecodeBlockFromDeepTemp(pCursor, pArchiveSlot, pBlockIndex);
 }
 
 bool StartDeepRecoverOutputPass(DecodeStageContextV2& pContext,
                                 DecodeArchiveDecodeCursorV2& pCursor,
                                 std::string& pOutError) {
   pOutError.clear();
-  if (!pContext.FileSystem().ClearDirectory(pContext.Request().mDestinationDirectory)) {
-    pOutError =
-        "failed clearing destination before deep recover output pass begins";
+  if (!ClearDirectoryPreservingPath(
+          pContext,
+          pContext.Request().mDestinationDirectory,
+          pCursor.mDeepTempRoot,
+          pOutError)) {
+    pOutError = "failed clearing destination before deep recover output pass begins: " +
+                pOutError;
     return false;
   }
 
@@ -1563,6 +2074,9 @@ bool StartDeepRecoverOutputPass(DecodeStageContextV2& pContext,
   pCursor.mReadFromDeepTemp = false;
   pCursor.mDeepScanActive = false;
   pCursor.mDeepScanExhausted = true;
+  MaybeEmitHealingProgressLog(pContext, pCursor, true);
+  pContext.EmitLog(LogLevelV2::kInfo, LogHealingScanCompletedV2());
+  EmitDecodeHealingModeExitedEvent(pContext, pCursor, "full_replay");
   pContext.EmitLog(
       LogLevelV2::kWarning,
       DecodeStagePrefix(pContext.Request().mIntent, ProgressStageV2::kArchiveDecode) +
@@ -1579,12 +2093,48 @@ bool RunDeepRecoverScanHeartbeat(DecodeStageContextV2& pContext,
       pContext.State().mDiscovery.mArchives;
 
   while (pCursor.mDeepScanArchiveSlot < aArchives.size()) {
+    if (pContext.IsCancelRequested()) {
+      DecodeCancelStateV2& aCancel = pContext.State().mCancel;
+      if (!aCancel.mObserved) {
+        aCancel = DecodeCancelStateV2{};
+        aCancel.mObserved = true;
+        aCancel.mShouldFinalizeAfterCancel = true;
+        aCancel.mCancelFileReference = pCursor.mFileDecoder.CurrentFileReference();
+        if (aCancel.mCancelFileReference.empty()) {
+          pContext.EmitLog(
+              LogLevelV2::kWarning,
+              DecodeStagePrefix(pContext.Request().mIntent, ProgressStageV2::kArchiveDecode) +
+                  " Cancel requested during healing scan; stopping before more staged blocks are written.");
+        } else {
+          pContext.EmitLog(
+              LogLevelV2::kWarning,
+              DecodeStagePrefix(pContext.Request().mIntent, ProgressStageV2::kArchiveDecode) +
+                  " Cancel requested during healing scan while waiting on '" +
+                  aCancel.mCancelFileReference +
+                  "'; stopping before more staged blocks are written.");
+        }
+      }
+      pCursor.mDeepCancelFinalizeRequested = true;
+      pCursor.mDeepScanRead.reset();
+      return true;
+    }
+
     const DiscoveredArchiveFileV2& aArchive = aArchives[pCursor.mDeepScanArchiveSlot];
     if (!aArchive.mIsPresent || aArchive.mPath.empty() ||
         pCursor.mDeepScanBlockIndex >= aArchive.mReadableBlockCount) {
+      const std::size_t aFinishedArchiveSlot = pCursor.mDeepScanArchiveSlot;
       ++pCursor.mDeepScanArchiveSlot;
       pCursor.mDeepScanBlockIndex = 0u;
       pCursor.mDeepScanRead.reset();
+      const bool aSealedForResume =
+          TrySealDeepRecoverArchiveForActiveResumeIfReady(pContext, pCursor);
+      const bool aSealedWholeArchive =
+          TrySealDeepRecoverArchiveIfReady(
+              pContext, pCursor, aFinishedArchiveSlot);
+      if (aSealedForResume || aSealedWholeArchive) {
+        pContext.ContinuePhaseOnNextHeartbeat();
+        return true;
+      }
       continue;
     }
 
@@ -1600,7 +2150,19 @@ bool RunDeepRecoverScanHeartbeat(DecodeStageContextV2& pContext,
                    pCursor.mDeepScanBlockIndex,
                    pContext.Layout().mArchiveBlockBytes,
                    pCursor.mBlockBytes)) {
+      const std::size_t aScannedArchiveSlot = pCursor.mDeepScanArchiveSlot;
       AdvanceDeepRecoverScanCursor(pCursor, aArchive);
+      if (pCursor.mDeepScanArchiveSlot != aScannedArchiveSlot) {
+        const bool aSealedForResume =
+            TrySealDeepRecoverArchiveForActiveResumeIfReady(pContext, pCursor);
+        const bool aSealedWholeArchive =
+            TrySealDeepRecoverArchiveIfReady(
+                pContext, pCursor, aScannedArchiveSlot);
+        if (aSealedForResume || aSealedWholeArchive) {
+          pContext.ContinuePhaseOnNextHeartbeat();
+          return true;
+        }
+      }
       pContext.ContinuePhaseOnNextHeartbeat();
       return true;
     }
@@ -1613,7 +2175,19 @@ bool RunDeepRecoverScanHeartbeat(DecodeStageContextV2& pContext,
             pCursor.mDeepDecodeBlockBytes,
             aSectionHeader,
             aValidationError)) {
+      const std::size_t aScannedArchiveSlot = pCursor.mDeepScanArchiveSlot;
       AdvanceDeepRecoverScanCursor(pCursor, aArchive);
+      if (pCursor.mDeepScanArchiveSlot != aScannedArchiveSlot) {
+        const bool aSealedForResume =
+            TrySealDeepRecoverArchiveForActiveResumeIfReady(pContext, pCursor);
+        const bool aSealedWholeArchive =
+            TrySealDeepRecoverArchiveIfReady(
+                pContext, pCursor, aScannedArchiveSlot);
+        if (aSealedForResume || aSealedWholeArchive) {
+          pContext.ContinuePhaseOnNextHeartbeat();
+          return true;
+        }
+      }
       pContext.ContinuePhaseOnNextHeartbeat();
       return true;
     }
@@ -1654,8 +2228,17 @@ bool RunDeepRecoverScanHeartbeat(DecodeStageContextV2& pContext,
         }
       }
       if (!aHeaderIsRepair && aHeaderTargetsRegular && aHeaderWritable) {
-        MarkDeepRecoverRegularSlotFilled(
-            pCursor, aHeaderArchiveSlot, aHeaderBlockIndex);
+        if (MarkDeepRecoverRegularSlotFilled(
+                pCursor, aHeaderArchiveSlot, aHeaderBlockIndex)) {
+          const bool aSealedForResume =
+              TrySealDeepRecoverArchiveForActiveResumeIfReady(pContext, pCursor);
+          const bool aSealedWholeArchive =
+              TrySealDeepRecoverArchiveIfReady(pContext, pCursor, aHeaderArchiveSlot);
+          if (aSealedForResume || aSealedWholeArchive) {
+            pContext.ContinuePhaseOnNextHeartbeat();
+            return true;
+          }
+        }
       }
     }
 
@@ -1713,15 +2296,38 @@ bool RunDeepRecoverScanHeartbeat(DecodeStageContextV2& pContext,
                             std::to_string(aTargetBlockIndex) + ": " + aStageError;
                 return false;
               }
-              MarkDeepRecoverRegularSlotFilled(
-                  pCursor, aTargetArchiveSlot, aTargetBlockIndex);
+              if (MarkDeepRecoverRegularSlotFilled(
+                      pCursor, aTargetArchiveSlot, aTargetBlockIndex)) {
+                const bool aSealedForResume =
+                    TrySealDeepRecoverArchiveForActiveResumeIfReady(
+                        pContext, pCursor);
+                const bool aSealedWholeArchive =
+                    TrySealDeepRecoverArchiveIfReady(
+                        pContext, pCursor, aTargetArchiveSlot);
+                if (aSealedForResume || aSealedWholeArchive) {
+                  pContext.ContinuePhaseOnNextHeartbeat();
+                  return true;
+                }
+              }
             }
           }
         }
       }
     }
 
+    const std::size_t aScannedArchiveSlot = pCursor.mDeepScanArchiveSlot;
     AdvanceDeepRecoverScanCursor(pCursor, aArchive);
+    if (pCursor.mDeepScanArchiveSlot != aScannedArchiveSlot) {
+      const bool aSealedForResume =
+          TrySealDeepRecoverArchiveForActiveResumeIfReady(pContext, pCursor);
+      const bool aSealedWholeArchive =
+          TrySealDeepRecoverArchiveIfReady(
+              pContext, pCursor, aScannedArchiveSlot);
+      if (aSealedForResume || aSealedWholeArchive) {
+        pContext.ContinuePhaseOnNextHeartbeat();
+        return true;
+      }
+    }
     pContext.ContinuePhaseOnNextHeartbeat();
     return true;
   }
@@ -1729,6 +2335,10 @@ bool RunDeepRecoverScanHeartbeat(DecodeStageContextV2& pContext,
   pCursor.mDeepScanActive = false;
   pCursor.mDeepScanExhausted = true;
   pCursor.mDeepScanRead.reset();
+  (void)TrySealDeepRecoverArchiveForActiveResumeIfReady(pContext, pCursor);
+  for (std::size_t aSlot = 0u; aSlot < aArchives.size(); ++aSlot) {
+    (void)TrySealDeepRecoverArchiveIfReady(pContext, pCursor, aSlot);
+  }
   return true;
 }
 
@@ -1736,28 +2346,30 @@ bool ActivateDeepRecoverHealing(DecodeStageContextV2& pContext,
                                 DecodeArchiveDecodeCursorV2& pCursor,
                                 std::string& pOutError) {
   pOutError.clear();
-  if (pCursor.mDeepTriggered || !DecodeIntentAllowsSalvageV2(pContext.Request().mIntent)) {
+  if (!DecodeIntentAllowsSalvageV2(pContext.Request().mIntent)) {
     return true;
   }
 
-  if (!PrepareDeepRecoverTempArchives(pContext, pCursor, pOutError)) {
-    return false;
+  if (!pCursor.mDeepTriggered) {
+    if (!PrepareDeepRecoverTempArchives(pContext, pCursor, pOutError)) {
+      return false;
+    }
+    pCursor.mDeepTriggered = true;
+    pCursor.mDeepDecodeFromTemp = true;
+    pCursor.mDeepScanArchiveSlot = 0u;
+    pCursor.mDeepScanBlockIndex = 0u;
+    pCursor.mDeepScanRead.reset();
+    ResetHealingProgress(pCursor);
+    pContext.EmitLog(LogLevelV2::kWarning, LogHealingScanStartedV2());
+    EmitHealingProgressLog(pContext, pCursor);
   }
 
-  pCursor.mDeepTriggered = true;
   pCursor.mDeepScanActive = true;
   pCursor.mDeepScanExhausted = false;
   pCursor.mDeepDecodeFromTemp = true;
   pCursor.mDeepOutputReplayActive = false;
   pCursor.mReadFromDeepTemp = false;
-  pCursor.mDeepScanArchiveSlot = 0u;
-  pCursor.mDeepScanBlockIndex = 0u;
-  pCursor.mDeepScanRead.reset();
   pCursor.mRead.reset();
-  pContext.EmitLog(
-      LogLevelV2::kWarning,
-      DecodeStagePrefix(pContext.Request().mIntent, ProgressStageV2::kArchiveDecode) +
-          " Healing scan activated. Decode will resume from staged temp blocks as they become available.");
   return true;
 }
 
@@ -1773,18 +2385,20 @@ HealingActivationResultV2 TryActivateDeepRecoverHealingAndYield(
     const std::string& pWaitMessage,
     std::string& pOutError) {
   pOutError.clear();
+  const std::string aReason =
+      pWaitMessage.empty() ? "Found corrupt data, switching to healing scan."
+                           : pWaitMessage;
   if (!CanActivateDeepRecoverHealing(pContext, pCursor)) {
     return HealingActivationResultV2::kUnavailable;
   }
   if (!ActivateDeepRecoverHealing(pContext, pCursor, pOutError)) {
     return HealingActivationResultV2::kError;
   }
-  if (!pWaitMessage.empty()) {
-    pContext.EmitLog(
-        LogLevelV2::kWarning,
-        DecodeStagePrefix(pContext.Request().mIntent, ProgressStageV2::kArchiveDecode) +
-            " " + pWaitMessage);
-  }
+  pContext.EmitLog(
+      LogLevelV2::kWarning,
+      LogHealingSwitchReasonV2(
+          LogActionFromDecodeIntentV2(pContext.Request().mIntent), aReason));
+  EmitDecodeHealingModeEnteredEvent(pContext, pCursor, aReason);
   pContext.ContinuePhaseOnNextHeartbeat();
   return HealingActivationResultV2::kActivatedAndYielding;
 }
@@ -1807,6 +2421,19 @@ void CleanupDeepRecoverTempArchives(DecodeStageContextV2& pContext,
   pCursor.mDeepOutputReplayActive = false;
   pCursor.mDeepTriggered = false;
   pCursor.mReadFromDeepTemp = false;
+  pCursor.mDeepStagedBlockCount = 0u;
+  pCursor.mDeepStagedByteCount = 0u;
+  pCursor.mNextHealingProgressByteLog = 0u;
+  pCursor.mDeepCancelFinalizeRequested = false;
+  std::fill(pCursor.mDeepArchiveSealedBySlot.begin(),
+            pCursor.mDeepArchiveSealedBySlot.end(),
+            0u);
+  std::fill(pCursor.mDeepArchiveSealFloorBySlot.begin(),
+            pCursor.mDeepArchiveSealFloorBySlot.end(),
+            std::numeric_limits<std::uint64_t>::max());
+  std::fill(pCursor.mDeepRegularFilledCountByArchive.begin(),
+            pCursor.mDeepRegularFilledCountByArchive.end(),
+            0u);
   pCursor.mRead.reset();
   pCursor.mDeepScanRead.reset();
 }
@@ -1936,26 +2563,14 @@ bool TryApplyRecoverSkipRecord(DecodeStageContextV2& pContext,
       LogicalToPhysicalBlockIndexWithKnownLoss(
           pCursor, aTargetArchiveSlot, aTargetBlockIndex);
   if (aTargetArchiveSlot >= aArchives.size()) {
-    pContext.EmitLog(
-        LogLevelV2::kWarning,
-        DecodeStagePrefix(pContext.Request().mIntent, ProgressStageV2::kArchiveDecode) +
-            " Ignoring skip record: target archive slot out of range.");
     return false;
   }
   if (aTargetPayloadOffset >= aPayloadBytesPerBlock) {
-    pContext.EmitLog(
-        LogLevelV2::kWarning,
-        DecodeStagePrefix(pContext.Request().mIntent, ProgressStageV2::kArchiveDecode) +
-            " Ignoring skip record: target payload offset out of range.");
     return false;
   }
 
   const DiscoveredArchiveFileV2& aTargetArchive = aArchives[aTargetArchiveSlot];
   if (aTargetPhysicalBlockIndex >= aTargetArchive.mReadableBlockCount) {
-    pContext.EmitLog(
-        LogLevelV2::kWarning,
-        DecodeStagePrefix(pContext.Request().mIntent, ProgressStageV2::kArchiveDecode) +
-            " Ignoring skip record: target block index out of readable range after drift mapping.");
     return false;
   }
 
@@ -1971,10 +2586,6 @@ bool TryApplyRecoverSkipRecord(DecodeStageContextV2& pContext,
       pCurrentPayloadStart == 0u &&
       aTargetPayloadOffset == 0u;
   if (!aForward && !aCurrentBlockResyncAnchor) {
-    pContext.EmitLog(
-        LogLevelV2::kWarning,
-        DecodeStagePrefix(pContext.Request().mIntent, ProgressStageV2::kArchiveDecode) +
-            " Ignoring skip record: target is not forward-progressing.");
     return false;
   }
 
@@ -1983,16 +2594,8 @@ bool TryApplyRecoverSkipRecord(DecodeStageContextV2& pContext,
       aTargetBlockIndex == pCurrentLogicalBlockIndex;
 
   if (aTargetsCurrentBlock) {
-    pCursor.mHasPendingSkipLandingValidation = false;
-    pCursor.mPendingSkipSourceArchiveSlot = 0u;
-    pCursor.mPendingSkipSourceBlockIndex = 0u;
-    pCursor.mPendingSkipTargetArchiveSlot = 0u;
-    pCursor.mPendingSkipTargetBlockIndex = 0u;
+    ResetPendingSkipLandingValidation(pCursor);
     if (aTargetPayloadOffset >= pCurrentPayloadEnd) {
-      pContext.EmitLog(
-          LogLevelV2::kWarning,
-          DecodeStagePrefix(pContext.Request().mIntent, ProgressStageV2::kArchiveDecode) +
-              " Ignoring skip record: intra-block target offset beyond payload end.");
       return false;
     }
     pCursor.mHasPausedBlockBoundary = true;
@@ -2002,6 +2605,11 @@ bool TryApplyRecoverSkipRecord(DecodeStageContextV2& pContext,
     pCursor.mPausedBoundaryRecordReference.clear();
     pCursor.mHasForcedBlockPayloadStart = false;
     pCursor.mForcedBlockPayloadStart = 0u;
+    EmitAppliedRecoverSkipRecordLog(pContext,
+                                    aTargetArchiveSlot,
+                                    aTargetBlockIndex,
+                                    aTargetPhysicalBlockIndex,
+                                    aTargetPayloadOffset);
   } else {
     // Forward inter-block jumps are valid in both optimistic and pessimistic
     // salvage walks. Landing validation guards against bad destinations and
@@ -2011,6 +2619,8 @@ bool TryApplyRecoverSkipRecord(DecodeStageContextV2& pContext,
     pCursor.mPendingSkipSourceBlockIndex = pCurrentPhysicalBlockIndex;
     pCursor.mPendingSkipTargetArchiveSlot = aTargetArchiveSlot;
     pCursor.mPendingSkipTargetBlockIndex = aTargetPhysicalBlockIndex;
+    pCursor.mPendingSkipTargetLogicalBlockIndex = aTargetBlockIndex;
+    pCursor.mPendingSkipTargetPayloadOffset = aTargetPayloadOffset;
     pCursor.mRead.reset();
     pCursor.mArchiveSlot = aTargetArchiveSlot;
     pCursor.mBlockIndex = aTargetPhysicalBlockIndex;
@@ -2028,15 +2638,6 @@ bool TryApplyRecoverSkipRecord(DecodeStageContextV2& pContext,
   pCursor.mHasOpenFileContinuation = false;
   pCursor.mContinuationArchiveSlot = 0u;
   pCursor.mContinuationBlockIndex = 0u;
-
-  pContext.EmitLog(
-      LogLevelV2::kInfo,
-      DecodeStagePrefix(pContext.Request().mIntent, ProgressStageV2::kArchiveDecode) +
-          " Applied skip record jump to archive slot " +
-          std::to_string(aTargetArchiveSlot) + ", block " +
-          std::to_string(aTargetBlockIndex) + " (physical " +
-          std::to_string(aTargetPhysicalBlockIndex) + "), payload offset " +
-          std::to_string(aTargetPayloadOffset) + ".");
   return true;
 }
 
@@ -2063,11 +2664,7 @@ void AdvanceDecodeArchiveCursor(DecodeArchiveDecodeCursorV2& pCursor) {
   pCursor.mPausedBoundaryRecordReference.clear();
   pCursor.mHasForcedBlockPayloadStart = false;
   pCursor.mForcedBlockPayloadStart = 0u;
-  pCursor.mHasPendingSkipLandingValidation = false;
-  pCursor.mPendingSkipSourceArchiveSlot = 0u;
-  pCursor.mPendingSkipSourceBlockIndex = 0u;
-  pCursor.mPendingSkipTargetArchiveSlot = 0u;
-  pCursor.mPendingSkipTargetBlockIndex = 0u;
+  ResetPendingSkipLandingValidation(pCursor);
 }
 
 bool CloseDecodeArchiveForCursor(DecodeStageContextV2& pContext,
@@ -2260,28 +2857,29 @@ DamagedBlockAdvanceResultV2 ContinueAfterDamagedBlockWithSkipLandingFallback(
   const std::size_t aSourceArchiveSlot = pCursor.mPendingSkipSourceArchiveSlot;
   const std::uint64_t aSourceBlockIndex = pCursor.mPendingSkipSourceBlockIndex;
 
-  pCursor.mHasPendingSkipLandingValidation = false;
-  pCursor.mPendingSkipSourceArchiveSlot = 0u;
-  pCursor.mPendingSkipSourceBlockIndex = 0u;
-  pCursor.mPendingSkipTargetArchiveSlot = 0u;
-  pCursor.mPendingSkipTargetBlockIndex = 0u;
+  ResetPendingSkipLandingValidation(pCursor);
 
   if (aSourceArchiveSlot >= aArchives.size()) {
-    pContext.EmitLog(
-        LogLevelV2::kWarning,
-        DecodeStagePrefix(pContext.Request().mIntent, ProgressStageV2::kArchiveDecode) +
-            " Skip-record landing block failed, but source was unavailable. "
-            "Continuing from current damaged block.");
+    if (ShouldLogSkipLandingFallback(
+            pCursor, DecodeArchiveDecodeCursorV2::kInvalidArchiveSlot, aSourceBlockIndex)) {
+      pContext.EmitLog(
+          LogLevelV2::kWarning,
+          DecodeStagePrefix(pContext.Request().mIntent, ProgressStageV2::kArchiveDecode) +
+              " Skip-record landing block failed, but source was unavailable. "
+              "Continuing from current damaged block.");
+    }
     return ContinueAfterDamagedBlock(pContext, pCursor, pArchive);
   }
 
   SwitchToPessimistic(
       pContext, "skip-record landing block failed validation/parse.");
-  pContext.EmitLog(
-      LogLevelV2::kWarning,
-      DecodeStagePrefix(pContext.Request().mIntent, ProgressStageV2::kArchiveDecode) +
-          " Skip-record landing block failed; resuming pessimistic walk from "
-          "source block + 1.");
+  if (ShouldLogSkipLandingFallback(pCursor, aSourceArchiveSlot, aSourceBlockIndex)) {
+    pContext.EmitLog(
+        LogLevelV2::kWarning,
+        DecodeStagePrefix(pContext.Request().mIntent, ProgressStageV2::kArchiveDecode) +
+            " Skip-record landing block failed; resuming pessimistic walk from "
+            "source block + 1.");
+  }
 
   pCursor.mRead.reset();
   pCursor.mArchiveSlot = aSourceArchiveSlot;
@@ -2312,6 +2910,7 @@ enum class DeepRecoverBlockReadyV2 {
   kWaiting = 1,
   kFallbackStarted = 2,
   kError = 3,
+  kCancelFinalize = 4,
 };
 
 DeepRecoverBlockReadyV2 EnsureDeepRecoverBlockReady(
@@ -2319,6 +2918,9 @@ DeepRecoverBlockReadyV2 EnsureDeepRecoverBlockReady(
     DecodeArchiveDecodeCursorV2& pCursor,
     std::string& pOutError) {
   pOutError.clear();
+  if (pCursor.mDeepCancelFinalizeRequested) {
+    return DeepRecoverBlockReadyV2::kCancelFinalize;
+  }
   if (!pCursor.mDeepDecodeFromTemp) {
     return DeepRecoverBlockReadyV2::kReady;
   }
@@ -2326,8 +2928,7 @@ DeepRecoverBlockReadyV2 EnsureDeepRecoverBlockReady(
     return DeepRecoverBlockReadyV2::kReady;
   }
 
-  if (IsDeepRecoverPhysicalSlotFilled(
-          pCursor, pCursor.mArchiveSlot, pCursor.mBlockIndex)) {
+  if (TryMoveDecodeCursorToSealedHealingResumePoint(pContext, pCursor)) {
     return DeepRecoverBlockReadyV2::kReady;
   }
 
@@ -2335,15 +2936,36 @@ DeepRecoverBlockReadyV2 EnsureDeepRecoverBlockReady(
     if (!RunDeepRecoverScanHeartbeat(pContext, pCursor, pOutError)) {
       return DeepRecoverBlockReadyV2::kError;
     }
-    if (IsDeepRecoverPhysicalSlotFilled(
-            pCursor, pCursor.mArchiveSlot, pCursor.mBlockIndex)) {
-      return DeepRecoverBlockReadyV2::kReady;
+    if (pCursor.mDeepCancelFinalizeRequested) {
+      return DeepRecoverBlockReadyV2::kCancelFinalize;
+    }
+    if (TryMoveDecodeCursorToSealedHealingResumePoint(pContext, pCursor)) {
+      pCursor.mDeepScanActive = false;
+      pCursor.mDeepScanRead.reset();
+      pCursor.mRead.reset();
+      pCursor.mReadFromDeepTemp = false;
+      pContext.EmitLog(
+          LogLevelV2::kInfo,
+          LogHealingResumeDecodeV2(LogActionFromDecodeIntentV2(pContext.Request().mIntent)));
+      EmitDecodeHealingModeExitedEvent(pContext, pCursor, "sealed_healing_archive");
+      pContext.ContinuePhaseOnNextHeartbeat();
+      return DeepRecoverBlockReadyV2::kWaiting;
     }
     return pCursor.mDeepScanActive ? DeepRecoverBlockReadyV2::kWaiting
                                    : DeepRecoverBlockReadyV2::kFallbackStarted;
   }
 
   if (!pCursor.mDeepScanExhausted) {
+    return DeepRecoverBlockReadyV2::kReady;
+  }
+  if (TryMoveDecodeCursorToSealedHealingResumePoint(pContext, pCursor)) {
+    pCursor.mRead.reset();
+    pCursor.mReadFromDeepTemp = false;
+    pContext.EmitLog(
+        LogLevelV2::kInfo,
+        LogHealingResumeDecodeV2(LogActionFromDecodeIntentV2(pContext.Request().mIntent)));
+    EmitDecodeHealingModeExitedEvent(pContext, pCursor, "sealed_healing_archive");
+    pContext.ContinuePhaseOnNextHeartbeat();
     return DeepRecoverBlockReadyV2::kWaiting;
   }
 
@@ -2359,7 +2981,8 @@ bool EnsureDecodeReadStreamForCurrentArchive(DecodeStageContextV2& pContext,
                                              std::string& pOutError) {
   pOutError.clear();
   const bool aShouldUseDeepTemp =
-      ShouldDecodeArchiveFromDeepTemp(pCursor, pCursor.mArchiveSlot);
+      ShouldDecodeArchiveFromDeepTemp(
+          pCursor, pCursor.mArchiveSlot, pCursor.mBlockIndex);
   if (pCursor.mRead != nullptr && pCursor.mReadFromDeepTemp == aShouldUseDeepTemp) {
     return true;
   }
@@ -2649,7 +3272,9 @@ bool DecodeArchiveDecodeV2::Run(DecodeStageContextV2& pContext) {
       }
       aCursor.mArchiveAnnounced = true;
 
-      if (!aArchive.mIsPresent && !ShouldDecodeArchiveFromDeepTemp(aCursor, aCursor.mArchiveSlot)) {
+      if (!aArchive.mIsPresent &&
+          !ShouldDecodeArchiveFromDeepTemp(
+              aCursor, aCursor.mArchiveSlot, aCursor.mBlockIndex)) {
         bool aYieldedToHealing = false;
         if (!TryYieldToHealing(std::string(), aYieldedToHealing)) {
           return false;
@@ -2672,6 +3297,36 @@ bool DecodeArchiveDecodeV2::Run(DecodeStageContextV2& pContext) {
       }
     }
 
+    SectionHeaderV2 aSectionHeader;
+    std::size_t aBlockPayloadStart = 0u;
+    std::size_t aBlockPayloadEnd = 0u;
+    std::uint64_t aLogicalBlockIndex = aCursor.mBlockIndex;
+    const bool aResumingPausedBlock = aCursor.mHasPausedBlockBoundary;
+    if (!aResumingPausedBlock) {
+      const std::size_t aInitialArchiveSlot = aCursor.mArchiveSlot;
+      const std::uint64_t aInitialBlockIndex = aCursor.mBlockIndex;
+      std::string aDeepRecoverError;
+      const DeepRecoverBlockReadyV2 aBlockReady =
+          EnsureDeepRecoverBlockReady(pContext, aCursor, aDeepRecoverError);
+      if (aBlockReady == DeepRecoverBlockReadyV2::kError) {
+        return FailArchiveDecodePhase("healing scan failed: " + aDeepRecoverError);
+      }
+      if (aBlockReady == DeepRecoverBlockReadyV2::kCancelFinalize) {
+        return FinalizeDecodeArchivePhase(pContext, aCursorPtr);
+      }
+      if (aBlockReady == DeepRecoverBlockReadyV2::kWaiting) {
+        return true;
+      }
+      if (aBlockReady == DeepRecoverBlockReadyV2::kFallbackStarted) {
+        continue;
+      }
+      if (aCursor.mArchiveSlot != aInitialArchiveSlot ||
+          aCursor.mBlockIndex != aInitialBlockIndex) {
+        pContext.ContinuePhaseOnNextHeartbeat();
+        return true;
+      }
+    }
+
     const std::uint64_t aReadableBlockCount =
         CurrentDecodeReadableBlockCountForArchive(pContext, aCursor, aArchive);
     if (aCursor.mBlockIndex >= aReadableBlockCount) {
@@ -2685,24 +3340,7 @@ bool DecodeArchiveDecodeV2::Run(DecodeStageContextV2& pContext) {
       break;
     }
 
-    SectionHeaderV2 aSectionHeader;
-    std::size_t aBlockPayloadStart = 0u;
-    std::size_t aBlockPayloadEnd = 0u;
-    std::uint64_t aLogicalBlockIndex = aCursor.mBlockIndex;
-    const bool aResumingPausedBlock = aCursor.mHasPausedBlockBoundary;
     if (!aResumingPausedBlock) {
-      std::string aDeepRecoverError;
-      const DeepRecoverBlockReadyV2 aBlockReady =
-          EnsureDeepRecoverBlockReady(pContext, aCursor, aDeepRecoverError);
-      if (aBlockReady == DeepRecoverBlockReadyV2::kError) {
-        return FailArchiveDecodePhase("healing scan failed: " + aDeepRecoverError);
-      }
-      if (aBlockReady == DeepRecoverBlockReadyV2::kWaiting) {
-        return true;
-      }
-      if (aBlockReady == DeepRecoverBlockReadyV2::kFallbackStarted) {
-        continue;
-      }
 
       std::string aOpenError;
       if (!EnsureDecodeReadStreamForCurrentArchive(
@@ -2838,7 +3476,8 @@ bool DecodeArchiveDecodeV2::Run(DecodeStageContextV2& pContext) {
                 aArchiveBlockBytes,
                 &aUnsealError)) {
           bool aYieldedToHealing = false;
-          if (!TryYieldToHealing(std::string(), aYieldedToHealing)) {
+          if (!TryYieldToHealing("Found an invalid checksum, switching to healing scan.",
+                                 aYieldedToHealing)) {
             return false;
           }
           if (aYieldedToHealing) {
@@ -2890,7 +3529,8 @@ bool DecodeArchiveDecodeV2::Run(DecodeStageContextV2& pContext) {
           if (ShouldStopAfterFirstDamagedBlock(pContext)) {
             return FinalizeDecodeArchiveAfterUnbundleDamage(pContext, aCursorPtr);
           }
-          if (!TryYieldToHealing(std::string(), aYieldedToHealing)) {
+          if (!TryYieldToHealing("Found an invalid checksum, switching to healing scan.",
+                                 aYieldedToHealing)) {
             return false;
           }
           if (aYieldedToHealing) {
@@ -2921,7 +3561,8 @@ bool DecodeArchiveDecodeV2::Run(DecodeStageContextV2& pContext) {
                                            aSectionPayloadBytes,
                                            aSectionHeader)) {
           bool aYieldedToHealing = false;
-          if (!TryYieldToHealing(std::string(), aYieldedToHealing)) {
+          if (!TryYieldToHealing("Found an invalid data sequencing, switching to healing scan.",
+                                 aYieldedToHealing)) {
             return false;
           }
           if (aYieldedToHealing) {
@@ -3745,11 +4386,12 @@ bool DecodeArchiveDecodeV2::Run(DecodeStageContextV2& pContext) {
     if (aCursor.mHasPendingSkipLandingValidation &&
         aCursor.mArchiveSlot == aCursor.mPendingSkipTargetArchiveSlot &&
         aCursor.mBlockIndex == aCursor.mPendingSkipTargetBlockIndex) {
-      aCursor.mHasPendingSkipLandingValidation = false;
-      aCursor.mPendingSkipSourceArchiveSlot = 0u;
-      aCursor.mPendingSkipSourceBlockIndex = 0u;
-      aCursor.mPendingSkipTargetArchiveSlot = 0u;
-      aCursor.mPendingSkipTargetBlockIndex = 0u;
+      EmitAppliedRecoverSkipRecordLog(pContext,
+                                      aCursor.mPendingSkipTargetArchiveSlot,
+                                      aCursor.mPendingSkipTargetLogicalBlockIndex,
+                                      aCursor.mPendingSkipTargetBlockIndex,
+                                      aCursor.mPendingSkipTargetPayloadOffset);
+      ResetPendingSkipLandingValidation(aCursor);
     }
 
     ++aCursor.mBlockIndex;

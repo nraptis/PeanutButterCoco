@@ -583,6 +583,14 @@ static CGFloat RequiredUnbundlePanelHeight(void) {
         (destination.length > 0) ? destination : @"unbundled";
 }
 
+- (void)applyUnbundleRecoverDefaultEnabled:(BOOL)recoverEnabled {
+    _unbundleRecoverEnabled = recoverEnabled;
+    if (self.activeHomeTabIndex == 1) {
+        self.unbundleRecoverCheckbox.state =
+            recoverEnabled ? NSControlStateValueOn : NSControlStateValueOff;
+    }
+}
+
 - (void)setBundleSourcePathDropHandler:(void (^)(NSString *path))handler {
     _bundleSourceChunkView.pathDropHandler = handler;
 }

@@ -42,6 +42,7 @@
                           destination:(NSString *)destination;
 - (void)applyUnbundleDefaultsWithSource:(NSString *)source
                             destination:(NSString *)destination;
+- (void)applyUnbundleRecoverDefaultEnabled:(BOOL)recoverEnabled;
 - (void)setBundleSourcePathDropHandler:(void (^)(NSString *path))handler;
 - (void)setBundleDestinationPathDropHandler:(void (^)(NSString *path))handler;
 - (void)setUnbundleSourcePathDropHandler:(void (^)(NSString *path))handler;

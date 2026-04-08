@@ -377,4 +377,62 @@
     }
 }
 
+- (void)test_regression_nonfatal_cancel_during_healing_scan {
+    JobBundle aJob;
+    aJob.mPayloadBytesPerBlock = 12;
+    aJob.mBlocksPerArchive = 2;
+    aJob.mPreviewEnabled = 1;
+    aJob.mRepairCoverage = 20;
+    aJob.AddFile("Y.力Z", "i");
+    aJob.AddFile("大.ja", "");
+
+    MockHardDrive aHardDrive;
+    MockFileSystem aFileSystem(&aHardDrive);
+    ByteString aErrorString;
+
+    if (!TestBundleWithHooks::PerformReal(aJob, aFileSystem, &aErrorString)) {
+        XCTFail(@"Round trip regression failed on happy flow.");
+        return;
+    }
+
+    vector<FakeMutation> aMutations;
+    {
+        FakeMutation aMutation;
+        aMutation.SetDeleteArchive("/root/archived/bdl_1.PBTR", 1);
+        aMutations.push_back(aMutation);
+    }
+
+    if (!MutationTool::ApplyMutationsReal(aJob, &aMutations, &aHardDrive, &aErrorString)) {
+        XCTFail(@"Round trip regression failed while applying mutations.");
+        return;
+    }
+
+    bool aSawHealingScan = false;
+    const auto aOnBatch =
+    [&](const TestUnbundleWithHooks::PhaseBatchFeedback &pFeedback,
+        peanutbutter::DecodeStageContextV2 &pContext,
+        SimpleDecodeRuntime &pRuntime) {
+        (void)pFeedback;
+        (void)pContext;
+        if (pRuntime.IsCancelRequested()) {
+            return;
+        }
+        for (const std::string& aLog : pRuntime.mLogs) {
+            if (aLog.find("building ledgers to attempt recovery START.") != std::string::npos) {
+                aSawHealingScan = true;
+                pRuntime.Cancel();
+                break;
+            }
+        }
+    };
+
+    const bool aSucceeded = TestUnbundleWithHooks::PerformRealRecover(
+        aJob, aFileSystem, aOnBatch, &aErrorString);
+    XCTAssertFalse(aSucceeded);
+    XCTAssertTrue(aSawHealingScan);
+    XCTAssertEqualObjects(@"Unbundle job was cancelled.",
+                          [NSString stringWithUTF8String:aErrorString.ToString().c_str()]);
+    XCTAssertFalse(aFileSystem.Exists("/root/unarchived/$RECOVER"));
+}
+
 @end

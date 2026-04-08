@@ -57,6 +57,9 @@ enum class RuntimeEventKindV2 {
   kRepairArchiveStarted = 42,
   kRepairArchiveFinished = 43,
   kRepairArchiveHeaderWritten = 44,
+  kDecodeHealingModeEntered = 45,
+  kDecodeHealingArchiveSealed = 46,
+  kDecodeHealingModeExited = 47,
 };
 
 struct RuntimeEventInfoV2 {
@@ -192,6 +195,12 @@ inline const char* RuntimeEventKindLabelV2(RuntimeEventKindV2 pKind) {
       return "RepairArchiveFinished";
     case RuntimeEventKindV2::kRepairArchiveHeaderWritten:
       return "RepairArchiveHeaderWritten";
+    case RuntimeEventKindV2::kDecodeHealingModeEntered:
+      return "DecodeHealingModeEntered";
+    case RuntimeEventKindV2::kDecodeHealingArchiveSealed:
+      return "DecodeHealingArchiveSealed";
+    case RuntimeEventKindV2::kDecodeHealingModeExited:
+      return "DecodeHealingModeExited";
     case RuntimeEventKindV2::kUnknown:
       return "Unknown";
   }
@@ -244,6 +253,9 @@ inline bool RuntimeEventKindIsVerboseV2(RuntimeEventKindV2 pKind) {
     case RuntimeEventKindV2::kRepairArchiveStarted:
     case RuntimeEventKindV2::kRepairArchiveFinished:
     case RuntimeEventKindV2::kRepairArchiveHeaderWritten:
+    case RuntimeEventKindV2::kDecodeHealingModeEntered:
+    case RuntimeEventKindV2::kDecodeHealingArchiveSealed:
+    case RuntimeEventKindV2::kDecodeHealingModeExited:
     case RuntimeEventKindV2::kRepairFileCreated:
     case RuntimeEventKindV2::kRepairFileResized:
       return false;

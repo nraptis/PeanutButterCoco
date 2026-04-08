@@ -17,6 +17,7 @@
 @property (copy, nonatomic) NSString *bundleFilePrefixDefault;
 @property (copy, nonatomic) NSString *bundlePasswordDefault;
 @property (copy, nonatomic) NSString *unbundlePasswordDefault;
+@property (assign, nonatomic) BOOL unbundleRecoverDefault;
 @property (copy, nonatomic) NSString *bundleBlockCountDefault;
 @property (copy, nonatomic) NSString *bundleEncryptionStrengthDefault;
 @property (copy, nonatomic) NSString *bundleTableStrengthDefault;

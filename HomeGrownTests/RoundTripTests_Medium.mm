@@ -311,10 +311,10 @@
 
 - (void)test_100_full_spectrum {
     
-    for (int aPayloadBytesPerBlock=1;aPayloadBytesPerBlock<=24;aPayloadBytesPerBlock+=6) {
+    for (int aPayloadBytesPerBlock=1;aPayloadBytesPerBlock<=100;aPayloadBytesPerBlock+=6) {
         printf("aPayloadBytesPerBlock = %d\n", aPayloadBytesPerBlock);
         
-        for (int aBlocksPerArchive=1;aBlocksPerArchive<=8;aBlocksPerArchive+=2) {
+        for (int aBlocksPerArchive=10;aBlocksPerArchive<=12;aBlocksPerArchive+=2) {
             printf("\taBlocksPerArchive = %d\n", aBlocksPerArchive);
             
             for (int aRepair=0;aRepair<=80;aRepair+=20) {
@@ -323,8 +323,8 @@
                 for (int aPreview=0;aPreview<2;aPreview++) {
                     for (int aTestIndex=0;aTestIndex<36;aTestIndex++) {
                         
-                        int aFileCount = Random::Get(0, 3);
-                        int aFolderCount = Random::Get(0, 3);
+                        int aFileCount = Random::Get(0, 12);
+                        int aFolderCount = Random::Get(0, 12);
                         
                         if ((aFileCount == 0) && (aFolderCount == 0)) {
                             if (Random::Get(2) == 0) {
@@ -335,13 +335,18 @@
                         }
                         
                         
-                        vector <ByteString> aNames = Words::GetRandomFolderNames(Random::Get(1, 12), 2, 4);
+                        
+                        int aNameLo = Random::Get(1, 180);
+                        int aLameHi = aNameLo + Random::Get(0, 100);
+                        //vector <ByteString> aNames = Words::GetRandomFolderNames(Random::Get(1, 4), 2, 4);
+                        vector <ByteString> aNames = Words::GetRandomFolderNames(Random::Get(1, 12), aNameLo, aLameHi);
+                        
                         vector<FakeFile> aFiles;
                         
                         for (auto aName: aNames) {
                             
                             int aDupeCount = Random::Get(1, 4);
-                            int aIsFolder = Random::Get(2);
+                            
                             
                             for (int aDupeIndex=0;aDupeIndex<aDupeCount;aDupeIndex++) {
                                 
@@ -354,6 +359,8 @@
                                     aModifiedName.Set(ByteString("$PARTIAL_") + aName + ByteString("_") + ByteString(aDupeIndex - 1));
                                 }
                                 
+                                int aIsFolder = Random::Get(2);
+                                
                                 if (aIsFolder) {
                                     FakeFile aFile;
                                     aFile.mName.Set(aModifiedName);
@@ -362,7 +369,7 @@
                                 } else {
                                     FakeFile aFile;
                                     aFile.mName.Set(aModifiedName);
-                                    aFile.mContent.Set(Words::GetRandomFileContent(0, 12));
+                                    aFile.mContent.Set(Words::GetRandomFileContent(0, 100));
                                     aFile.mIsFolder = false;
                                     aFiles.push_back(aFile);
                                 }
@@ -373,8 +380,8 @@
                             
                         }
                         
-                        /*
                         
+                        /*
                          //vector<FakeFile> aFiles = Words::GetRandomFiles(aFileCount, 1, 4, 0, 8);
                          
                          int aFileNameLo = Random::Get(1, 4);
@@ -390,7 +397,6 @@
                          aFileContentLo, aFileContentHi,
                          aFolderCount, aFolderNameLo, aFolderNameHi);
                         */
-                        
                         
                         JobBundle aJob;
                         for (auto aFile: aFiles) {
@@ -444,7 +450,7 @@
                         
                         vector<FakeMutation> aMutations;
                         
-                        FakeMutation::AttemptGenerateRandom(3, &aMockArchives, &aMutations);
+                        FakeMutation::AttemptGenerateRandom(8, &aMockArchives, &aMutations);
                         
                         /*
                         FakeMutation::AttemptGenerateRandomBlockDestruction(Random::Get(3),

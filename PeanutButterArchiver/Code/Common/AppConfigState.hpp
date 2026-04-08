@@ -32,6 +32,7 @@ struct AppConfigStateV2 {
   std::string mUnbundleDirectorySource;
   std::string mUnbundleDirectoryDestination;
   bool mUnbundleEncrypt = true;
+  bool mUnbundleRecover = false;
   std::string mUnbundlePassword;
 
   std::string mRepairDirectorySource;

@@ -324,6 +324,7 @@
         (self.bundleFilePrefixDefault.length > 0) ? self.bundleFilePrefixDefault : @"archive";
     activeView.bundlePasswordTextField.stringValue = self.bundlePasswordDefault ?: @"";
     activeView.unbundlePasswordTextField.stringValue = self.unbundlePasswordDefault ?: @"";
+    [activeView applyUnbundleRecoverDefaultEnabled:self.unbundleRecoverDefault];
     activeView.bundleRepairCheckbox.state = self.bundleRepairDefault ? NSControlStateValueOn : NSControlStateValueOff;
     activeView.bundleEncryptCheckbox.state = self.bundleEncryptDefault ? NSControlStateValueOn : NSControlStateValueOff;
     activeView.bundleIncludePreviewCheckbox.state = self.bundleIncludePreviewDefault ? NSControlStateValueOn : NSControlStateValueOff;
@@ -406,6 +407,7 @@
         [self.configStore saveUnbundleUiStateWithHomeTab:homeTab
                                                   source:activeView.unbundleSourceTextField.stringValue
                                              destination:activeView.unbundleDestinationTextField.stringValue
+                                          recoverEnabled:(activeView.unbundleRecoverCheckbox.state == NSControlStateValueOn)
                                                 password:activeView.unbundlePasswordTextField.stringValue
                                                    error:&error];
     }

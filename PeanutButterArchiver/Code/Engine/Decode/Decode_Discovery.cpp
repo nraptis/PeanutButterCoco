@@ -70,10 +70,12 @@ bool ReadArchiveHeaderFromPath(FileSystemV2& pFileSystem,
                                const std::string& pPath,
                                memory_layout::ArchiveHeaderV2& pOutHeader,
                                std::uint64_t& pOutFileLength) {
+  pOutFileLength = 0u;
   std::unique_ptr<FileReadStreamV2> aRead = pFileSystem.OpenReadStream(pPath);
   if (aRead == nullptr || !aRead->IsReady()) {
     return false;
   }
+  pOutFileLength = static_cast<std::uint64_t>(aRead->GetLength());
   if (aRead->GetLength() < memory_layout::kArchiveHeaderBytesV2) {
     return false;
   }
@@ -88,8 +90,6 @@ bool ReadArchiveHeaderFromPath(FileSystemV2& pFileSystem,
                                         nullptr)) {
     return false;
   }
-
-  pOutFileLength = static_cast<std::uint64_t>(aRead->GetLength());
   return true;
 }
 
@@ -236,10 +236,12 @@ bool DecodeDiscoveryV2::Run(DecodeStageContextV2& pContext) {
     aDiscovered.mFilenameIndex = static_cast<std::uint64_t>(aFilenameIndex);
     aDiscovered.mHasReadableHeader = aHeaderReadable;
     aDiscovered.mHeader = aHeader;
-    if (aHeaderReadable && aFileLength >= memory_layout::kArchiveHeaderBytesV2) {
+    if (aFileLength >= memory_layout::kArchiveHeaderBytesV2) {
       aDiscovered.mReadableBlockCount =
           (aFileLength - memory_layout::kArchiveHeaderBytesV2) /
           aArchiveBlockBytes;
+    }
+    if (aHeaderReadable && aFileLength >= memory_layout::kArchiveHeaderBytesV2) {
       aDiscovered.mHeaderIndex =
           memory_layout::PackedUint48ToUInt64(aHeader.mArchiveIndex);
     }

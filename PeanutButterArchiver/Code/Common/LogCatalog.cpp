@@ -443,6 +443,34 @@ std::string LogDecodeFinalizeSummaryV2(LogActionV2 pAction,
          std::to_string(pBytesWritten) + " bytes.";
 }
 
+std::string LogHealingScanStartedV2(void) {
+  return "[Healing] Found corrupt data, building ledgers to attempt recovery START.";
+}
+
+std::string LogHealingScanProgressV2(std::uint64_t pBlockCount,
+                                     std::uint64_t pByteCount) {
+  return "[Healing] Found corrupt data, building ledgers to attempt recovery " +
+         std::to_string(pBlockCount) + " blocks " + FormatHumanBytesV2(pByteCount) + ".";
+}
+
+std::string LogHealingScanCompletedV2(void) {
+  return "[Healing] Found corrupt data, building ledgers to attempt recovery DONE.";
+}
+
+std::string LogHealingArchiveSealedV2(std::uint64_t pArchiveSlot) {
+  return "[Healing] Sealed temporary archive " + std::to_string(pArchiveSlot) + ".";
+}
+
+std::string LogHealingResumeDecodeV2(LogActionV2 pAction) {
+  return "[" + LogActionLabelV2(pAction) +
+         "][Archive Decode] Healing process has recovered enough data to continue the decode.";
+}
+
+std::string LogHealingSwitchReasonV2(LogActionV2 pAction,
+                                     const std::string& pReason) {
+  return "[" + LogActionLabelV2(pAction) + "][Archive Decode] " + pReason;
+}
+
 std::string LogPessimisticSwitchV2(LogActionV2 pAction,
                                    const std::string& pReason) {
   return "[" + LogActionLabelV2(pAction) + "][Discovery] Switched to pessimistic mode: " +

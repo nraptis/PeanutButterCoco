@@ -15,7 +15,7 @@ JobBundle::JobBundle() {
     mUnarchived = "/root/unarchived";
     mFilePrefix = "bdl_";
     mPayloadBytesPerBlock = 18;
-    mMaxPathLength = 128;
+    mMaxPathLength = 1024;
     mMaxArchiveCount = 64000;
     mBatchSize = 4;
     mBlocksPerArchive = 4;

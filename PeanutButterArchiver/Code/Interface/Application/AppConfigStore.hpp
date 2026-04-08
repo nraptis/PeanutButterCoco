@@ -32,6 +32,7 @@
 - (BOOL)saveUnbundleUiStateWithHomeTab:(NSInteger)homeTab
                                 source:(NSString * _Nullable)source
                            destination:(NSString * _Nullable)destination
+                         recoverEnabled:(BOOL)recoverEnabled
                               password:(NSString * _Nullable)password
                                  error:(NSError * _Nullable * _Nullable)error;
 

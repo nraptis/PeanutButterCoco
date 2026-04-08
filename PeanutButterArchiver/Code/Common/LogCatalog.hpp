@@ -95,6 +95,14 @@ std::string LogDecodeManifestSummaryV2(LogActionV2 pAction,
                                        std::uint64_t pRepairBlockCount);
 std::string LogDecodeFinalizeSummaryV2(LogActionV2 pAction,
                                        std::uint64_t pBytesWritten);
+std::string LogHealingScanStartedV2(void);
+std::string LogHealingScanProgressV2(std::uint64_t pBlockCount,
+                                     std::uint64_t pByteCount);
+std::string LogHealingScanCompletedV2(void);
+std::string LogHealingArchiveSealedV2(std::uint64_t pArchiveSlot);
+std::string LogHealingResumeDecodeV2(LogActionV2 pAction);
+std::string LogHealingSwitchReasonV2(LogActionV2 pAction,
+                                     const std::string& pReason);
 std::string LogPessimisticSwitchV2(LogActionV2 pAction,
                                    const std::string& pReason);
 LogActionV2 LogActionFromDecodeIntentV2(DecodeIntentV2 pIntent);

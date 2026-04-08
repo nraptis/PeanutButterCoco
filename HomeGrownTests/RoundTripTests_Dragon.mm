@@ -449,4 +449,185 @@
     }
 }
 
+- (void)test_regression_dragon_m {
+    JobBundle aJob;
+    aJob.mPayloadBytesPerBlock = 8;
+    aJob.mBlocksPerArchive = 1;
+    aJob.AddFolder("$PARTIAL_gL");
+    aJob.AddFolder("$PARTIAL_gL_1");
+    aJob.AddFolder("$PARTIAL_gL_2");
+    aJob.AddFolder("$PARTIAL_和X");
+    aJob.AddFolder("$PARTIAL_和X_1");
+    aJob.AddFolder("$PARTIAL_和X_2");
+    aJob.AddFolder("gL");
+    aJob.AddFolder("ΔJ");
+    aJob.AddFolder("和X");
+
+    vector<FakeArchive> aMockArchives;
+    if (![RoundTripTests run_HappyFlow:aJob withArchives:&aMockArchives]) {
+        XCTFail(@"Round trip regression failed on happy flow.");
+        return;
+    }
+    vector<FakeMutation> aMutations;
+    {
+        FakeMutation aMutation;
+        aMutation.SetDeleteArchive("/root/archived/bdl_11.PBTR", 11);
+        aMutations.push_back(aMutation);
+    }
+    {
+        FakeMutation aMutation;
+        aMutation.SetMangleArchive("/root/archived/bdl_04.PBTR", 4);
+        aMutations.push_back(aMutation);
+    }
+
+    if (![RoundTripTests run_CorruptUnbundle:aJob withMutations:&aMutations]) {
+        XCTFail(@"Round trip regression failed on corrupt unbundle.");
+        return;
+    }
+
+    if (![RoundTripTests run_CorruptRecover:aJob withMutations:&aMutations]) {
+        XCTFail(@"Round trip regression failed on corrupt recover.");
+        return;
+    }
+}
+
+- (void)test_regression_dragon_n {
+    JobBundle aJob;
+    aJob.mPayloadBytesPerBlock = 8;
+    aJob.mBlocksPerArchive = 1;
+    aJob.AddFile("$PARTIAL_Dgi", "oVmoB");
+    aJob.AddFile("Dgi", "ΞJвz");
+
+    vector<FakeArchive> aMockArchives;
+    if (![RoundTripTests run_HappyFlow:aJob withArchives:&aMockArchives]) {
+        XCTFail(@"Round trip regression failed on happy flow.");
+        return;
+    }
+    vector<FakeMutation> aMutations;
+    {
+        FakeMutation aMutation;
+        aMutation.SetMangleArchive("/root/archived/bdl_2.PBTR", 2);
+        aMutations.push_back(aMutation);
+    }
+
+    if (![RoundTripTests run_CorruptUnbundle:aJob withMutations:&aMutations]) {
+        XCTFail(@"Round trip regression failed on corrupt unbundle.");
+        return;
+    }
+
+    if (![RoundTripTests run_CorruptRecover:aJob withMutations:&aMutations]) {
+        XCTFail(@"Round trip regression failed on corrupt recover.");
+        return;
+    }
+}
+
+- (void)test_regression_dragon_o {
+    JobBundle aJob;
+    aJob.mPayloadBytesPerBlock = 8;
+    aJob.mBlocksPerArchive = 1;
+    aJob.AddFile("$PARTIAL_ΞO", "y");
+    aJob.AddFile("$PARTIAL_ΞO_1", "");
+    aJob.AddFolder("$PARTIAL_Φdq");
+    aJob.AddFolder("$PARTIAL_Φdq_1");
+    aJob.AddFolder("$PARTIAL_Φdq_2");
+    aJob.AddFile("yFr", "大o");
+    aJob.AddFile("ΞO", "P");
+    aJob.AddFolder("Φdq");
+
+    vector<FakeArchive> aMockArchives;
+    if (![RoundTripTests run_HappyFlow:aJob withArchives:&aMockArchives]) {
+        XCTFail(@"Round trip regression failed on happy flow.");
+        return;
+    }
+    vector<FakeMutation> aMutations;
+    {
+        FakeMutation aMutation;
+        aMutation.SetMangleArchive("/root/archived/bdl_07.PBTR", 7);
+        aMutations.push_back(aMutation);
+    }
+    {
+        FakeMutation aMutation;
+        aMutation.SetMangleBlock("/root/archived/bdl_06.PBTR", 6, 0);
+        aMutations.push_back(aMutation);
+    }
+    {
+        FakeMutation aMutation;
+        aMutation.SetMangleArchive("/root/archived/bdl_01.PBTR", 1);
+        aMutations.push_back(aMutation);
+    }
+    {
+        FakeMutation aMutation;
+        aMutation.SetMangleBlock("/root/archived/bdl_04.PBTR", 4, 0);
+        aMutations.push_back(aMutation);
+    }
+    {
+        FakeMutation aMutation;
+        aMutation.SetMangleBlock("/root/archived/bdl_10.PBTR", 10, 0);
+        aMutations.push_back(aMutation);
+    }
+    {
+        FakeMutation aMutation;
+        aMutation.SetMangleArchive("/root/archived/bdl_14.PBTR", 14);
+        aMutations.push_back(aMutation);
+    }
+
+    if (![RoundTripTests run_CorruptUnbundle:aJob withMutations:&aMutations]) {
+        XCTFail(@"Round trip regression failed on corrupt unbundle.");
+        return;
+    }
+
+    if (![RoundTripTests run_CorruptRecover:aJob withMutations:&aMutations]) {
+        XCTFail(@"Round trip regression failed on corrupt recover.");
+        return;
+    }
+}
+
+- (void)test_regression_dragon_p {
+    JobBundle aJob;
+    aJob.mPayloadBytesPerBlock = 8;
+    aJob.mBlocksPerArchive = 1;
+    aJob.AddFolder("$PARTIAL_RGn");
+    aJob.AddFolder("$PARTIAL_RGn_1");
+    aJob.AddFile("$PARTIAL_wOP", "いl");
+    aJob.AddFolder("RGn");
+    aJob.AddFile("wOP", "");
+
+    vector<FakeArchive> aMockArchives;
+    if (![RoundTripTests run_HappyFlow:aJob withArchives:&aMockArchives]) {
+        XCTFail(@"Round trip regression failed on happy flow.");
+        return;
+    }
+    vector<FakeMutation> aMutations;
+    {
+        FakeMutation aMutation;
+        aMutation.SetDeleteArchive("/root/archived/bdl_03.PBTR", 3);
+        aMutations.push_back(aMutation);
+    }
+    {
+        FakeMutation aMutation;
+        aMutation.SetDeleteBlock("/root/archived/bdl_02.PBTR", 2, 0);
+        aMutations.push_back(aMutation);
+    }
+    {
+        FakeMutation aMutation;
+        aMutation.SetDeleteArchive("/root/archived/bdl_08.PBTR", 8);
+        aMutations.push_back(aMutation);
+    }
+    {
+        FakeMutation aMutation;
+        aMutation.SetMangleArchive("/root/archived/bdl_06.PBTR", 6);
+        aMutations.push_back(aMutation);
+    }
+
+    if (![RoundTripTests run_CorruptUnbundle:aJob withMutations:&aMutations]) {
+        XCTFail(@"Round trip regression failed on corrupt unbundle.");
+        return;
+    }
+
+    if (![RoundTripTests run_CorruptRecover:aJob withMutations:&aMutations]) {
+        XCTFail(@"Round trip regression failed on corrupt recover.");
+        return;
+    }
+}
+
 @end

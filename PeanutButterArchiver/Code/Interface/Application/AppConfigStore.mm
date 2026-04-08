@@ -77,6 +77,7 @@ NSDictionary *DictionaryFromConfig(const AppConfigStateV2& configState) {
         @"unbundle_directory_source": StringFromStd(configState.mUnbundleDirectorySource),
         @"unbundle_directory_destination": StringFromStd(configState.mUnbundleDirectoryDestination),
         @"unbundle_encrypt": @(configState.mUnbundleEncrypt),
+        @"unbundle_recover": @(configState.mUnbundleRecover),
         @"unbundle_password": StringFromStd(configState.mUnbundlePassword),
 
         @"repair_directory_source": StringFromStd(configState.mRepairDirectorySource),
@@ -114,6 +115,8 @@ AppConfigStateV2 ConfigFromDictionary(NSDictionary *dictionary) {
     configState.mUnbundleDirectorySource = StdFromString(dictionary[@"unbundle_directory_source"]);
     configState.mUnbundleDirectoryDestination = StdFromString(dictionary[@"unbundle_directory_destination"]);
     configState.mUnbundleEncrypt = [dictionary[@"unbundle_encrypt"] boolValue];
+    configState.mUnbundleRecover =
+        dictionary[@"unbundle_recover"] == nil ? NO : [dictionary[@"unbundle_recover"] boolValue];
     configState.mUnbundlePassword = StdFromString(dictionary[@"unbundle_password"]);
 
     configState.mRepairDirectorySource = StdFromString(dictionary[@"repair_directory_source"]);
@@ -222,12 +225,16 @@ AppConfigStateV2 ConfigFromDictionary(NSDictionary *dictionary) {
 - (BOOL)saveUnbundleUiStateWithHomeTab:(NSInteger)homeTab
                                 source:(NSString *)source
                            destination:(NSString *)destination
+                         recoverEnabled:(BOOL)recoverEnabled
                               password:(NSString *)password
                                  error:(NSError * _Nullable * _Nullable)error {
     AppConfigStateV2 configState = [self loadOrCreateConfig];
     configState.mHomeTab = HomeTabFromInteger(homeTab);
     configState.mUnbundleDirectorySource = StdFromString(source);
     configState.mUnbundleDirectoryDestination = StdFromString(destination);
+    if (configState.mHomeTab == HomeTabV2::kUnbundle) {
+        configState.mUnbundleRecover = recoverEnabled;
+    }
     configState.mUnbundlePassword = StdFromString(password);
     return [self saveConfig:configState error:error];
 }

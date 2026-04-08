@@ -113,6 +113,29 @@ std::uint64_t ExpectedArchiveBlockCountForSlot(
   return std::min(aBlocksPerArchive, aTotalBlocks - aConsumedBefore);
 }
 
+bool TryFindPresentArchiveSlotByArchiveIndex(const DecodeStageContextV2& pContext,
+                                             std::uint64_t pArchiveIndex,
+                                             std::size_t& pOutArchiveSlot) {
+  pOutArchiveSlot = std::numeric_limits<std::size_t>::max();
+  const std::vector<DiscoveredArchiveFileV2>& aArchives =
+      pContext.State().mDiscovery.mArchives;
+  // Discovery can omit earlier missing archives until later refinement inserts
+  // placeholder slots, so unbundle inspection must resolve by logical archive
+  // index instead of assuming vector position == archive index.
+  for (std::size_t aArchiveSlot = 0u; aArchiveSlot < aArchives.size(); ++aArchiveSlot) {
+    const DiscoveredArchiveFileV2& aArchive = aArchives[aArchiveSlot];
+    if (!aArchive.mIsPresent) {
+      continue;
+    }
+    if (aArchive.mArchiveIndex != pArchiveIndex) {
+      continue;
+    }
+    pOutArchiveSlot = aArchiveSlot;
+    return true;
+  }
+  return false;
+}
+
 bool TryReadValidatedInspectionHeader(DecodeStageContextV2& pContext,
                                       const DiscoveredArchiveFileV2& pArchive,
                                       std::uint64_t pBlockIndex,
@@ -218,7 +241,9 @@ void RefineArchiveWindowFromInspection(DecodeStageContextV2& pContext,
         (aSlot.mPath.empty() && !aArchive.mPath.empty())) {
       aSlot = aArchive;
       aSlot.mIsPresent = true;
-      if (!aSlot.mHasReadableSection && aExpectedBlockCount != 0u) {
+      if (!aArchive.mIsPresent &&
+          !aSlot.mHasReadableSection &&
+          aExpectedBlockCount != 0u) {
         aSlot.mArchiveBlockCount =
             std::max<std::uint64_t>(aSlot.mArchiveBlockCount, aExpectedBlockCount);
       }
@@ -1086,13 +1111,14 @@ bool DecodeInspectionV2::Run(DecodeStageContextV2& pContext) {
         1u, static_cast<std::uint64_t>(pContext.Layout().mMaxBlocksPerArchive));
     const std::uint64_t aFirstMainFlatIndex =
         pContext.State().mBootstrap.mExpectedPreviewManifestBlockCount;
-    const std::size_t aFirstMainArchiveSlot = static_cast<std::size_t>(
-        aFirstMainFlatIndex / aBlocksPerArchive);
+    const std::uint64_t aFirstMainArchiveIndex =
+        aFirstMainFlatIndex / aBlocksPerArchive;
     const std::uint64_t aFirstMainBlockIndex =
         aFirstMainFlatIndex % aBlocksPerArchive;
+    std::size_t aFirstMainArchiveSlot = std::numeric_limits<std::size_t>::max();
 
-    if (aFirstMainArchiveSlot >= pContext.State().mDiscovery.mArchives.size() ||
-        !pContext.State().mDiscovery.mArchives[aFirstMainArchiveSlot].mIsPresent) {
+    if (!TryFindPresentArchiveSlotByArchiveIndex(
+            pContext, aFirstMainArchiveIndex, aFirstMainArchiveSlot)) {
       aCursor.reset();
       pContext.EmitLog(LogLevelV2::kError,
                        LogPhaseFailedV2(LogActionFromDecodeIntentV2(pContext.Request().mIntent),
