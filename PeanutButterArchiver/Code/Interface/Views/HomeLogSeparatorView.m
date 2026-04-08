@@ -9,7 +9,6 @@
     }
 
     self.translatesAutoresizingMaskIntoConstraints = NO;
-    self.wantsLayer = YES;
     return self;
 }
 
@@ -19,8 +18,10 @@
 
 - (void)drawRect:(NSRect)dirtyRect {
     [super drawRect:dirtyRect];
+    [[NSBezierPath bezierPathWithRect:self.bounds] addClip];
+
     [[NSColor colorWithRed:0.52 green:0.48 blue:0.41 alpha:1.0] setFill];
-    NSRectFill(dirtyRect);
+    NSRectFill(self.bounds);
 
     [[NSColor colorWithWhite:1.0 alpha:0.15] setFill];
     NSRect highlightRect = NSMakeRect(0.0, 0.0, NSWidth(self.bounds), 1.0);
