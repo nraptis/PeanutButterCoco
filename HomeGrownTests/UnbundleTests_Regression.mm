@@ -6,15 +6,6 @@
 //
 
 #import <Foundation/Foundation.h>
-
-//
-//  UnbundleTests_Small.m
-//  HomeGrownTests
-//
-//  Created by Magneto on 4/6/26.
-//
-
-#import <Foundation/Foundation.h>
 #import <XCTest/XCTest.h>
 #include "namespaces.hpp"
 #include "FakeFile.hpp"
@@ -23,12 +14,10 @@
 #include "TestBundle.hpp"
 #include "TestBundleWithHooks.hpp"
 #include "TestUnbundleWithHooks.hpp"
-
 #include "JobBundle.hpp"
 #include "WrappedArchiveAssembler.hpp"
 #include "BundleVerify.hpp"
 #include "UnbundleVerify.hpp"
-
 
 @interface UnbundleTests_Regression : XCTestCase
 @end
@@ -66,7 +55,7 @@
         return NO;
     }
     
-    if (!BundleVerify::Execute(pJob, aRealArchives, aMockArchives, &aErrorString)) {
+    if (!BundleVerify::Execute(pJob, &aRealArchives, &aMockArchives, &aErrorString)) {
         printf("Error: %.*s\n", aErrorString.mLength, (char*)aErrorString.mData);
         return NO;
     }
@@ -86,13 +75,13 @@
                                             }
     
     vector <FakeFile> aFilesA;
-    if (!TestUnbundleWithHooks::CollectFiles(pJob, aFilesA, aFileSystem, &aErrorString)) {
+    if (!TestUnbundleWithHooks::CollectFiles(pJob, &aFilesA, &aFileSystem, &aErrorString)) {
         printf("Error: %.*s\n", aErrorString.mLength, (char*)aErrorString.mData);
         
         return NO;
     }
     
-    if (!UnbundleVerify::Execute(aFilesA, pJob.mFileList, &aErrorString)) {
+    if (!UnbundleVerify::Execute(&aFilesA, &pJob.mFileList, &aErrorString)) {
         printf("Error: %.*s\n", aErrorString.mLength, (char*)aErrorString.mData);
         return NO;
     }
@@ -205,6 +194,117 @@
     aJob.AddFolder("ΩH");
     aJob.AddFile("🧬L.q", "u");
 
+    if ([self run:aJob] == NO) {
+        XCTFail(@"Regression test failed.");
+    }
+}
+
+- (void)test_unbundle_regression_small_window_f {
+    JobBundle aJob;
+    aJob.mPayloadBytesPerBlock = 1;
+    aJob.mBlocksPerArchive = 1;
+    aJob.mPreviewEnabled = false;
+    aJob.SetRepair80();
+    aJob.AddFile("D", "OQ");
+    aJob.AddFile("D.I", "明zE");
+    aJob.AddFile("I", "zhzいXm");
+    aJob.AddFile("I.P", "");
+    aJob.AddFile("O.R", "ぷv");
+    aJob.AddFile("OJ", "⭐bw");
+    aJob.AddFile("fC", "K大lfy");
+    aJob.AddFile("t.Hw", "冰wΩdi");
+    
+    if ([self run:aJob] == NO) {
+        XCTFail(@"Regression test failed.");
+    }
+}
+
+- (void)test_unbundle_regression_small_window_g {
+    JobBundle aJob;
+    aJob.mPayloadBytesPerBlock = 4;
+    aJob.mBlocksPerArchive = 4;
+    aJob.mPreviewEnabled = true;
+    aJob.AddFolder("Talf");
+    aJob.AddFolder("aбb");
+    aJob.AddFolder("oCACM🛸zhQ");
+    aJob.AddFile("бtв.VGod", "sAぽa🏠Mbpz");
+
+    if ([self run:aJob] == NO) {
+        XCTFail(@"Regression test failed.");
+    }
+}
+
+- (void)test_unbundle_regression_small_window_h {
+    JobBundle aJob;
+    aJob.mPayloadBytesPerBlock = 4;
+    aJob.mBlocksPerArchive = 4;
+    aJob.mPreviewEnabled = true;
+    aJob.AddFile("D.S", "Δجい🏠M");
+    aJob.AddFolder("جSвbгKoka");
+    aJob.AddFolder("ゑبDeゑJ");
+    aJob.AddFolder("🛸jyt");
+    if ([self run:aJob] == NO) {
+        XCTFail(@"Regression test failed.");
+    }
+}
+
+- (void)test_unbundle_regression_small_window_i {
+    JobBundle aJob;
+    aJob.mPayloadBytesPerBlock = 5;
+    aJob.mBlocksPerArchive = 1;
+    aJob.mPreviewEnabled = false;
+    aJob.AddFile("H.CBewCXzDmw", "Cw");
+    aJob.AddFolder("K");
+    aJob.AddFolder("TI");
+    aJob.AddFolder("いU永Jb");
+    if ([self run:aJob] == NO) {
+        XCTFail(@"Regression test failed.");
+    }
+}
+
+- (void)test_unbundle_regression_small_window_j {
+    JobBundle aJob;
+    aJob.mPayloadBytesPerBlock = 1;
+    aJob.mBlocksPerArchive = 1;
+    aJob.mPreviewEnabled = 0;
+    aJob.mRepairCoverage = 0;
+    aJob.AddFile("T", "冰ΩfUvAΞBW");
+    aJob.AddFile("W.fjQo", "🚀BаWh");
+    aJob.AddFile("Xi.AqB", "");
+    aJob.AddFile("u", "бZf冰m");
+    aJob.AddFile("y.تD", "C⭐z力H");
+    aJob.AddFile("yJm.gkA", "⚙️NsO");
+    aJob.AddFile("zO.POQU", "zΞo明تTFZmJ");
+    aJob.AddFile("вΨゑ.гC", "⚙️ΩzvRf");
+    aJob.AddFile("⭐Ω.m", "Fyゑ🧬ゐCh");
+    aJob.AddFile("おz.めk", "S龙NMc🤖تXd");
+    if ([self run:aJob] == NO) {
+        XCTFail(@"Regression test failed.");
+    }
+}
+
+- (void)test_unbundle_regression_small_window_k {
+    JobBundle aJob;
+    aJob.mPayloadBytesPerBlock = 1;
+    aJob.mBlocksPerArchive = 1;
+    aJob.mPreviewEnabled = false;
+    aJob.mRepairCoverage = 0;
+    aJob.AddFolder("a");
+    aJob.AddFolder("b");
+    if ([self run:aJob] == NO) {
+        XCTFail(@"Regression test failed.");
+    }
+}
+
+- (void)test_unbundle_regression_small_window_l {
+    JobBundle aJob;
+    aJob.mPayloadBytesPerBlock = 5;
+    aJob.mBlocksPerArchive = 1000;
+    aJob.mPreviewEnabled = false;
+    aJob.mRepairCoverage = 0;
+    aJob.AddFile("ab", "cd");
+    aJob.AddFolder("e");
+    aJob.AddFolder("f");
     if ([self run:aJob] == NO) {
         XCTFail(@"Regression test failed.");
     }

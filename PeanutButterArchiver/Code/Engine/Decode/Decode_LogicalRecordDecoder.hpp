@@ -52,8 +52,11 @@ class DecodeLogicalRecordDecoderV2 final {
   bool Finalize(std::string& pOutErrorMessage) const;
   bool IsAtRecordBoundary() const;
   bool IsInsideFile() const;
+  bool IsAwaitingTypeFlag() const;
   const std::string& CurrentFileReference() const;
+  bool AssumeFileTypeFlag(std::string& pOutErrorMessage);
   bool AbortCurrentFile();
+  bool AbortCurrentRecordAsPartial();
   void ResetAfterParseError();
   std::uint64_t FilesWritten() const;
   std::uint64_t FoldersCreated() const;
@@ -84,6 +87,8 @@ class DecodeLogicalRecordDecoderV2 final {
   bool FinishReferenceRecord(bool& pOutShouldContinue,
                              std::string& pOutFinishedReference,
                              std::string& pOutErrorMessage);
+  bool AssumeTypeFlag(std::uint8_t pTypeFlag,
+                      std::string& pOutErrorMessage);
   bool ResolveReferenceOutputPath(const std::string& pRelativePath,
                                   std::string& pOutFinalPath) const;
   bool IsAtIllegalPartialScalarBoundary() const;
@@ -97,6 +102,7 @@ class DecodeLogicalRecordDecoderV2 final {
   bool EnsureResolvedDestinationDirectory() const;
   bool IsResolvedPathInsideResolvedDestination(
       const std::string& pResolvedPath) const;
+  bool MaterializeCurrentRecordAsEmptyPartialFile();
   bool PromoteCurrentOutputToPartial();
   void EmitRecordStartEvent() const;
   bool EmitRecordFinishEvent() const;

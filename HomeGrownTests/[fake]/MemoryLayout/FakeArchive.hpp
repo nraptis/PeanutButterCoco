@@ -27,6 +27,8 @@ public:
     
     int                                     mArchiveUUID;
     
+    int                                     mTemp;
+    
 };
 
 #endif /* FakeArchive_hpp */

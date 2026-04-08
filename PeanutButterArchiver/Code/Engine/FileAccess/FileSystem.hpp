@@ -199,6 +199,7 @@ public:
         (void)pPath;
         return false;
     }
+    virtual bool RemovePath(const std::string& pPath) = 0;
     virtual bool EnsureDirectory(const std::string& pPath) = 0;
     virtual bool ClearDirectory(const std::string& pPath) = 0;
     virtual bool DirectoryHasEntries(const std::string& pPath) const = 0;

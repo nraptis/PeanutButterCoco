@@ -160,6 +160,7 @@ class DecodeStageContextV2 {
                       std::size_t pPhaseCount);
   void BeginWorkUnit();
   void ContinuePhaseOnNextHeartbeat();
+  void ClearPhaseContinuationRequest();
   bool ActivePhaseNeedsMoreHeartbeats() const;
   void RequestBatchYield();
   bool ActivePhaseBatchYieldRequested() const;

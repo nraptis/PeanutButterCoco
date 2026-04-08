@@ -548,8 +548,19 @@ bool DecodeLogicalRecordDecoderV2::IsInsideFile() const {
   return mStage == Stage::kContentBytes && mCurrentWrite != nullptr;
 }
 
+bool DecodeLogicalRecordDecoderV2::IsAwaitingTypeFlag() const {
+  return mStage == Stage::kTypeFlag;
+}
+
 const std::string& DecodeLogicalRecordDecoderV2::CurrentFileReference() const {
   return mCurrentPath;
+}
+
+bool DecodeLogicalRecordDecoderV2::AssumeFileTypeFlag(
+    std::string& pOutErrorMessage) {
+  return AssumeTypeFlag(
+      static_cast<std::uint8_t>(memory_layout::TypedRecordTypeV2::kDataFile),
+      pOutErrorMessage);
 }
 
 bool DecodeLogicalRecordDecoderV2::AbortCurrentFile() {
@@ -565,6 +576,27 @@ bool DecodeLogicalRecordDecoderV2::AbortCurrentFile() {
   const bool aRenamed = PromoteCurrentOutputToPartial();
   ResetRecordState();
   return aRenamed;
+}
+
+bool DecodeLogicalRecordDecoderV2::AbortCurrentRecordAsPartial() {
+  if (IsInsideFile()) {
+    return AbortCurrentFile();
+  }
+  if (mStage == Stage::kContentBytes &&
+      ShouldMaterializeFile(mCurrentTypeFlag) &&
+      !mCurrentPath.empty()) {
+    const bool aPromotedPartial =
+        !mCurrentOutputPath.empty() ? PromoteCurrentOutputToPartial()
+                                    : MaterializeCurrentRecordAsEmptyPartialFile();
+    ResetRecordState();
+    return aPromotedPartial;
+  }
+  const bool aPromotedPartial =
+      mStage == Stage::kFileSize &&
+      ShouldMaterializeFile(mCurrentTypeFlag) &&
+      MaterializeCurrentRecordAsEmptyPartialFile();
+  ResetRecordState();
+  return aPromotedPartial;
 }
 
 void DecodeLogicalRecordDecoderV2::ResetAfterParseError() {
@@ -839,6 +871,64 @@ bool DecodeLogicalRecordDecoderV2::FinishReferenceRecord(
   return true;
 }
 
+bool DecodeLogicalRecordDecoderV2::AssumeTypeFlag(
+    std::uint8_t pTypeFlag,
+    std::string& pOutErrorMessage) {
+  pOutErrorMessage.clear();
+  if (mStage != Stage::kTypeFlag) {
+    pOutErrorMessage = "decoder is not awaiting a type flag.";
+    return false;
+  }
+  if (!memory_layout::IsKnownTypedRecordTypeV2(pTypeFlag)) {
+    pOutErrorMessage = "assumed record type flag is unknown.";
+    return false;
+  }
+  if (!IsTypeAllowed(pTypeFlag)) {
+    pOutErrorMessage = "assumed record type is not allowed in this section.";
+    return false;
+  }
+
+  mCurrentTypeFlag = pTypeFlag;
+  if (memory_layout::TypedRecordTypeIsReferenceV2(mCurrentTypeFlag)) {
+    mStage = Stage::kReferenceKind;
+    return true;
+  }
+  if (mZone == DecodeLogicalZoneV2::kPreviewManifest) {
+    mStage = Stage::kPreviewPlaceholder;
+    return true;
+  }
+  if (memory_layout::TypedRecordTypeIsFolderV2(mCurrentTypeFlag)) {
+    EmitRecordStartEvent();
+    if (ShouldMaterializeFolder(mCurrentTypeFlag)) {
+      const std::string aDirPath =
+          mFileSystem.JoinPath(mDestinationDirectory, mCurrentPath);
+      if (!IsOutputPathInsideDestination(aDirPath)) {
+        pOutErrorMessage =
+            "assumed folder path escapes destination directory.";
+        return false;
+      }
+      if (!mFileSystem.EnsureDirectory(aDirPath)) {
+        pOutErrorMessage = "failed creating directory: " + aDirPath;
+        return false;
+      }
+      ++mFoldersCreated;
+    }
+    const bool aShouldContinue = EmitRecordFinishEvent();
+    ResetRecordState();
+    if (!aShouldContinue) {
+      pOutErrorMessage =
+          "assumed folder type encountered an unexpected boundary pause.";
+      return false;
+    }
+    return true;
+  }
+
+  mFileSizeBytesUsed = 0u;
+  std::memset(mFileSizeLe, 0, sizeof(mFileSizeLe));
+  mStage = Stage::kFileSize;
+  return true;
+}
+
 bool DecodeLogicalRecordDecoderV2::IsAtIllegalPartialScalarBoundary() const {
   switch (mStage) {
     case Stage::kPathLength:
@@ -875,21 +965,66 @@ bool DecodeLogicalRecordDecoderV2::ResolveOutputPaths(
   const std::string aRequestedFinalPath =
       mFileSystem.JoinPath(mDestinationDirectory, pRelativePath);
   const std::string aParentPath = mFileSystem.ParentPath(aRequestedFinalPath);
-  const std::string aLeafName = mFileSystem.FileName(aRequestedFinalPath);
-  const std::string aExtension = mFileSystem.Extension(aLeafName);
-  std::string aStem = mFileSystem.StemName(aLeafName);
-  if (aStem.empty()) {
-    aStem = "output";
+  std::string aPreferredFinalLeaf = mFileSystem.FileName(aRequestedFinalPath);
+  if (aPreferredFinalLeaf.empty()) {
+    aPreferredFinalLeaf = "output";
   }
-  const std::string aPreferredLeaf = aStem + aExtension;
-  return ResolveNoOverwritePathTripletV2(mFileSystem,
-                                         aParentPath,
-                                         aPreferredLeaf,
-                                         "$WRITING_",
-                                         "$PARTIAL_",
-                                         pOutWritingPath,
-                                         pOutFinalPath,
-                                         pOutPartialPath);
+  if (!ResolveNoOverwritePathV2(
+          mFileSystem, aParentPath, aPreferredFinalLeaf, pOutFinalPath)) {
+    return false;
+  }
+
+  const std::string aResolvedFinalLeaf = mFileSystem.FileName(pOutFinalPath);
+  std::vector<std::string> aReservedPaths;
+  aReservedPaths.push_back(pOutFinalPath);
+  if (!ResolveNoOverwritePathV2(mFileSystem,
+                                aParentPath,
+                                "$WRITING_" + aResolvedFinalLeaf,
+                                pOutWritingPath,
+                                &aReservedPaths)) {
+    return false;
+  }
+
+  pOutPartialPath =
+      mFileSystem.JoinPath(aParentPath, "$PARTIAL_" + aResolvedFinalLeaf);
+  return true;
+}
+
+bool DecodeLogicalRecordDecoderV2::MaterializeCurrentRecordAsEmptyPartialFile() {
+  if (!ShouldMaterializeFile(mCurrentTypeFlag) || mCurrentPath.empty()) {
+    return false;
+  }
+
+  std::string aOutPath;
+  std::string aFinalPath;
+  std::string aPartialPath;
+  if (!ResolveOutputPaths(mCurrentPath, aOutPath, aFinalPath, aPartialPath)) {
+    return false;
+  }
+  if (!IsOutputPathInsideDestination(aOutPath) ||
+      !IsOutputPathInsideDestination(aFinalPath) ||
+      !IsOutputPathInsideDestination(aPartialPath)) {
+    return false;
+  }
+
+  const std::string aOutParent = mFileSystem.ParentPath(aOutPath);
+  if (!aOutParent.empty() && !mFileSystem.EnsureDirectory(aOutParent)) {
+    return false;
+  }
+
+  std::unique_ptr<FileWriteStreamV2> aWrite = mFileSystem.OpenWriteStream(aOutPath);
+  if (aWrite == nullptr || !aWrite->IsReady()) {
+    return false;
+  }
+  if (!aWrite->Close()) {
+    return false;
+  }
+
+  mCurrentOutputPath = aOutPath;
+  mCurrentFinalPath = aFinalPath;
+  mCurrentPartialPath = aPartialPath;
+  mCurrentFileBytesWritten = 0u;
+  return PromoteCurrentOutputToPartial();
 }
 
 bool DecodeLogicalRecordDecoderV2::IsOutputPathInsideDestination(
@@ -972,10 +1107,55 @@ bool DecodeLogicalRecordDecoderV2::PromoteCurrentOutputToPartial() {
   if (mCurrentOutputPath.empty()) {
     return true;
   }
-  if (mCurrentPartialPath.empty()) {
+  if (mCurrentPartialPath.empty() && !mCurrentFinalPath.empty()) {
+    const std::string aParentPath = mFileSystem.ParentPath(mCurrentFinalPath);
+    const std::string aFinalLeaf = mFileSystem.FileName(mCurrentFinalPath);
+    mCurrentPartialPath =
+        mFileSystem.JoinPath(aParentPath, "$PARTIAL_" + aFinalLeaf);
+  }
+
+  if (!mCurrentPartialPath.empty() &&
+      !mFileSystem.Exists(mCurrentPartialPath) && //FIX'D
+      mFileSystem.RenamePath(mCurrentOutputPath, mCurrentPartialPath)) {
+    return true;
+  }
+
+  std::string aBasePartialPath = mCurrentPartialPath;
+  if (aBasePartialPath.empty()) {
+    if (mCurrentFinalPath.empty()) {
+      return false;
+    }
+    const std::string aParentPath = mFileSystem.ParentPath(mCurrentFinalPath);
+    const std::string aFinalLeaf = mFileSystem.FileName(mCurrentFinalPath);
+    aBasePartialPath =
+        mFileSystem.JoinPath(aParentPath, "$PARTIAL_" + aFinalLeaf);
+  }
+
+  const std::string aParentPath = mFileSystem.ParentPath(aBasePartialPath);
+  std::string aPreferredLeaf = mFileSystem.FileName(aBasePartialPath);
+  if (aPreferredLeaf.empty()) {
+    aPreferredLeaf = "output";
+  }
+
+  std::vector<std::string> aReservedPaths;
+  if (!mCurrentFinalPath.empty()) {
+    aReservedPaths.push_back(mCurrentFinalPath);
+  }
+
+  std::string aResolvedPartialPath;
+  if (!ResolveNoOverwritePathV2(mFileSystem,
+                                aParentPath,
+                                aPreferredLeaf,
+                                aResolvedPartialPath,
+                                &aReservedPaths)) {
     return false;
   }
-  return mFileSystem.RenamePath(mCurrentOutputPath, mCurrentPartialPath);
+
+  if (!mFileSystem.RenamePath(mCurrentOutputPath, aResolvedPartialPath)) {
+    return false;
+  }
+  mCurrentPartialPath = aResolvedPartialPath;
+  return true;
 }
 
 void DecodeLogicalRecordDecoderV2::EmitRecordStartEvent() const {

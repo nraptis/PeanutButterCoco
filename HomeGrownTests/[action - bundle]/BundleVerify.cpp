@@ -8,18 +8,33 @@
 #include "BundleVerify.hpp"
 #include "Layout.hpp"
 
-bool BundleVerify::Execute(JobBundle &pJob, vector<WrappedArchive> pReal, vector<FakeArchive> pMock, ByteString *pError) {
+bool BundleVerify::Execute(JobBundle &pJob, vector<WrappedArchive> *pReal, vector<FakeArchive> *pMock, ByteString *pError) {
+    
+    if (pReal == NULL) {
+        if (pError != NULL) {
+            pError->Set("BundleVerify: missing real archive vector.");
+        }
+        return false;
+    }
+    
+    if (pMock == NULL) {
+        if (pError != NULL) {
+            pError->Set("BundleVerify: missing mock archive vector.");
+        }
+        return false;
+    }
+    
     
     int aRealIndex = 0;
-    int aRealCount = (int)pReal.size();
+    int aRealCount = (int)pReal->size();
     
     int aMockIndex = 0;
-    int aMockCount = (int)pMock.size();
+    int aMockCount = (int)pMock->size();
     
     while ((aRealIndex < aRealCount) && (aMockIndex < aMockCount)) {
         
-        WrappedArchive *aReal = &(pReal[aRealIndex]);
-        FakeArchive *aMock = &(pMock[aMockIndex]);
+        WrappedArchive *aReal = &((*pReal)[aRealIndex]);
+        FakeArchive *aMock = &((*pMock)[aMockIndex]);
         
         int aRealBlockIndex = 0;
         int aRealBlockCount = (int)(aReal->mBlocks.size());
@@ -75,6 +90,30 @@ bool BundleVerify::Execute(JobBundle &pJob, vector<WrappedArchive> pReal, vector
                 
                 ++aRealPayloadIndex;
                 ++aMockPayloadIndex;
+            }
+            
+            if (aRealBlock->mHeader.mArchiveIndex != aMockBlock->mHeader.mArchiveIndex) {
+                if (pError != NULL) {
+                    ByteString aError = ByteString("At archive ") + ByteString(aRealIndex) +
+                    ByteString(", block ") + ByteString(aRealBlockIndex) +
+                    ByteString(", real section header archive index (") + ByteString(aRealBlock->mHeader.mArchiveIndex) +
+                    ByteString(") was not equal to mock section header archive index (") + ByteString((int)aMockBlock->mHeader.mArchiveIndex)
+                    + ByteString(")");
+                    pError->Set(aError);
+                }
+                return false;
+            }
+            
+            if (aRealBlock->mHeader.mBlockIndex != aMockBlock->mHeader.mBlockIndex) {
+                if (pError != NULL) {
+                    ByteString aError = ByteString("At archive ") + ByteString(aRealIndex) +
+                    ByteString(", block ") + ByteString(aRealBlockIndex) +
+                    ByteString(", real section header block index (") + ByteString(aRealBlock->mHeader.mBlockIndex) +
+                    ByteString(") was not equal to mock section header block index (") + ByteString((int)aMockBlock->mHeader.mBlockIndex)
+                    + ByteString(")");
+                    pError->Set(aError);
+                }
+                return false;
             }
             
             if (Layout::ToInt(aRealBlock->mHeader.mBlockCountPreview) != aMockBlock->mHeader.mBlockCountPreview) {
@@ -154,12 +193,12 @@ bool BundleVerify::Execute(JobBundle &pJob, vector<WrappedArchive> pReal, vector
             int aMockRepairIndex2 = aMockBlock->mHeader.mRepairRecord.mBlockIndex;
             
             if (aMockBlock->mHeader.mRepairRecord.mExpectInvalid) {
-                if (aRealRepairIndex1 < (int)pReal.size()) {
+                if (aRealRepairIndex1 < (int)pReal->size()) {
                     if (pError != NULL) {
                         ByteString aError = ByteString("At archive ") + ByteString(aRealIndex) +
                         ByteString(", block ") + ByteString(aRealBlockIndex) +
                         ByteString(", real repair record archive (") + ByteString(aRealRepairIndex1) +
-                        ByteString(") was expected to be invalid, so larger than (") + ByteString((int)pReal.size())
+                        ByteString(") was expected to be invalid, so larger than (") + ByteString((int)pReal->size())
                         + ByteString(")");
                         pError->Set(aError);
                     }
@@ -211,12 +250,12 @@ bool BundleVerify::Execute(JobBundle &pJob, vector<WrappedArchive> pReal, vector
             
             if (aMockBlock->mHeader.mSkipRecord.mExpectInvalid) {
                 
-                if (aRealSkipIndex1 < (int)pReal.size()) {
+                if (aRealSkipIndex1 < (int)pReal->size()) {
                     if (pError != NULL) {
                         ByteString aError = ByteString("At archive ") + ByteString(aRealIndex) +
                         ByteString(", block ") + ByteString(aRealBlockIndex) +
                         ByteString(", real skip record archive (") + ByteString(aRealSkipIndex1) +
-                        ByteString(") was expected to be invalid, so larger than (") + ByteString((int)pReal.size())
+                        ByteString(") was expected to be invalid, so larger than (") + ByteString((int)pReal->size())
                         + ByteString(")");
                         pError->Set(aError);
                     }
@@ -342,7 +381,6 @@ bool BundleVerify::Execute(JobBundle &pJob, vector<WrappedArchive> pReal, vector
             return false;
         }
         
-        
         if (aReal->mFilePath != aMock->mFilePath) {
             if (pError != NULL) {
                 ByteString aError = ByteString("At archive ") + ByteString(aRealIndex) +
@@ -353,7 +391,6 @@ bool BundleVerify::Execute(JobBundle &pJob, vector<WrappedArchive> pReal, vector
             }
             return false;
         }
-        
         
         ++aRealIndex;
         ++aMockIndex;

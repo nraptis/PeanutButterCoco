@@ -13,6 +13,7 @@ FakeSectionHeader::FakeSectionHeader() {
     mBlockCountMain = 0;
     mBlockCountPreview = 0;
     mBlockCountRepair = 0;
+    mBlockIndex = 0;
 }
 
 FakeSectionHeader::~FakeSectionHeader() {

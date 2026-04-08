@@ -54,6 +54,9 @@ std::string LogPhaseCompletedV2(LogActionV2 pAction, ProgressStageV2 pStage);
 std::string LogPhaseSkippedV2(LogActionV2 pAction,
                               ProgressStageV2 pStage,
                               const std::string& pReason);
+std::string LogPhaseWarningV2(LogActionV2 pAction,
+                              ProgressStageV2 pStage,
+                              const std::string& pReason);
 std::string LogPhaseFailedV2(LogActionV2 pAction,
                              ProgressStageV2 pStage,
                              const std::string& pReason);

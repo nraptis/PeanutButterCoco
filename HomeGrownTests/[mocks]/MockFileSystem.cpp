@@ -37,6 +37,10 @@ bool MockFileSystem::IsFile(const std::string& pPath) const {
     return mDrive->HasFile(pPath);
 }
 
+bool MockFileSystem::RemovePath(const std::string& pPath) {
+    return mDrive->RemovePath(pPath);
+}
+
 bool MockFileSystem::EnsureDirectory(const std::string& pPath) {
     return mDrive->EnsureDirectory(pPath);
 }

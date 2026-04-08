@@ -16,11 +16,8 @@
 class UnbundleVerify {
 public:
     
-    static bool Execute(vector<FakeFile> &pFilesReal, vector<FakeFile> &pFilesMock, ByteString *pError);
-    
+    static bool Execute(vector<FakeFile> *pFilesReal, vector<FakeFile> *pFilesMock, ByteString *pError);
     static bool Execute_Damaged(vector<FakeFile> &pFilesReal, vector<FakeFile> &pFilesMock, ByteString *pError);
-    
-    
     
 };
 

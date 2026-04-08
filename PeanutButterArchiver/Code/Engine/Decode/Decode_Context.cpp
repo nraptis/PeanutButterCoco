@@ -110,6 +110,11 @@ void DecodeStageContextV2::ContinuePhaseOnNextHeartbeat() {
   mActivePhaseNeedsMoreHeartbeats = true;
 }
 
+void DecodeStageContextV2::ClearPhaseContinuationRequest() {
+  mActivePhaseNeedsMoreHeartbeats = false;
+  mActivePhaseBatchYieldRequested = false;
+}
+
 bool DecodeStageContextV2::ActivePhaseNeedsMoreHeartbeats() const {
   return mActivePhaseNeedsMoreHeartbeats;
 }

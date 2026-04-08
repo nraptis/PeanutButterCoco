@@ -85,11 +85,25 @@ public:
     }
     
     static bool CollectFiles(JobBundle &pJob,
-                             vector<FakeFile> &pFileList,
-                             MockFileSystem &pFileSystem,
+                             vector<FakeFile> *pFileList,
+                             MockFileSystem *pFileSystem,
                              ByteString *pError) {
         
-        vector<string> aUnbundledFiles = pFileSystem.mDrive->ListFilesRecursive(pJob.mUnarchived.ToString());
+        if (pFileList == NULL) {
+            if (pError != NULL) {
+                pError->Set("CollectFiles: file list is null");
+            }
+            return false;
+        }
+        if (pFileSystem == NULL) {
+            if (pError != NULL) {
+                pError->Set("CollectFiles: file system is null");
+            }
+            return false;
+        }
+        
+        
+        vector<string> aUnbundledFiles = pFileSystem->mDrive->ListFilesRecursive(pJob.mUnarchived.ToString());
         
         ByteMap aMap;
         
@@ -109,9 +123,9 @@ public:
             }
             aMap.Add(aName);
             
-            ByteString aContent = pFileSystem.Load(aFileName);
+            ByteString aContent = pFileSystem->Load(aFileName);
             
-            if (pFileSystem.Exists(aFileName) == false) {
+            if (pFileSystem->Exists(aFileName) == false) {
                 if (pError != NULL) {
                     ByteString aErrorString = ByteString("Collect files found non-existing file, ") + aName;
                     pError->Set(aErrorString);
@@ -120,13 +134,13 @@ public:
             }
             
             FakeFile aFile;
-            aFile.mName.Set(pFileSystem.RelativeToRoot(aFileRoot, aName.ToString()));
+            aFile.mName.Set(pFileSystem->RelativeToRoot(aFileRoot, aName.ToString()));
             aFile.mContent.Set(aContent);
             aFile.mIsFolder = false;
-            pFileList.push_back(aFile);
+            pFileList->push_back(aFile);
         }
         
-        vector<string> aUnbundledFolders = pFileSystem.mDrive->ListDirectoriesRecursive(pJob.mUnarchived.ToString());
+        vector<string> aUnbundledFolders = pFileSystem->mDrive->ListDirectoriesRecursive(pJob.mUnarchived.ToString());
         for (int aUnbundledFolderIndex=0; aUnbundledFolderIndex<((int)aUnbundledFolders.size()); aUnbundledFolderIndex++) {
             string aFolderName = aUnbundledFolders[aUnbundledFolderIndex];
             
@@ -142,9 +156,9 @@ public:
             aMap.Add(aName);
             
             FakeFile aFile;
-            aFile.mName.Set(pFileSystem.RelativeToRoot(aFileRoot, aName.ToString()));
+            aFile.mName.Set(pFileSystem->RelativeToRoot(aFileRoot, aName.ToString()));
             aFile.mIsFolder = true;
-            pFileList.push_back(aFile);
+            pFileList->push_back(aFile);
         }
         
         return true;
@@ -245,7 +259,12 @@ private:
                     }
                     
                     if (pError != nullptr) {
-                        pError->Set("Unbundle job has failed.");
+                        const string aFailureMessage = aContext.LastErrorLog();
+                        if (!aFailureMessage.empty()) {
+                            pError->Set(ByteString("Unbundle job has failed: ") + ByteString(aFailureMessage));
+                        } else {
+                            pError->Set("Unbundle job has failed.");
+                        }
                     }
                     return false;
                 }

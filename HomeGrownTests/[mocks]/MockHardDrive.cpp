@@ -6,6 +6,7 @@
 //
 
 #include "MockHardDrive.hpp"
+#include "JobBundle.hpp"
 #include <algorithm>
 
 namespace {
@@ -360,6 +361,45 @@ bool MockHardDrive::HasFile(const std::string& pPath) const {
   return mFiles.find(Normalize(pPath)) != mFiles.end();
 }
 
+bool MockHardDrive::RemovePath(const std::string& pPath) {
+  const std::string aPath = Normalize(pPath);
+  if (aPath == "/") {
+    Clear();
+    return true;
+  }
+
+  bool aRemoved = false;
+  const auto aFileIterator = mFiles.find(aPath);
+  if (aFileIterator != mFiles.end()) {
+    mFiles.erase(aFileIterator);
+    return true;
+  }
+
+  if (!HasDirectory(aPath)) {
+    return false;
+  }
+
+  for (auto aIterator = mFiles.begin(); aIterator != mFiles.end();) {
+    if (aIterator->first == aPath || IsPathInSubtree(aPath, aIterator->first, false)) {
+      aIterator = mFiles.erase(aIterator);
+      aRemoved = true;
+      continue;
+    }
+    ++aIterator;
+  }
+
+  for (auto aIterator = mDirectories.begin(); aIterator != mDirectories.end();) {
+    if (*aIterator == aPath || IsPathInSubtree(aPath, *aIterator, false)) {
+      aIterator = mDirectories.erase(aIterator);
+      aRemoved = true;
+      continue;
+    }
+    ++aIterator;
+  }
+
+  return aRemoved;
+}
+
 bool MockHardDrive::DeleteFile(const std::string& pPath) {
   const std::string aPath = Normalize(pPath);
   const auto aIterator = mFiles.find(aPath);
@@ -673,61 +713,96 @@ bool MockHardDrive::SwapBlocks(const std::string& pPath,
                                int pBlockIndexB,
                                const JobBundle &pJob,
                                ByteString *pError) {
-    if (pBlockIndexA == pBlockIndexB) {
+    return SwapBlocksByPath(pPath, pBlockIndexA, pPath, pBlockIndexB, pJob, pError);
+}
+
+bool MockHardDrive::SwapBlocksByPath(const std::string& pPathA,
+                                     int pBlockIndexA,
+                                     const std::string& pPathB,
+                                     int pBlockIndexB,
+                                     const JobBundle &pJob,
+                                     ByteString *pError) {
+    const std::string aPathA = Normalize(pPathA);
+    const std::string aPathB = Normalize(pPathB);
+    
+    if ((aPathA == aPathB) && (pBlockIndexA == pBlockIndexB)) {
         return true;
     }
     
-    std::string aPathA;
+    std::string aResolvedPathA;
     std::size_t aOffsetA = 0u;
     std::size_t aBlockSizeA = 0u;
     if (!ResolveBlockRange(*this,
-                           pPath,
+                           aPathA,
                            pBlockIndexA,
                            pJob,
                            pError,
-                           &aPathA,
+                           &aResolvedPathA,
                            &aOffsetA,
                            &aBlockSizeA)) {
         return false;
     }
     
-    std::string aPathB;
+    std::string aResolvedPathB;
     std::size_t aOffsetB = 0u;
     std::size_t aBlockSizeB = 0u;
     if (!ResolveBlockRange(*this,
-                           pPath,
+                           aPathB,
                            pBlockIndexB,
                            pJob,
                            pError,
-                           &aPathB,
+                           &aResolvedPathB,
                            &aOffsetB,
                            &aBlockSizeB)) {
         return false;
     }
     
-    if (aPathA != aPathB) {
-        return FailBlockMutation(pError, "SwapBlocks failed: resolved paths did not match.");
-    }
     if (aBlockSizeA != aBlockSizeB) {
-        return FailBlockMutation(pError, "SwapBlocks failed: block sizes differ.");
+        return FailBlockMutation(pError, "SwapBlocksByPath failed: block sizes differ.");
+    }
+    if (aBlockSizeA == 0u) {
+        return FailBlockMutation(pError, "SwapBlocksByPath failed: block size was zero.");
     }
     
-    std::vector<unsigned char> &aBytes = mFiles[aPathA];
-    const std::ptrdiff_t aBeginA = static_cast<std::ptrdiff_t>(aOffsetA);
-    const std::ptrdiff_t aBeginB = static_cast<std::ptrdiff_t>(aOffsetB);
-    const std::ptrdiff_t aBlockSize = static_cast<std::ptrdiff_t>(aBlockSizeA);
+    if (aResolvedPathA == aResolvedPathB) {
+        std::vector<unsigned char> &aBytes = mFiles[aResolvedPathA];
+        const std::ptrdiff_t aBeginA = static_cast<std::ptrdiff_t>(aOffsetA);
+        const std::ptrdiff_t aBeginB = static_cast<std::ptrdiff_t>(aOffsetB);
+        const std::ptrdiff_t aBlockSize = static_cast<std::ptrdiff_t>(aBlockSizeA);
+        
+        if (aBeginA < 0 || aBeginB < 0 || aBlockSize <= 0) {
+            return FailBlockMutation(pError, "SwapBlocksByPath failed: invalid swap range.");
+        }
+        if (static_cast<std::size_t>(aBeginA + aBlockSize) > aBytes.size() ||
+            static_cast<std::size_t>(aBeginB + aBlockSize) > aBytes.size()) {
+            return FailBlockMutation(pError, "SwapBlocksByPath failed: swap range out of bounds.");
+        }
+        
+        for (std::ptrdiff_t i = 0; i < aBlockSize; ++i) {
+            std::swap(aBytes[static_cast<std::size_t>(aBeginA + i)],
+                      aBytes[static_cast<std::size_t>(aBeginB + i)]);
+        }
+        return true;
+    }
     
-    if (aBeginA < 0 || aBeginB < 0 || aBlockSize <= 0) {
-        return FailBlockMutation(pError, "SwapBlocks failed: invalid swap range.");
-    }
-    if (static_cast<std::size_t>(aBeginA + aBlockSize) > aBytes.size() ||
-        static_cast<std::size_t>(aBeginB + aBlockSize) > aBytes.size()) {
-        return FailBlockMutation(pError, "SwapBlocks failed: swap range out of bounds.");
+    std::vector<unsigned char> &aBytesA = mFiles[aResolvedPathA];
+    std::vector<unsigned char> &aBytesB = mFiles[aResolvedPathB];
+    if ((aOffsetA + aBlockSizeA) > aBytesA.size() ||
+        (aOffsetB + aBlockSizeB) > aBytesB.size()) {
+        return FailBlockMutation(pError, "SwapBlocksByPath failed: swap range out of bounds.");
     }
     
-    for (std::ptrdiff_t i = 0; i < aBlockSize; ++i) {
-        std::swap(aBytes[static_cast<std::size_t>(aBeginA + i)],
-                  aBytes[static_cast<std::size_t>(aBeginB + i)]);
-    }
+    std::vector<unsigned char> aBufferA(aBytesA.begin() + static_cast<std::ptrdiff_t>(aOffsetA),
+                                        aBytesA.begin() + static_cast<std::ptrdiff_t>(aOffsetA + aBlockSizeA));
+    std::vector<unsigned char> aBufferB(aBytesB.begin() + static_cast<std::ptrdiff_t>(aOffsetB),
+                                        aBytesB.begin() + static_cast<std::ptrdiff_t>(aOffsetB + aBlockSizeB));
+    
+    std::copy(aBufferB.begin(),
+              aBufferB.end(),
+              aBytesA.begin() + static_cast<std::ptrdiff_t>(aOffsetA));
+    std::copy(aBufferA.begin(),
+              aBufferA.end(),
+              aBytesB.begin() + static_cast<std::ptrdiff_t>(aOffsetB));
+    
     return true;
 }

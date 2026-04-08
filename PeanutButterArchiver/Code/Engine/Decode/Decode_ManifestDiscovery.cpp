@@ -91,6 +91,28 @@ namespace {
 
 using namespace memory_layout;
 
+std::uint64_t ExpectedArchiveBlockCountForSlot(
+    const DecodeStageContextV2& pContext,
+    std::uint64_t pArchiveIndex) {
+  const std::uint64_t aBlocksPerArchive =
+      static_cast<std::uint64_t>(pContext.Layout().mMaxBlocksPerArchive);
+  if (aBlocksPerArchive == 0u) {
+    return 0u;
+  }
+
+  const DecodeBootstrapStateV2& aBootstrap = pContext.State().mBootstrap;
+  const std::uint64_t aTotalBlocks =
+      aBootstrap.mExpectedPreviewManifestBlockCount +
+      aBootstrap.mExpectedArchiveDataBlockCount +
+      aBootstrap.mExpectedRepairBlockCount;
+  const std::uint64_t aConsumedBefore =
+      std::min(aTotalBlocks, pArchiveIndex * aBlocksPerArchive);
+  if (aConsumedBefore >= aTotalBlocks) {
+    return 0u;
+  }
+  return std::min(aBlocksPerArchive, aTotalBlocks - aConsumedBefore);
+}
+
 bool TryReadValidatedInspectionHeader(DecodeStageContextV2& pContext,
                                       const DiscoveredArchiveFileV2& pArchive,
                                       std::uint64_t pBlockIndex,
@@ -172,14 +194,15 @@ void RefineArchiveWindowFromInspection(DecodeStageContextV2& pContext,
   if (aObservedArchiveCount == 0u) {
     return;
   }
-  aBootstrap.mExpectedArchiveCount = aObservedArchiveCount;
+  aBootstrap.mExpectedArchiveCount =
+      std::max(aBootstrap.mExpectedArchiveCount, aObservedArchiveCount);
 
   std::vector<DiscoveredArchiveFileV2> aRefined(
       static_cast<std::size_t>(aObservedArchiveCount));
   for (std::uint64_t aIndex = 0u; aIndex < aObservedArchiveCount; ++aIndex) {
     aRefined[static_cast<std::size_t>(aIndex)].mArchiveIndex = aIndex;
     aRefined[static_cast<std::size_t>(aIndex)].mArchiveBlockCount =
-        pSectionHeader.mArchiveBlockCount;
+        ExpectedArchiveBlockCountForSlot(pContext, aIndex);
     aRefined[static_cast<std::size_t>(aIndex)].mIsPresent = false;
   }
 
@@ -209,6 +232,32 @@ void RefineArchiveWindowFromInspection(DecodeStageContextV2& pContext,
       aDiscovery.mTotalReadableBlocks += aArchive.mReadableBlockCount;
     }
   }
+}
+
+bool SectionTruthMatchesDiscoveredArchive(const DiscoveredArchiveFileV2& pArchive,
+                                          const SectionHeaderV2& pSectionHeader) {
+  return !pArchive.mHasReadableHeader ||
+         pArchive.mArchiveIndex ==
+             static_cast<std::uint64_t>(pSectionHeader.mArchiveIndex);
+}
+
+bool AdoptCompatibleSectionTruth(DiscoveredArchiveFileV2& pArchive,
+                                 const SectionHeaderV2& pSectionHeader) {
+  if (!SectionTruthMatchesDiscoveredArchive(pArchive, pSectionHeader)) {
+    return false;
+  }
+  pArchive.mHasReadableSection = true;
+  pArchive.mFirstSectionHeader = pSectionHeader;
+  if (!pArchive.mHasReadableHeader) {
+    pArchive.mArchiveIndex = pSectionHeader.mArchiveIndex;
+  }
+  const std::uint64_t aSectionBlockCount =
+      static_cast<std::uint64_t>(pSectionHeader.mArchiveBlockCount);
+  if (aSectionBlockCount != 0u) {
+    pArchive.mArchiveBlockCount =
+        std::max(pArchive.mArchiveBlockCount, aSectionBlockCount);
+  }
+  return true;
 }
 
 std::uint64_t CeilingDivideU64(std::uint64_t pValue,
@@ -497,10 +546,7 @@ void RequestRepairApplyFinalize(DecodeStageContextV2& pContext,
 
 void AdoptRepairPlanningSectionTruth(DiscoveredArchiveFileV2& pArchive,
                                      const SectionHeaderV2& pSectionHeader) {
-  pArchive.mHasReadableSection = true;
-  pArchive.mFirstSectionHeader = pSectionHeader;
-  pArchive.mArchiveIndex = pSectionHeader.mArchiveIndex;
-  pArchive.mArchiveBlockCount = pSectionHeader.mArchiveBlockCount;
+  (void)AdoptCompatibleSectionTruth(pArchive, pSectionHeader);
 }
 
 void EmitRepairPlanningProgress(DecodeStageContextV2& pContext,
@@ -1029,46 +1075,55 @@ bool DecodeInspectionV2::Run(DecodeStageContextV2& pContext) {
 
     DiscoveredArchiveFileV2& aArchive =
         pContext.State().mDiscovery.mArchives[pArchiveSlot];
-    aArchive.mHasReadableSection = true;
-    aArchive.mFirstSectionHeader = pSectionHeader;
-    aArchive.mArchiveIndex = pSectionHeader.mArchiveIndex;
-    aArchive.mArchiveBlockCount = pSectionHeader.mArchiveBlockCount;
+    (void)AdoptCompatibleSectionTruth(aArchive, pSectionHeader);
 
     RefineArchiveWindowFromInspection(pContext, pSectionHeader);
     return true;
   };
 
   if (pContext.Request().mIntent == DecodeIntentV2::kUnbundle) {
-    if (pContext.State().mDiscovery.mArchives.empty() ||
-        !pContext.State().mDiscovery.mArchives.front().mIsPresent) {
+    const std::uint64_t aBlocksPerArchive = std::max<std::uint64_t>(
+        1u, static_cast<std::uint64_t>(pContext.Layout().mMaxBlocksPerArchive));
+    const std::uint64_t aFirstMainFlatIndex =
+        pContext.State().mBootstrap.mExpectedPreviewManifestBlockCount;
+    const std::size_t aFirstMainArchiveSlot = static_cast<std::size_t>(
+        aFirstMainFlatIndex / aBlocksPerArchive);
+    const std::uint64_t aFirstMainBlockIndex =
+        aFirstMainFlatIndex % aBlocksPerArchive;
+
+    if (aFirstMainArchiveSlot >= pContext.State().mDiscovery.mArchives.size() ||
+        !pContext.State().mDiscovery.mArchives[aFirstMainArchiveSlot].mIsPresent) {
       aCursor.reset();
       pContext.EmitLog(LogLevelV2::kError,
                        LogPhaseFailedV2(LogActionFromDecodeIntentV2(pContext.Request().mIntent),
                                         ProgressStageV2::kInspection,
-                                        "the first archive box is missing"));
+                                        "the first archive-data block is missing"));
       return false;
     }
 
     SectionHeaderV2 aHeader;
     if (!TryReadValidatedInspectionHeader(
-            pContext, pContext.State().mDiscovery.mArchives.front(), 0u, aHeader)) {
+            pContext,
+            pContext.State().mDiscovery.mArchives[aFirstMainArchiveSlot],
+            aFirstMainBlockIndex,
+            aHeader)) {
       aCursor.reset();
       pContext.EmitLog(LogLevelV2::kError,
                        LogPhaseFailedV2(LogActionFromDecodeIntentV2(pContext.Request().mIntent),
                                         ProgressStageV2::kInspection,
-                                        "the first block in the first archive did not validate"));
+                                        "the first archive-data block did not validate"));
       return false;
     }
     ++aCursor->mScannedBlocks;
     if (pContext.WantsRuntimeEvent(RuntimeEventKindV2::kDecodeInspectionBlockScanned)) {
       EmitDecodeInspectionBlockEvent(pContext,
-                                     pContext.State().mDiscovery.mArchives.front(),
-                                     0u,
-                                     0u,
+                                     pContext.State().mDiscovery.mArchives[aFirstMainArchiveSlot],
+                                     aFirstMainArchiveSlot,
+                                     aFirstMainBlockIndex,
                                      true,
                                      &aHeader);
     }
-    (void)aAccept(0u, 0u, aHeader);
+    (void)aAccept(aFirstMainArchiveSlot, aFirstMainBlockIndex, aHeader);
     return FinalizeInspectionSuccess(pContext);
   }
 

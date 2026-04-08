@@ -23,6 +23,8 @@ public:
     
     int                                     mBlockUUID;
     
+    bool                                    mIsInvalid;
+    
 };
 
 #endif /* FakeArchiveBlock_hpp */

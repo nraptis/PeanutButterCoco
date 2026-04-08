@@ -15,6 +15,9 @@ class DecodeHeaderBootstrapCursorV2 {
   std::size_t mEntryIndex = 0u;
   bool mBootstrapPathResolved = false;
   std::string mBootstrapPath;
+  bool mBootstrapHeaderReady = false;
+  memory_layout::ArchiveHeaderV2 mBootstrapHeader{};
+  std::uint64_t mBootstrapFileLength = 0u;
 };
 
 namespace {
@@ -51,6 +54,87 @@ bool ReadArchiveHeaderFromPath(FileSystemV2& pFileSystem,
   }
 
   pOutFileLength = static_cast<std::uint64_t>(aRead->GetLength());
+  return true;
+}
+
+bool TryReadFileLengthFromPath(FileSystemV2& pFileSystem,
+                               const std::string& pPath,
+                               std::uint64_t& pOutFileLength) {
+  pOutFileLength = 0u;
+  std::unique_ptr<FileReadStreamV2> aRead = pFileSystem.OpenReadStream(pPath);
+  if (aRead == nullptr || !aRead->IsReady()) {
+    return false;
+  }
+  pOutFileLength = static_cast<std::uint64_t>(aRead->GetLength());
+  return true;
+}
+
+bool BuildSyntheticBootstrapHeader(DecodeStageContextV2& pContext,
+                                   std::uint64_t pArchiveCount,
+                                   memory_layout::ArchiveHeaderV2& pOutHeader,
+                                   std::string& pOutError) {
+  using namespace memory_layout;
+
+  pOutError.clear();
+  pOutHeader = ArchiveHeaderV2{};
+  pOutHeader.mDirtyState =
+      static_cast<std::uint8_t>(ArchiveDirtyStateV2::kFinishedWithError);
+  pOutHeader.mIsEncrypted = pContext.Request().mEncryptionEnabled ? 1u : 0u;
+
+  const std::uint64_t aArchiveCount = std::max<std::uint64_t>(1u, pArchiveCount);
+  if (!TrySetPackedUint48(
+          pOutHeader.mArchiveIndex, 0u, nullptr, "ArchiveIndex") ||
+      !TrySetPackedUint48(
+          pOutHeader.mArchiveCount, aArchiveCount, nullptr, "ArchiveCount") ||
+      !TrySetPackedUint48(
+          pOutHeader.mBlockCountMain, 0u, nullptr, "BlockCountMain") ||
+      !TrySetPackedUint48(
+          pOutHeader.mReservedCount0, 0u, nullptr, "ReservedCount0") ||
+      !TrySetPackedUint48(
+          pOutHeader.mBlockCountPreview, 0u, nullptr, "BlockCountPreview") ||
+      !TrySetPackedUint48(
+          pOutHeader.mBlockCountRepair, 0u, nullptr, "BlockCountRepair")) {
+    pOutError = "synthetic bootstrap header values were out of range";
+    return false;
+  }
+  return true;
+}
+
+bool TryResolveSyntheticBootstrapForSalvage(
+    DecodeStageContextV2& pContext,
+    const std::vector<DirectoryEntryV2>& pEntries,
+    std::string& pOutBootstrapPath,
+    memory_layout::ArchiveHeaderV2& pOutHeader,
+    std::uint64_t& pOutFileLength,
+    std::string& pOutError) {
+  pOutBootstrapPath.clear();
+  pOutFileLength = 0u;
+  pOutError.clear();
+
+  if (!DecodeIntentAllowsSalvageV2(pContext.Request().mIntent)) {
+    return false;
+  }
+
+  std::uint64_t aArchiveCount = 0u;
+  for (const DirectoryEntryV2& aEntry : pEntries) {
+    if (aEntry.mIsDirectory || !HasArchiveSuffix(aEntry.mPath)) {
+      continue;
+    }
+    ++aArchiveCount;
+    if (pOutBootstrapPath.empty()) {
+      pOutBootstrapPath = aEntry.mPath;
+    }
+  }
+  if (pOutBootstrapPath.empty()) {
+    return false;
+  }
+
+  if (!BuildSyntheticBootstrapHeader(
+          pContext, aArchiveCount, pOutHeader, pOutError)) {
+    return false;
+  }
+  (void)TryReadFileLengthFromPath(
+      pContext.FileSystem(), pOutBootstrapPath, pOutFileLength);
   return true;
 }
 
@@ -132,7 +216,7 @@ bool DecodeHeaderBootstrapV2::Run(DecodeStageContextV2& pContext) {
         EmitBootstrapProgress(pContext,
                               0u,
                               aCursorPtr->mEntries.size(),
-                              "Scanning source folder for archives");
+                              "Scanning source folder for readable archives");
       }
     } else {
       aCursorPtr->mBootstrapPath = pContext.Request().mSourcePath;
@@ -145,14 +229,39 @@ bool DecodeHeaderBootstrapV2::Run(DecodeStageContextV2& pContext) {
   DecodeHeaderBootstrapCursorV2& aCursor = *aCursorPtr;
   if (!aCursor.mBootstrapPathResolved && aCursor.mSourceIsDirectory) {
     if (aCursor.mEntryIndex >= aCursor.mEntries.size()) {
-      return FailHeaderBootstrap(pContext, "no archive file was found");
+      std::string aSyntheticError;
+      if (!TryResolveSyntheticBootstrapForSalvage(
+              pContext,
+              aCursor.mEntries,
+              aCursor.mBootstrapPath,
+              aCursor.mBootstrapHeader,
+              aCursor.mBootstrapFileLength,
+              aSyntheticError)) {
+        return FailHeaderBootstrap(pContext, "no readable archive header was found");
+      }
+      aCursor.mBootstrapPathResolved = true;
+      aCursor.mBootstrapHeaderReady = true;
+      pContext.EmitLog(
+          LogLevelV2::kWarning,
+          LogPhaseWarningV2(
+              LogActionFromDecodeIntentV2(pContext.Request().mIntent),
+              ProgressStageV2::kHeaderBootstrap,
+              "no readable archive header was found; proceeding with synthetic bootstrap metadata for salvage."));
     }
 
     const DirectoryEntryV2& aEntry = aCursor.mEntries[aCursor.mEntryIndex];
     ++aCursor.mEntryIndex;
     if (!aEntry.mIsDirectory && HasArchiveSuffix(aEntry.mPath)) {
-      aCursor.mBootstrapPath = aEntry.mPath;
-      aCursor.mBootstrapPathResolved = true;
+      memory_layout::ArchiveHeaderV2 aHeader;
+      std::uint64_t aFileLength = 0u;
+      if (ReadArchiveHeaderFromPath(
+              pContext.FileSystem(), aEntry.mPath, aHeader, aFileLength)) {
+        aCursor.mBootstrapPath = aEntry.mPath;
+        aCursor.mBootstrapPathResolved = true;
+        aCursor.mBootstrapHeaderReady = true;
+        aCursor.mBootstrapHeader = aHeader;
+        aCursor.mBootstrapFileLength = aFileLength;
+      }
     }
 
     EmitBootstrapProgress(
@@ -161,10 +270,10 @@ bool DecodeHeaderBootstrapV2::Run(DecodeStageContextV2& pContext) {
         aCursor.mEntries.size(),
         aCursor.mBootstrapPathResolved
             ? "Bootstrap archive selected"
-            : "Scanning source folder for archives");
+            : "Scanning source folder for readable archives");
     if (!aCursor.mBootstrapPathResolved &&
         aCursor.mEntryIndex >= aCursor.mEntries.size()) {
-      return FailHeaderBootstrap(pContext, "no archive file was found");
+      return FailHeaderBootstrap(pContext, "no readable archive header was found");
     }
     pContext.ContinuePhaseOnNextHeartbeat();
     return true;
@@ -175,12 +284,28 @@ bool DecodeHeaderBootstrapV2::Run(DecodeStageContextV2& pContext) {
   }
 
   std::uint64_t aFileLength = 0u;
-  if (!ReadArchiveHeaderFromPath(pContext.FileSystem(),
-                                 aCursor.mBootstrapPath,
-                                 aBootstrap.mFirstHeader,
-                                 aFileLength)) {
-    return FailHeaderBootstrap(pContext,
-                               "first archive header could not be read");
+  if (aCursor.mBootstrapHeaderReady) {
+    aBootstrap.mFirstHeader = aCursor.mBootstrapHeader;
+    aFileLength = aCursor.mBootstrapFileLength;
+  } else if (!ReadArchiveHeaderFromPath(pContext.FileSystem(),
+                                        aCursor.mBootstrapPath,
+                                        aBootstrap.mFirstHeader,
+                                        aFileLength)) {
+    std::string aSyntheticError;
+    if (!DecodeIntentAllowsSalvageV2(pContext.Request().mIntent) ||
+        !BuildSyntheticBootstrapHeader(
+            pContext, 1u, aBootstrap.mFirstHeader, aSyntheticError)) {
+      return FailHeaderBootstrap(pContext,
+                                 "bootstrap archive header could not be read");
+    }
+    pContext.EmitLog(
+        LogLevelV2::kWarning,
+        LogPhaseWarningV2(
+            LogActionFromDecodeIntentV2(pContext.Request().mIntent),
+            ProgressStageV2::kHeaderBootstrap,
+            "bootstrap archive header could not be read; proceeding with synthetic bootstrap metadata for salvage."));
+    (void)TryReadFileLengthFromPath(
+        pContext.FileSystem(), aCursor.mBootstrapPath, aFileLength);
   }
   if (pContext.WantsRuntimeEvent(RuntimeEventKindV2::kDecodeArchiveHeaderRead)) {
     EmitDecodeArchiveHeaderEvent(

@@ -27,9 +27,22 @@
 		779793512F6E2B5700D6A4FC /* Cocoa.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Cocoa.framework; path = System/Library/Frameworks/Cocoa.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
+		778580702F846EEB00211AC9 /* Exceptions for "HomeGrownTests" folder in "Compile Sources" phase from "HomeGrownTests" target */ = {
+			isa = PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet;
+			buildPhase = 7765863D2F70ED3500735D5C /* Sources */;
+			membershipExceptions = (
+				RoundTripTests.h,
+			);
+		};
+/* End PBXFileSystemSynchronizedGroupBuildPhaseMembershipExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		776586422F70ED3500735D5C /* HomeGrownTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				778580702F846EEB00211AC9 /* Exceptions for "HomeGrownTests" folder in "Compile Sources" phase from "HomeGrownTests" target */,
+			);
 			path = HomeGrownTests;
 			sourceTree = "<group>";
 		};

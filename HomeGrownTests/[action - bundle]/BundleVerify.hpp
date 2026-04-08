@@ -16,7 +16,7 @@
 class BundleVerify {
 public:
     
-    static bool                         Execute(JobBundle &pJob, vector<WrappedArchive> pReal, vector<FakeArchive> pMock, ByteString *pError);
+    static bool                         Execute(JobBundle &pJob, vector<WrappedArchive> *pReal, vector<FakeArchive> *pMock, ByteString *pError);
     
 };
 

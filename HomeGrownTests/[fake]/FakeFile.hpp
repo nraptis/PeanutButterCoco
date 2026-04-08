@@ -33,7 +33,7 @@ public:
     bool                    mIsRecoverDeleted;
     bool                    mIsRecoverPartial;
     
-    
+    bool                    mIsPartial;
     
 };
 

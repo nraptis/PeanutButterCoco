@@ -15,6 +15,8 @@ FakeFile::FakeFile() {
     
     mIsRecoverDeleted = false;
     mIsRecoverPartial = false;
+    
+    mIsPartial = false;
 }
 
 FakeFile::~FakeFile() {

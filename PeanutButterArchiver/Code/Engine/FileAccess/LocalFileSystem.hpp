@@ -12,6 +12,7 @@ class LocalFileSystemV2 final : public FileSystemV2 {
   bool IsFile(const std::string& pPath) const override;
   bool IsSymlink(const std::string& pPath) const override;
   bool IsAlias(const std::string& pPath) const override;
+  bool RemovePath(const std::string& pPath) override;
   bool EnsureDirectory(const std::string& pPath) override;
   bool ClearDirectory(const std::string& pPath) override;
   bool DirectoryHasEntries(const std::string& pPath) const override;

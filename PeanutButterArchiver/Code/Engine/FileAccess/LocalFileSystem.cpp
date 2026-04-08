@@ -390,6 +390,17 @@ bool LocalFileSystemV2::IsAlias(const std::string& pPath) const {
 #endif
 }
 
+bool LocalFileSystemV2::RemovePath(const std::string& pPath) {
+  std::error_code aError;
+  std::filesystem::remove_all(std::filesystem::path(pPath), aError);
+  if (aError) {
+    return false;
+  }
+  std::error_code aExistsError;
+  return !std::filesystem::exists(std::filesystem::path(pPath), aExistsError) &&
+         !aExistsError;
+}
+
 bool LocalFileSystemV2::EnsureDirectory(const std::string& pPath) {
   std::error_code aError;
   std::filesystem::create_directories(std::filesystem::path(pPath), aError);

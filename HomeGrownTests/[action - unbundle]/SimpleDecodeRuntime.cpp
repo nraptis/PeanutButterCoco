@@ -21,6 +21,7 @@ bool SimpleDecodeRuntime::IsCancelRequested() const {
 
 void SimpleDecodeRuntime::EmitLog(peanutbutter::LogLevelV2 pLevel, const std::string& pMessage) {
     mLogs.push_back(pMessage);
+    (void)pLevel;
 }
 
 void SimpleDecodeRuntime::EmitProgress(peanutbutter::ProgressStageV2 pStage,
@@ -51,4 +52,3 @@ bool SimpleDecodeRuntime::SawEvent(RuntimeEventKindV2 pKind) const {
 void SimpleDecodeRuntime::Cancel() {
     mCancelled = true;
 }
-

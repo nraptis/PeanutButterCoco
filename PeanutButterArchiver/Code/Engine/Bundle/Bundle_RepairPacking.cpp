@@ -265,6 +265,7 @@ bool BuildSectionBlock(BundleStageContextV2& pContext,
                        std::uint64_t pFamilyBlockIndex,
                        std::uint32_t pLocalBlockIndex,
                        BundleLogicalRecordEncoderV2& pEncoder,
+                       const BundlePrecomputedSkipRecordEntryV2* pPrecomputedSkipRecord,
                        bool pEncryptBlock,
                        FixedBlockBufferV2& pOutBlockBytes,
                        std::string& pOutFailureMessage) {
@@ -304,6 +305,14 @@ bool BuildSectionBlock(BundleStageContextV2& pContext,
                                  pLocalBlockIndex,
                                  static_cast<std::uint32_t>(aPayloadBytesWritten),
                                  aSectionHeader);
+  if (pPrecomputedSkipRecord == nullptr) {
+    pOutFailureMessage =
+        "precomputed skip record was unavailable for rebuilt repair source block.";
+    return false;
+  }
+  if (pPrecomputedSkipRecord->mHasValidSkip) {
+    aSectionHeader.mSkipRecord = pPrecomputedSkipRecord->mSkipRecord;
+  }
   if (!TrySetRepairRecordTarget(
           pArchive.mArchiveIndex,
           pLocalBlockIndex,
@@ -342,6 +351,7 @@ bool BuildSectionBlock(BundleStageContextV2& pContext,
       return false;
     }
   }
+  (void)pFamilyBlockIndex;
 
   return true;
 }
@@ -432,7 +442,6 @@ bool RetargetRebuiltRepairBlock(BundleStageContextV2& pContext,
   }
 
   const std::uint32_t aPayloadBytesUsed = aHeader.mPayloadBytesUsed;
-  aHeader.mSkipRecord = MakeInvalidSkipRecord(pContext);
   aHeader.mSectionType =
       static_cast<std::uint8_t>(SectionTypeV2::kRepairData);
   PopulateSectionBootstrapFields(pContext,
@@ -579,6 +588,7 @@ class BundleRepairSourceRebuildCursorV2 {
   explicit BundleRepairSourceRebuildCursorV2(BundleStageContextV2& pContext)
       : mDataRecords(BuildDataRecords(pContext)),
         mPreviewRecords(BuildPreviewRecords(pContext)),
+        mDataSkipRecords(pContext.State().mPacking.mDataSkipRecords),
         mDataEncoder(mDataRecords,
                      pContext.FileSystem(),
                      TypedRecordTypeV2::kDataFile,
@@ -632,11 +642,27 @@ class BundleRepairSourceRebuildCursorV2 {
         }
       } else {
         BundleLogicalRecordEncoderV2& aEncoder = mDataEncoder;
+        const std::uint64_t aPreviewBlockCount = pMemoryPlan.mBlockCountPreview;
+        if (mGlobalBlockIndex < aPreviewBlockCount) {
+          pOutFailureMessage =
+              "repair rebuild main block index underflowed preview block prefix.";
+          return false;
+        }
+        const std::uint64_t aDataBlockIndex = mGlobalBlockIndex - aPreviewBlockCount;
+        if (aDataBlockIndex >=
+            static_cast<std::uint64_t>(mDataSkipRecords.size())) {
+          pOutFailureMessage =
+              "repair rebuild data skip index moved out of range.";
+          return false;
+        }
+        const BundlePrecomputedSkipRecordEntryV2* aPrecomputedSkipRecord =
+            &mDataSkipRecords[static_cast<std::size_t>(aDataBlockIndex)];
         if (!BuildSectionBlock(pContext,
                                aArchive,
                                mGlobalBlockIndex,
                                mLocalBlockIndex,
                                aEncoder,
+                               aPrecomputedSkipRecord,
                                false,
                                mBlockBytes,
                                pOutFailureMessage)) {
@@ -660,6 +686,7 @@ class BundleRepairSourceRebuildCursorV2 {
  private:
   std::vector<BundleRecordEntryV2> mDataRecords;
   std::vector<BundleRecordEntryV2> mPreviewRecords;
+  const std::vector<BundlePrecomputedSkipRecordEntryV2>& mDataSkipRecords;
   BundleLogicalRecordEncoderV2 mDataEncoder;
   BundleLogicalRecordEncoderV2 mPreviewEncoder;
   std::size_t mArchiveIndex = 0u;

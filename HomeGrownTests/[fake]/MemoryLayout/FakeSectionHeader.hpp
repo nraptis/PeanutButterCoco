@@ -24,6 +24,8 @@ public:
     
     unsigned char                   mSectionType;
     
+    int                             mBlockIndex;
+    
     unsigned long long              mArchiveIndex;
     unsigned long long              mArchiveCount;
     

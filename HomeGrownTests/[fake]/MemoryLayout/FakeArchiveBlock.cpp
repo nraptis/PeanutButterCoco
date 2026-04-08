@@ -8,7 +8,7 @@
 #include "FakeArchiveBlock.hpp"
 
 FakeArchiveBlock::FakeArchiveBlock() {
-    
+    mIsInvalid = false;
 }
 
 FakeArchiveBlock::~FakeArchiveBlock() {

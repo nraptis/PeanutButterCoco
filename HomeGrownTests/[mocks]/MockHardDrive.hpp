@@ -13,9 +13,10 @@
 #include <string>
 #include <vector>
 #include "ByteString.hpp"
-#include "JobBundle.hpp"
 
 using namespace std;
+
+class JobBundle;
 
 class MockHardDrive {
 public:
@@ -48,6 +49,7 @@ public:
     bool HasPath(const std::string& pPath) const;
     bool HasDirectory(const std::string& pPath) const;
     bool HasFile(const std::string& pPath) const;
+    bool RemovePath(const std::string& pPath);
     bool DeleteFile(const std::string& pPath);
     
     bool EnsureDirectory(const std::string& pPath);
@@ -94,6 +96,13 @@ public:
                     int pBlockIndexB,
                     const JobBundle &pJob,
                     ByteString *pError); // Swap two full blocks in-place.
+    
+    bool SwapBlocksByPath(const std::string& pPathA,
+                          int pBlockIndexA,
+                          const std::string& pPathB,
+                          int pBlockIndexB,
+                          const JobBundle &pJob,
+                          ByteString *pError); // Swap full blocks across one or two files.
     
     
     

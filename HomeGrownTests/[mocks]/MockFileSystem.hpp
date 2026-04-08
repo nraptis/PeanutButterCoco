@@ -120,6 +120,7 @@ public:
     bool Exists(const std::string& pPath) const override;
     bool IsDirectory(const std::string& pPath) const override;
     bool IsFile(const std::string& pPath) const override;
+    bool RemovePath(const std::string& pPath) override;
     bool EnsureDirectory(const std::string& pPath) override;
     bool ClearDirectory(const std::string& pPath) override;
     bool DirectoryHasEntries(const std::string& pPath) const override;

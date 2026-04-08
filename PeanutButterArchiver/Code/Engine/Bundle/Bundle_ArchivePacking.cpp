@@ -23,10 +23,7 @@ constexpr std::uint64_t kArchiveProgressFileLogIntervalV2 =
 constexpr std::uint64_t kArchiveProgressByteLogIntervalV2 =
     knobs::kBundleArchiveProgressByteLogIntervalV2;
 
-struct PrecomputedSkipRecordEntryV2 {
-  bool mHasValidSkip = false;
-  SkipRecordV2 mSkipRecord{};
-};
+using PrecomputedSkipRecordEntryV2 = BundlePrecomputedSkipRecordEntryV2;
 
 template <typename UInt>
 UInt RandomInclusive(UInt pMin, UInt pMax) {
@@ -846,6 +843,7 @@ class BundleArchivePackingCursorV2 {
   explicit BundleArchivePackingCursorV2(BundleStageContextV2& pContext)
       : mDataRecords(BuildDataRecords(pContext)),
         mPreviewRecords(BuildPreviewRecords(pContext)),
+        mDataSkipRecords(pContext.State().mPacking.mDataSkipRecords),
         mDataEncoder(
             mDataRecords,
             pContext.FileSystem(),
@@ -1099,7 +1097,7 @@ class BundleArchivePackingCursorV2 {
 
   std::vector<BundleRecordEntryV2> mDataRecords;
   std::vector<BundleRecordEntryV2> mPreviewRecords;
-  std::vector<PrecomputedSkipRecordEntryV2> mDataSkipRecords;
+  std::vector<PrecomputedSkipRecordEntryV2>& mDataSkipRecords;
   BundleLogicalRecordEncoderV2 mDataEncoder;
   BundleLogicalRecordEncoderV2 mPreviewEncoder;
   FixedBlockBufferV2 mPlainBlock;
@@ -1304,6 +1302,7 @@ bool BundleArchivePackingV2::Run(BundleStageContextV2& pContext) {
 
   if (!aCursorPtr) {
     aPacking.mArchivePaths.clear();
+    aPacking.mDataSkipRecords.clear();
     aPacking.mArchivePackedBlockCount = 0u;
     pContext.State().mCancel = BundleCancelStateV2{};
     aCursorPtr = std::make_shared<BundleArchivePackingCursorV2>(pContext);

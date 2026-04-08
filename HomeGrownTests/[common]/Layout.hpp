@@ -10,6 +10,9 @@
 
 #include "Primatives.hpp"
 #include "ByteString.hpp"
+#include "ByteMap.hpp"
+#include "JobBundle.hpp"
+
 
 using namespace std;
 using namespace peanutbutter::memory_layout;
@@ -30,7 +33,11 @@ public:
     static int              GetZeroCount(int pMaximum);
     static ByteString       GetZeroPadded(int pNumber, int pZeroCount);
     
-
+    static ByteString       GetUniqueName(ByteString pPreferredName, ByteMap *pMap);
+    
+    // Expectation: This is where fi
+    static void             PrintPackedMembership(JobBundle &pJob);
+    
 };
 
 #endif /* Layout_hpp */

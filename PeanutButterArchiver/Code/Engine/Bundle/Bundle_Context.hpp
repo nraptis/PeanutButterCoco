@@ -15,6 +15,7 @@
 #include "../Crypto/RotationMaskCipher.hpp"
 #include "../FileAccess/LocalFileSystem.hpp"
 #include "../MemoryLayout/ArchiveLayoutConfig.hpp"
+#include "../MemoryLayout/SkipRecord.hpp"
 
 namespace peanutbutter {
 
@@ -78,8 +79,14 @@ struct BundleCipherStateV2 {
   FixedBlockBufferV2 mWorkerBuffer{};
 };
 
+struct BundlePrecomputedSkipRecordEntryV2 {
+  bool mHasValidSkip = false;
+  memory_layout::SkipRecordV2 mSkipRecord{};
+};
+
 struct BundlePackingStateV2 {
   std::vector<std::string> mArchivePaths;
+  std::vector<BundlePrecomputedSkipRecordEntryV2> mDataSkipRecords;
   std::uint64_t mArchivePackedBlockCount = 0u;
   std::uint64_t mRepairPackedBlockCount = 0u;
 };

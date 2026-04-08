@@ -12,6 +12,35 @@
 namespace {
 constexpr const char* kRecoverPartialPrefix = "$PARTIAL_";
 
+ByteString DescribeFakeFile(const FakeFile& pFile) {
+    ByteString aResult = ByteString("{") + pFile.mName + ByteString("}");
+    aResult = aResult + ByteString(" [");
+    aResult = aResult + (pFile.mIsFolder ? ByteString("folder") : ByteString("file"));
+    if (pFile.mIsPartial) {
+        aResult = aResult + ByteString(", partial");
+    }
+    if (pFile.mIsRecoverPartial) {
+        aResult = aResult + ByteString(", recover-partial");
+    }
+    if (pFile.mIsRecoverDeleted) {
+        aResult = aResult + ByteString(", recover-deleted");
+    }
+    aResult = aResult + ByteString(", bytes=") + ByteString(pFile.mContent.mLength) + ByteString("]");
+    return aResult;
+}
+
+ByteString DescribeFakeFileList(const vector<FakeFile>& pFiles) {
+    ByteString aResult = ByteString("count=") + ByteString((int)pFiles.size()) + ByteString(" [");
+    for (int aIndex=0; aIndex<((int)pFiles.size()); aIndex++) {
+        if (aIndex > 0) {
+            aResult = aResult + ByteString(", ");
+        }
+        aResult = aResult + DescribeFakeFile(pFiles[aIndex]);
+    }
+    aResult = aResult + ByteString("]");
+    return aResult;
+}
+
 bool DecodeRecoverRealName(const ByteString& pRealName,
                            ByteString* pOutDecodedName,
                            bool* pOutIsPartialByName) {
@@ -140,24 +169,31 @@ bool FileMatchesDamagedExpectation(const FakeFile &pReal,
 }
 } // namespace
 
-bool UnbundleVerify::Execute(vector<FakeFile> &pFilesReal, vector<FakeFile> &pFilesMock, ByteString *pError) {
+bool UnbundleVerify::Execute(vector<FakeFile> *pFilesReal, vector<FakeFile> *pFilesMock, ByteString *pError) {
     
     FileMap aMapReal;
-    for (auto aFile: pFilesReal) {
+    for (auto aFile: *pFilesReal) {
         aMapReal.Add(aFile.mName, aFile);
     }
     
     FileMap aMapMock;
-    for (auto aFile: pFilesMock) {
+    for (auto aFile: *pFilesMock) {
         aMapMock.Add(aFile.mName, aFile);
     }
     
     int aMatchCount = 0;
     
-    for (auto aFileA: pFilesReal) {
+    for (auto aFileA: *pFilesReal) {
         
         FakeFile aFileB;
-        if (!aMapMock.Get(aFileA.mName, &aFileB, pError)) {
+        if (!aMapMock.TryGet(aFileA.mName, &aFileB)) {
+            if (pError != NULL) {
+                ByteString aError = ByteString("Unbundle, real file {") + aFileA.mName +
+                                    ByteString("} is missing from mock files.") +
+                                    ByteString("\nReal files: ") + DescribeFakeFileList(*pFilesReal) +
+                                    ByteString("\nMock files: ") + DescribeFakeFileList(*pFilesMock);
+                pError->Set(aError);
+            }
             return false;
         }
         
@@ -182,7 +218,9 @@ bool UnbundleVerify::Execute(vector<FakeFile> &pFilesReal, vector<FakeFile> &pFi
                     if (pError != NULL) {
                         ByteString aErrorA = ByteString("Unbundle, real file {") + aFileA.mName + ByteString("} did not match mock file {") + aFileB.mName + ByteString("}.");
                         ByteString aErrorB = ByteString("\nUnbundle, real content {") + aFileA.mContent + ByteString("} did not match mock content {") + aFileB.mContent + ByteString("}.");
-                        pError->Set(aErrorA + aErrorB);
+                        ByteString aErrorC = ByteString("\nReal files: ") + DescribeFakeFileList(*pFilesReal) +
+                                             ByteString("\nMock files: ") + DescribeFakeFileList(*pFilesMock);
+                        pError->Set(aErrorA + aErrorB + aErrorC);
                     }
                     return false;
                 }
@@ -191,20 +229,26 @@ bool UnbundleVerify::Execute(vector<FakeFile> &pFilesReal, vector<FakeFile> &pFi
         aMatchCount++;
     }
     
-    for (auto aFile: pFilesReal) {
+    for (auto aFile: *pFilesReal) {
         if (aMapMock.Exists(aFile.mName) == false) {
             if (pError != NULL) {
-                ByteString aError = ByteString("Unbundle, real file {") + aFile.mName + ByteString("} is missing from mock files.");
+                ByteString aError = ByteString("Unbundle, real file {") + aFile.mName +
+                                    ByteString("} is missing from mock files.") +
+                                    ByteString("\nReal files: ") + DescribeFakeFileList(*pFilesReal) +
+                                    ByteString("\nMock files: ") + DescribeFakeFileList(*pFilesMock);
                 pError->Set(aError);
             }
             return false;
         }
     }
     
-    for (auto aFile: pFilesMock) {
+    for (auto aFile: *pFilesMock) {
         if (aMapReal.Exists(aFile.mName) == false) {
             if (pError != NULL) {
-                ByteString aError = ByteString("Unbundle, mock file {") + aFile.mName + ByteString("} is missing from real files.");
+                ByteString aError = ByteString("Unbundle, mock file {") + aFile.mName +
+                                    ByteString("} is missing from real files.") +
+                                    ByteString("\nReal files: ") + DescribeFakeFileList(*pFilesReal) +
+                                    ByteString("\nMock files: ") + DescribeFakeFileList(*pFilesMock);
                 pError->Set(aError);
             }
             return false;

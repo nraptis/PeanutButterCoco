@@ -21,7 +21,7 @@ public:
                                 int pBlocksPerArchive,
                                 int pPayloadBytesPerBlock,
                                 ByteString *pError);
-    bool                    SetInvalid();
+    void                    SetInvalid();
     
     int                     mPayloadDistance;
     

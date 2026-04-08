@@ -10,7 +10,7 @@
 
 #include "namespaces.hpp"
 #include "ByteString.hpp"
-#include "FakeFileBlockSpan.hpp"
+#include "FakeFile.hpp"
 #include <unordered_set>
 #include <unordered_map>
 
@@ -50,29 +50,6 @@ public:
 private:
     
     std::unordered_set<ByteString, ByteStringHash, ByteStringEqual>     mSet;
-};
-
-class FileSpanMap {
-public:
-    
-    FileSpanMap();
-    ~FileSpanMap();
-    
-    void                                                                                Add(const ByteString &pKey, FakeFileBlockSpan &pFileBlockSpan);
-    void                                                                                Add(const string &pKey, FakeFileBlockSpan &pFileBlockSpan);
-    
-    bool                                                                                TryGet(const ByteString &pKey, FakeFileBlockSpan *pBlockSpan);
-    bool                                                                                TryGet(const string &pKey, FakeFileBlockSpan *pBlockSpan);
-    
-    bool                                                                                Get(const ByteString &pKey, FakeFileBlockSpan *pBlockSpan, ByteString *pError);
-    bool                                                                                Get(const string &pKey, FakeFileBlockSpan *pBlockSpan, ByteString *pError);
-    
-    bool                                                                                Exists(const ByteString &pKey);
-    bool                                                                                Exists(const string &pKey);
-    
-    void                                                                                Clear();
-    
-    std::unordered_map<ByteString, FakeFileBlockSpan, ByteStringHash, ByteStringEqual>  mMap;
 };
 
 class FileMap {

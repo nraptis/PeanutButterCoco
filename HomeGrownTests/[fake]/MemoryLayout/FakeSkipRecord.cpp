@@ -20,7 +20,7 @@ FakeSkipRecord::~FakeSkipRecord() {
     
 }
 
-bool FakeSkipRecord::SetInvalid() {
+void FakeSkipRecord::SetInvalid() {
     
     mPayloadDistance = -1;
     mArchiveIndex = -1;
@@ -28,8 +28,6 @@ bool FakeSkipRecord::SetInvalid() {
     mByteIndex = -1;
     
     mExpectInvalid = true;
-    
-    return true;
 }
 
 bool FakeSkipRecord::SetValid(int pPayloadDistance,
