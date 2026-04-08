@@ -39,6 +39,8 @@
     _cancelButton = [NSButton buttonWithTitle:@"Cancel" target:nil action:nil];
     _cancelButton.translatesAutoresizingMaskIntoConstraints = NO;
     _cancelButton.enabled = NO;
+    _cancelButton.bezelStyle = NSBezelStyleRounded;
+    _cancelButton.controlSize = NSControlSizeRegular;
 
     [self addSubview:self.titleLabel];
     [self addSubview:self.detailLabel];
@@ -55,7 +57,7 @@
         [_cancelButton.trailingAnchor constraintEqualToAnchor:self.trailingAnchor constant:-kUIMakeArchiveContentInset],
         [_cancelButton.centerYAnchor constraintEqualToAnchor:self.progressIndicator.centerYAnchor],
         [_cancelButton.widthAnchor constraintEqualToConstant:kCancelButtonWidth],
-        [_cancelButton.heightAnchor constraintEqualToConstant:kCancelButtonHeight],
+        [_cancelButton.heightAnchor constraintEqualToConstant:30.0],
     ]];
 
     return self;

@@ -12,8 +12,8 @@
     }
 
     self.wantsLayer = YES;
-    self.layer.backgroundColor = [NSColor colorWithRed:0.53 green:0.36 blue:0.20 alpha:1.0].CGColor;
-    self.layer.cornerRadius = kUICardCornerRadius;
+    self.layer.backgroundColor = [NSColor colorWithRed:0.24 green:0.24 blue:0.25125 alpha:1.0].CGColor;
+    self.layer.cornerRadius = kUILogContainerCornerRadius;
 
     _homeLogView = [[HomeLogView alloc] initWithFrame:NSZeroRect];
     [self addSubview:_homeLogView];

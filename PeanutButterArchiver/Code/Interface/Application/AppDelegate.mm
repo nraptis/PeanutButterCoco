@@ -13,6 +13,74 @@ NSString *NSStringFromStdString(const std::string& value) {
 
 }  // namespace peanutbutter
 
+static BOOL PBWindowFrameSizeIsValid(NSRect frame) {
+    return frame.size.width >= kUIWindowMinWidth &&
+           frame.size.width <= kUIWindowMaxWidth &&
+           frame.size.height >= kUIWindowMinHeight &&
+           frame.size.height <= kUIWindowMaxHeight;
+}
+
+static BOOL PBWindowFrameFitsScreenVisibleFrame(NSRect frame, NSScreen *screen) {
+    if (screen == nil || !PBWindowFrameSizeIsValid(frame)) {
+        return NO;
+    }
+
+    NSRect visibleFrame = screen.visibleFrame;
+    return frame.size.width <= NSWidth(visibleFrame) &&
+           frame.size.height <= NSHeight(visibleFrame);
+}
+
+static NSRect PBClampWindowFrameToVisibleFrame(NSRect frame, NSScreen *screen) {
+    if (screen == nil) {
+        return frame;
+    }
+
+    NSRect visibleFrame = screen.visibleFrame;
+    CGFloat maxX = NSMaxX(visibleFrame) - NSWidth(frame);
+    CGFloat maxY = NSMaxY(visibleFrame) - NSHeight(frame);
+    frame.origin.x = MIN(MAX(frame.origin.x, NSMinX(visibleFrame)), maxX);
+    frame.origin.y = MIN(MAX(frame.origin.y, NSMinY(visibleFrame)), maxY);
+    return frame;
+}
+
+static BOOL PBResolveUsableWindowFrame(NSRect frame, NSRect *resolvedFrame) {
+    if (!PBWindowFrameSizeIsValid(frame)) {
+        return NO;
+    }
+
+    NSScreen *bestScreen = nil;
+    NSRect bestFrame = NSZeroRect;
+    CGFloat bestIntersectionArea = -1.0;
+
+    for (NSScreen *screen in NSScreen.screens) {
+        if (!PBWindowFrameFitsScreenVisibleFrame(frame, screen)) {
+            continue;
+        }
+
+        NSRect clampedFrame = PBClampWindowFrameToVisibleFrame(frame, screen);
+        NSRect intersection = NSIntersectionRect(frame, screen.visibleFrame);
+        CGFloat intersectionArea = NSWidth(intersection) * NSHeight(intersection);
+        if (bestScreen == nil || intersectionArea > bestIntersectionArea) {
+            bestScreen = screen;
+            bestFrame = clampedFrame;
+            bestIntersectionArea = intersectionArea;
+        }
+    }
+
+    if (bestScreen == nil) {
+        NSScreen *fallbackScreen = NSScreen.mainScreen ?: NSScreen.screens.firstObject;
+        if (!PBWindowFrameFitsScreenVisibleFrame(frame, fallbackScreen)) {
+            return NO;
+        }
+        bestFrame = PBClampWindowFrameToVisibleFrame(frame, fallbackScreen);
+    }
+
+    if (resolvedFrame != nil) {
+        *resolvedFrame = bestFrame;
+    }
+    return YES;
+}
+
 @implementation AppDelegate {
     RootViewController *_rootViewController;
     AppConfigStore *_configStore;
@@ -136,12 +204,52 @@ NSString *NSStringFromStdString(const std::string& value) {
                                               styleMask:(NSWindowStyleMaskTitled |
                                                          NSWindowStyleMaskClosable |
                                                          NSWindowStyleMaskMiniaturizable |
-                                                         NSWindowStyleMaskResizable)
+                                                        NSWindowStyleMaskResizable)
                                                 backing:NSBackingStoreBuffered
                                                   defer:NO];
     self.window.contentMinSize = NSMakeSize(kUIWindowMinWidth, kUIWindowMinHeight);
     self.window.contentMaxSize = NSMakeSize(kUIWindowMaxWidth, kUIWindowMaxHeight);
+    self.window.delegate = self;
     return self.window;
+}
+
+- (BOOL)applySavedWindowFrameIfPossibleToWindow:(NSWindow *)window {
+    if (window == nil) {
+        return NO;
+    }
+
+    NSRect savedFrame = NSMakeRect(_configState.mWindowFrameX,
+                                   _configState.mWindowFrameY,
+                                   _configState.mWindowFrameWidth,
+                                   _configState.mWindowFrameHeight);
+    NSRect resolvedFrame = NSZeroRect;
+    if (!PBResolveUsableWindowFrame(savedFrame, &resolvedFrame)) {
+        return NO;
+    }
+
+    [window setFrame:resolvedFrame display:NO];
+    return YES;
+}
+
+- (void)persistWindowFrame {
+    if (_configStore == nil || self.window == nil) {
+        return;
+    }
+
+    if (!self.window.isVisible || self.window.isMiniaturized) {
+        return;
+    }
+
+    NSRect frame = self.window.frame;
+    if (!PBWindowFrameSizeIsValid(frame)) {
+        return;
+    }
+
+    _configState.mWindowFrameX = frame.origin.x;
+    _configState.mWindowFrameY = frame.origin.y;
+    _configState.mWindowFrameWidth = frame.size.width;
+    _configState.mWindowFrameHeight = frame.size.height;
+    [_configStore saveConfig:_configState error:nil];
 }
 
 - (void)applicationWillFinishLaunching:(NSNotification *)notification {
@@ -166,22 +274,40 @@ NSString *NSStringFromStdString(const std::string& value) {
     _configState = [_configStore loadOrCreateConfig];
     _rootViewController.configStore = _configStore;
     _rootViewController.homeTabDefault = static_cast<NSInteger>(_configState.mHomeTab);
-    _rootViewController.bundleSourceDefault =
-        _configState.mBundleDirectorySource.empty()
+
+    NSString *inputTextDefault =
+        _configState.mTextFieldInputText.empty()
             ? @"input"
-            : peanutbutter::NSStringFromStdString(_configState.mBundleDirectorySource);
+            : peanutbutter::NSStringFromStdString(_configState.mTextFieldInputText);
+    NSString *archivedTextDefault =
+        _configState.mTextFieldArchivedText.empty()
+            ? @"archived"
+            : peanutbutter::NSStringFromStdString(_configState.mTextFieldArchivedText);
+    NSString *unarchivedTextDefault =
+        _configState.mTextFieldUnarchivedText.empty()
+            ? @"unarchived"
+            : peanutbutter::NSStringFromStdString(_configState.mTextFieldUnarchivedText);
+
+    _rootViewController.bundleSourceDefault =
+        inputTextDefault;
     _rootViewController.bundleDestinationDefault =
-        _configState.mBundleDirectoryDestination.empty()
-            ? @"archive"
-            : peanutbutter::NSStringFromStdString(_configState.mBundleDirectoryDestination);
+        archivedTextDefault;
     _rootViewController.unbundleSourceDefault =
-        _configState.mUnbundleDirectorySource.empty()
-            ? @"archive"
-            : peanutbutter::NSStringFromStdString(_configState.mUnbundleDirectorySource);
+        archivedTextDefault;
     _rootViewController.unbundleDestinationDefault =
-        _configState.mUnbundleDirectoryDestination.empty()
-            ? @"unbundled"
-            : peanutbutter::NSStringFromStdString(_configState.mUnbundleDirectoryDestination);
+        unarchivedTextDefault;
+    _rootViewController.toolsSourceDefault =
+        _configState.mTextFieldCompareAText.empty()
+            ? (_configState.mTextFieldInputText.empty()
+                   ? @"source"
+                   : inputTextDefault)
+            : peanutbutter::NSStringFromStdString(_configState.mTextFieldCompareAText);
+    _rootViewController.toolsDestinationDefault =
+        _configState.mTextFieldCompareBText.empty()
+            ? (_configState.mTextFieldUnarchivedText.empty()
+                   ? @"unarchived"
+                   : unarchivedTextDefault)
+            : peanutbutter::NSStringFromStdString(_configState.mTextFieldCompareBText);
     _rootViewController.bundleFilePrefixDefault =
         _configState.mBundleFilePrefix.empty()
             ? @"archive"
@@ -205,8 +331,11 @@ NSString *NSStringFromStdString(const std::string& value) {
     _rootViewController.bundleIncludePreviewDefault = _configState.mBundleIncludePreview;
 
     window.contentViewController = _rootViewController;
-    [window center];
+    if (![self applySavedWindowFrameIfPossibleToWindow:window]) {
+        [window center];
+    }
     [window makeKeyAndOrderFront:nil];
+    [self persistWindowFrame];
     [NSApp activateIgnoringOtherApps:YES];
 
 }
@@ -214,12 +343,23 @@ NSString *NSStringFromStdString(const std::string& value) {
 
 - (void)applicationWillTerminate:(NSNotification *)aNotification {
     (void)aNotification;
+    [self persistWindowFrame];
 }
 
 
 - (BOOL)applicationSupportsSecureRestorableState:(NSApplication *)app {
     (void)app;
     return YES;
+}
+
+- (void)windowDidMove:(NSNotification *)notification {
+    (void)notification;
+    [self persistWindowFrame];
+}
+
+- (void)windowDidResize:(NSNotification *)notification {
+    (void)notification;
+    [self persistWindowFrame];
 }
 
 

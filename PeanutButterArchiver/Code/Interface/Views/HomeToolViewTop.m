@@ -1,6 +1,6 @@
 #import "HomeToolViewTop.hpp"
-#import "ToolRowSectionView.hpp"
 #import "ToolBarSegmentChunkView.hpp"
+#import "ToolRowSectionView.hpp"
 
 #import "../UIConstants.hpp"
 
@@ -14,12 +14,12 @@
 
     ToolRowSectionView *sectionView =
         [[ToolRowSectionView alloc] initWithBackgroundColor:[NSColor colorWithRed:0.98 green:0.97 blue:0.94 alpha:1.0]];
-    ToolBarSegmentChunkView *segmentChunk =
-        [[ToolBarSegmentChunkView alloc] initWithSegments:@[@"Bundle", @"Unbundle", @"Repair", @"Folder Compare"]];
-    self.modeToggle = segmentChunk.segmentedControl;
+    ToolBarSegmentChunkView *segmentView =
+        [[ToolBarSegmentChunkView alloc] initWithSegments:@[@"Bundle", @"Unbundle", @"Tools"]];
+    self.modeToggle = segmentView.segmentedControl;
     self.modeToggle.selectedSegment = 0;
 
-    [sectionView addSubview:segmentChunk];
+    [sectionView addSubview:segmentView];
     [self addSubview:sectionView];
 
     [NSLayoutConstraint activateConstraints:@[
@@ -27,9 +27,10 @@
         [sectionView.trailingAnchor constraintEqualToAnchor:self.trailingAnchor],
         [sectionView.topAnchor constraintEqualToAnchor:self.topAnchor],
         [sectionView.bottomAnchor constraintEqualToAnchor:self.bottomAnchor],
-        [segmentChunk.leadingAnchor constraintEqualToAnchor:sectionView.leadingAnchor constant:kUIActiveZonePaddingLeft],
-        [segmentChunk.trailingAnchor constraintEqualToAnchor:sectionView.trailingAnchor constant:-kUIActiveZonePaddingRight],
-        [segmentChunk.centerYAnchor constraintEqualToAnchor:sectionView.centerYAnchor],
+        [segmentView.leadingAnchor constraintEqualToAnchor:sectionView.leadingAnchor],
+        [segmentView.trailingAnchor constraintEqualToAnchor:sectionView.trailingAnchor],
+        [segmentView.topAnchor constraintEqualToAnchor:sectionView.topAnchor],
+        [segmentView.bottomAnchor constraintEqualToAnchor:sectionView.bottomAnchor],
     ]];
 
     return self;

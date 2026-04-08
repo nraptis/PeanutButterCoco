@@ -4,11 +4,16 @@
 #import "../Application/AppShell.hpp"
 #import "../Views/HomeToolViewTop.hpp"
 #import "../Views/HomeActiveModeContainerView.hpp"
+#import "../Views/HomeLogControlView.hpp"
 #import "../Views/HomeHeaderView.hpp"
 #import "../Views/HomeLogContainerView.hpp"
 #import "../Views/HomeLogView.hpp"
-#import "../Views/HomeToolViewSplitter.hpp"
+#import "../Views/PBDrawableButton.hpp"
 #import "HomeContainerViewController.hpp"
+
+static NSString *PBSafeTextValue(NSString *value) {
+    return value ?: @"";
+}
 
 @implementation RootViewController {
     AppShell *_appShell;
@@ -18,7 +23,7 @@
     NSView *rootView = [[NSView alloc] initWithFrame:NSMakeRect(0.0, 0.0, 1280.0, 860.0)];
     rootView.translatesAutoresizingMaskIntoConstraints = NO;
     rootView.wantsLayer = YES;
-    rootView.layer.backgroundColor = NSColor.windowBackgroundColor.CGColor;
+    rootView.layer.backgroundColor = [NSColor colorWithRed:0.065 green:0.065 blue:0.07125 alpha:1.0].CGColor;
     self.view = rootView;
 }
 
@@ -45,12 +50,17 @@
     [self.homeContainerViewController.homeActiveModeContainerView
         applyUnbundleDefaultsWithSource:self.unbundleSourceDefault
                             destination:self.unbundleDestinationDefault];
+    [self.homeContainerViewController.homeActiveModeContainerView
+        applyToolsDefaultsWithSource:self.toolsSourceDefault
+                         destination:self.toolsDestinationDefault];
     [self applyInitialBundleUiState];
-    [self wireBundleConfigPersistence];
+    [self wireHomeConfigPersistence];
     self.homeContainerViewController.homeActiveModeContainerView.bundleActionButton.target = self;
     self.homeContainerViewController.homeActiveModeContainerView.bundleActionButton.action = @selector(handleBundleButtonPress:);
     self.homeContainerViewController.homeActiveModeContainerView.unbundleActionButton.target = self;
     self.homeContainerViewController.homeActiveModeContainerView.unbundleActionButton.action = @selector(handleBundleButtonPress:);
+    self.homeContainerViewController.homeActiveModeContainerView.toolsActionButton.target = self;
+    self.homeContainerViewController.homeActiveModeContainerView.toolsActionButton.action = @selector(handleBundleButtonPress:);
     self.homeContainerViewController.homeActiveModeContainerView.unbundleReadManifestButton.target = self;
     self.homeContainerViewController.homeActiveModeContainerView.unbundleReadManifestButton.action = @selector(handleReadManifestButtonPress:);
     self.homeContainerViewController.homeActiveModeContainerView.bundleSourceBrowseFilesButton.target = self;
@@ -77,36 +87,52 @@
     self.homeContainerViewController.homeActiveModeContainerView.unbundleDestinationClearButton.action = @selector(handleUnbundleDestinationClearButtonPress:);
     self.homeContainerViewController.homeActiveModeContainerView.unbundleRecoverCheckbox.target = self;
     self.homeContainerViewController.homeActiveModeContainerView.unbundleRecoverCheckbox.action = @selector(handleUnbundleRecoverCheckboxChanged:);
-    self.homeContainerViewController.homeToolViewSplitter.clearLogsButton.target = self;
-    self.homeContainerViewController.homeToolViewSplitter.clearLogsButton.action = @selector(handleClearLogsButtonPress:);
-    self.homeContainerViewController.homeToolViewSplitter.scrollToBottomButton.target = self;
-    self.homeContainerViewController.homeToolViewSplitter.scrollToBottomButton.action = @selector(handleScrollToBottomButtonPress:);
-    self.homeContainerViewController.homeToolViewSplitter.verboseEventsCheckbox.target = self;
-    self.homeContainerViewController.homeToolViewSplitter.verboseEventsCheckbox.action = @selector(handleVerboseEventsCheckboxChanged:);
+    self.homeContainerViewController.homeActiveModeContainerView.toolsSourceBrowseButton.target = self;
+    self.homeContainerViewController.homeActiveModeContainerView.toolsSourceBrowseButton.action = @selector(handleToolsSourceBrowseButtonPress:);
+    self.homeContainerViewController.homeActiveModeContainerView.toolsDestinationBrowseButton.target = self;
+    self.homeContainerViewController.homeActiveModeContainerView.toolsDestinationBrowseButton.action = @selector(handleToolsDestinationBrowseButtonPress:);
+    self.homeContainerViewController.homeActiveModeContainerView.toolsSourceClearButton.target = self;
+    self.homeContainerViewController.homeActiveModeContainerView.toolsSourceClearButton.action = @selector(handleToolsSourceClearButtonPress:);
+    self.homeContainerViewController.homeActiveModeContainerView.toolsDestinationClearButton.target = self;
+    self.homeContainerViewController.homeActiveModeContainerView.toolsDestinationClearButton.action = @selector(handleToolsDestinationClearButtonPress:);
+    self.homeContainerViewController.homeLogControlView.clearLogsButton.target = self;
+    self.homeContainerViewController.homeLogControlView.clearLogsButton.action = @selector(handleClearLogsButtonPress:);
+    self.homeContainerViewController.homeLogControlView.scrollToBottomButton.target = self;
+    self.homeContainerViewController.homeLogControlView.scrollToBottomButton.action = @selector(handleScrollToBottomButtonPress:);
+    self.homeContainerViewController.homeLogControlView.verboseEventsButton.target = self;
+    self.homeContainerViewController.homeLogControlView.verboseEventsButton.action = @selector(handleVerboseEventsCheckboxChanged:);
     self.homeContainerViewController.homeActiveModeContainerView.progressCancelButton.target = self;
     self.homeContainerViewController.homeActiveModeContainerView.progressCancelButton.action = @selector(handleCancelButtonPress:);
     __weak typeof(self) weakSelf = self;
     HomeActiveModeContainerView *activeView = self.homeContainerViewController.homeActiveModeContainerView;
     [activeView setBundleSourcePathDropHandler:^(NSString *path) {
-        weakSelf.homeContainerViewController.homeActiveModeContainerView.bundleSourceTextField.stringValue = path ?: @"";
-        [weakSelf persistBundleUiState];
+        [weakSelf applyBundleInputValue:path origin:nil];
+        [weakSelf persistHomeUiState];
     }];
     [activeView setBundleDestinationPathDropHandler:^(NSString *path) {
-        weakSelf.homeContainerViewController.homeActiveModeContainerView.bundleDestinationTextField.stringValue = path ?: @"";
-        [weakSelf persistBundleUiState];
+        [weakSelf applyArchivedValue:path origin:nil];
+        [weakSelf persistHomeUiState];
     }];
     [activeView setUnbundleSourcePathDropHandler:^(NSString *path) {
-        weakSelf.homeContainerViewController.homeActiveModeContainerView.unbundleSourceTextField.stringValue = path ?: @"";
-        [weakSelf persistBundleUiState];
+        [weakSelf applyArchivedValue:path origin:nil];
+        [weakSelf persistHomeUiState];
     }];
     [activeView setUnbundleDestinationPathDropHandler:^(NSString *path) {
-        weakSelf.homeContainerViewController.homeActiveModeContainerView.unbundleDestinationTextField.stringValue = path ?: @"";
-        [weakSelf persistBundleUiState];
+        [weakSelf applyUnarchivedValue:path origin:nil];
+        [weakSelf persistHomeUiState];
+    }];
+    [activeView setToolsSourcePathDropHandler:^(NSString *path) {
+        [weakSelf applyToolsCompareAValue:path origin:nil];
+        [weakSelf persistHomeUiState];
+    }];
+    [activeView setToolsDestinationPathDropHandler:^(NSString *path) {
+        [weakSelf applyToolsCompareBValue:path origin:nil];
+        [weakSelf persistHomeUiState];
     }];
 
     _appShell = [[AppShell alloc] initWithHomeContainerViewController:self.homeContainerViewController];
     [_appShell setVerboseRuntimeEventsEnabled:
-        (self.homeContainerViewController.homeToolViewSplitter.verboseEventsCheckbox.state == NSControlStateValueOn)];
+        self.homeContainerViewController.homeLogControlView.verboseEventsButton.isSelected];
     [_appShell startPolling];
 }
 
@@ -121,8 +147,7 @@
     NSString *actionTitle = @"Bundle";
     switch (modeIndex) {
         case 1: actionTitle = @"Unbundle"; break;
-        case 2: actionTitle = @"Repair"; break;
-        case 3: actionTitle = @"Folder Compare"; break;
+        case 2: actionTitle = @"Tools"; break;
         case 0:
         default: break;
     }
@@ -137,15 +162,9 @@
                                                    password:activeView.unbundlePasswordTextField.stringValue];
             break;
         case 2:
-            [_appShell enqueueRepairRequestWithSourcePath:activeView.unbundleSourceTextField.stringValue
-                                     destinationDirectory:activeView.unbundleDestinationTextField.stringValue
-                                         aggressiveEnabled:(activeView.unbundleRecoverCheckbox.state == NSControlStateValueOn)
-                                                 password:activeView.unbundlePasswordTextField.stringValue];
-            break;
-        case 3:
-            [_appShell enqueueSanityRequestWithLeftDirectory:activeView.unbundleSourceTextField.stringValue
-                                              rightDirectory:activeView.unbundleDestinationTextField.stringValue
-                                                ignoreHidden:(activeView.unbundleRecoverCheckbox.state == NSControlStateValueOn)];
+            [_appShell enqueueSanityRequestWithLeftDirectory:activeView.toolsSourceTextField.stringValue
+                                              rightDirectory:activeView.toolsDestinationTextField.stringValue
+                                                ignoreHidden:(activeView.toolsIgnoreHiddenCheckbox.state == NSControlStateValueOn)];
             break;
         case 0:
         default:
@@ -190,8 +209,8 @@
 }
 
 - (void)handleVerboseEventsCheckboxChanged:(id)sender {
-    NSButton *checkBox = (NSButton *)sender;
-    [_appShell setVerboseRuntimeEventsEnabled:(checkBox.state == NSControlStateValueOn)];
+    PBDrawableButton *button = (PBDrawableButton *)sender;
+    [_appShell setVerboseRuntimeEventsEnabled:button.isSelected];
 }
 
 - (void)handleCancelButtonPress:(id)sender {
@@ -203,8 +222,8 @@
     (void)sender;
     NSURL *selectedURL = [self chooseSourceFileWithTitle:@"Choose Source File"];
     if (selectedURL != nil) {
-        self.homeContainerViewController.homeActiveModeContainerView.bundleSourceTextField.stringValue = selectedURL.path ?: @"";
-        [self persistBundleUiState];
+        [self applyBundleInputValue:selectedURL.path origin:nil];
+        [self persistHomeUiState];
     }
 }
 
@@ -212,8 +231,8 @@
     (void)sender;
     NSURL *selectedURL = [self chooseDirectoryWithTitle:@"Choose Source Folder"];
     if (selectedURL != nil) {
-        self.homeContainerViewController.homeActiveModeContainerView.bundleSourceTextField.stringValue = selectedURL.path ?: @"";
-        [self persistBundleUiState];
+        [self applyBundleInputValue:selectedURL.path origin:nil];
+        [self persistHomeUiState];
     }
 }
 
@@ -221,8 +240,8 @@
     (void)sender;
     NSURL *selectedURL = [self chooseDirectoryWithTitle:@"Choose Destination Directory"];
     if (selectedURL != nil) {
-        self.homeContainerViewController.homeActiveModeContainerView.bundleDestinationTextField.stringValue = selectedURL.path ?: @"";
-        [self persistBundleUiState];
+        [self applyArchivedValue:selectedURL.path origin:nil];
+        [self persistHomeUiState];
     }
 }
 
@@ -230,8 +249,8 @@
     (void)sender;
     NSURL *selectedURL = [self chooseSourceFileWithTitle:@"Choose Source File"];
     if (selectedURL != nil) {
-        self.homeContainerViewController.homeActiveModeContainerView.unbundleSourceTextField.stringValue = selectedURL.path ?: @"";
-        [self persistBundleUiState];
+        [self applyArchivedValue:selectedURL.path origin:nil];
+        [self persistHomeUiState];
     }
 }
 
@@ -239,8 +258,8 @@
     (void)sender;
     NSURL *selectedURL = [self chooseDirectoryWithTitle:@"Choose Source Folder"];
     if (selectedURL != nil) {
-        self.homeContainerViewController.homeActiveModeContainerView.unbundleSourceTextField.stringValue = selectedURL.path ?: @"";
-        [self persistBundleUiState];
+        [self applyArchivedValue:selectedURL.path origin:nil];
+        [self persistHomeUiState];
     }
 }
 
@@ -248,54 +267,99 @@
     (void)sender;
     NSURL *selectedURL = [self chooseDirectoryWithTitle:@"Choose Destination Directory"];
     if (selectedURL != nil) {
-        self.homeContainerViewController.homeActiveModeContainerView.unbundleDestinationTextField.stringValue = selectedURL.path ?: @"";
-        [self persistBundleUiState];
+        [self applyUnarchivedValue:selectedURL.path origin:nil];
+        [self persistHomeUiState];
     }
 }
 
 - (void)handleSourceClearButtonPress:(id)sender {
     (void)sender;
-    self.homeContainerViewController.homeActiveModeContainerView.bundleSourceTextField.stringValue = @"";
-    [self persistBundleUiState];
+    [self applyBundleInputValue:@"" origin:nil];
+    [self persistHomeUiState];
 }
 
 - (void)handleDestinationClearButtonPress:(id)sender {
     (void)sender;
-    self.homeContainerViewController.homeActiveModeContainerView.bundleDestinationTextField.stringValue = @"";
-    [self persistBundleUiState];
+    [self applyArchivedValue:@"" origin:nil];
+    [self persistHomeUiState];
 }
 
 - (void)handleFilePrefixClearButtonPress:(id)sender {
     (void)sender;
     self.homeContainerViewController.homeActiveModeContainerView.bundleFilePrefixTextField.stringValue = @"";
-    [self persistBundleUiState];
+    [self persistHomeUiState];
 }
 
 - (void)handleUnbundleSourceClearButtonPress:(id)sender {
     (void)sender;
-    self.homeContainerViewController.homeActiveModeContainerView.unbundleSourceTextField.stringValue = @"";
-    [self persistBundleUiState];
+    [self applyArchivedValue:@"" origin:nil];
+    [self persistHomeUiState];
 }
 
 - (void)handleUnbundleDestinationClearButtonPress:(id)sender {
     (void)sender;
-    self.homeContainerViewController.homeActiveModeContainerView.unbundleDestinationTextField.stringValue = @"";
-    [self persistBundleUiState];
+    [self applyUnarchivedValue:@"" origin:nil];
+    [self persistHomeUiState];
+}
+
+- (void)handleToolsSourceBrowseButtonPress:(id)sender {
+    (void)sender;
+    NSURL *selectedURL = [self chooseDirectoryWithTitle:@"Choose Source Folder"];
+    if (selectedURL != nil) {
+        [self applyToolsCompareAValue:selectedURL.path origin:nil];
+        [self persistHomeUiState];
+    }
+}
+
+- (void)handleToolsDestinationBrowseButtonPress:(id)sender {
+    (void)sender;
+    NSURL *selectedURL = [self chooseDirectoryWithTitle:@"Choose Unarchived Folder"];
+    if (selectedURL != nil) {
+        [self applyToolsCompareBValue:selectedURL.path origin:nil];
+        [self persistHomeUiState];
+    }
+}
+
+- (void)handleToolsSourceClearButtonPress:(id)sender {
+    (void)sender;
+    [self applyToolsCompareAValue:@"" origin:nil];
+    [self persistHomeUiState];
+}
+
+- (void)handleToolsDestinationClearButtonPress:(id)sender {
+    (void)sender;
+    [self applyToolsCompareBValue:@"" origin:nil];
+    [self persistHomeUiState];
 }
 
 - (void)handleUnbundleRecoverCheckboxChanged:(id)sender {
     (void)sender;
-    [self persistBundleUiState];
+    [self persistHomeUiState];
 }
 
 - (void)controlTextDidChange:(NSNotification *)notification {
-    (void)notification;
-    [self persistBundleUiState];
+    NSTextField *textField = notification.object;
+    HomeActiveModeContainerView *activeView = self.homeContainerViewController.homeActiveModeContainerView;
+
+    if (textField == activeView.bundleSourceTextField) {
+        [self applyBundleInputValue:textField.stringValue origin:textField];
+    } else if (textField == activeView.bundleDestinationTextField ||
+               textField == activeView.unbundleSourceTextField) {
+        [self applyArchivedValue:textField.stringValue origin:textField];
+    } else if (textField == activeView.unbundleDestinationTextField) {
+        [self applyUnarchivedValue:textField.stringValue origin:textField];
+    } else if (textField == activeView.toolsSourceTextField) {
+        [self applyToolsCompareAValue:textField.stringValue origin:textField];
+    } else if (textField == activeView.toolsDestinationTextField) {
+        [self applyToolsCompareBValue:textField.stringValue origin:textField];
+    }
+
+    [self persistHomeUiState];
 }
 
 - (void)handleBundleConfigControlChanged:(id)sender {
     (void)sender;
-    [self persistBundleUiState];
+    [self persistHomeUiState];
 }
 
 - (NSURL *)chooseDirectoryWithTitle:(NSString *)title {
@@ -354,7 +418,7 @@
     activeView.activeHomeTabIndex = safeHomeTab;
 }
 
-- (void)wireBundleConfigPersistence {
+- (void)wireHomeConfigPersistence {
     HomeActiveModeContainerView *activeView = self.homeContainerViewController.homeActiveModeContainerView;
     activeView.bundleSourceTextField.delegate = self;
     activeView.bundleDestinationTextField.delegate = self;
@@ -363,6 +427,8 @@
     activeView.unbundleSourceTextField.delegate = self;
     activeView.unbundleDestinationTextField.delegate = self;
     activeView.unbundlePasswordTextField.delegate = self;
+    activeView.toolsSourceTextField.delegate = self;
+    activeView.toolsDestinationTextField.delegate = self;
 
     for (NSControl *control in @[
             activeView.bundleRepairCheckbox,
@@ -379,7 +445,55 @@
     }
 }
 
-- (void)persistBundleUiState {
+- (void)applyBundleInputValue:(NSString *)value
+                       origin:(NSTextField *)originField {
+    HomeActiveModeContainerView *activeView = self.homeContainerViewController.homeActiveModeContainerView;
+    NSString *safeValue = PBSafeTextValue(value);
+    if (originField != activeView.bundleSourceTextField) {
+        activeView.bundleSourceTextField.stringValue = safeValue;
+    }
+    activeView.toolsSourceTextField.stringValue = safeValue;
+}
+
+- (void)applyArchivedValue:(NSString *)value
+                    origin:(NSTextField *)originField {
+    HomeActiveModeContainerView *activeView = self.homeContainerViewController.homeActiveModeContainerView;
+    NSString *safeValue = PBSafeTextValue(value);
+    if (originField != activeView.bundleDestinationTextField) {
+        activeView.bundleDestinationTextField.stringValue = safeValue;
+    }
+    if (originField != activeView.unbundleSourceTextField) {
+        activeView.unbundleSourceTextField.stringValue = safeValue;
+    }
+}
+
+- (void)applyUnarchivedValue:(NSString *)value
+                      origin:(NSTextField *)originField {
+    HomeActiveModeContainerView *activeView = self.homeContainerViewController.homeActiveModeContainerView;
+    NSString *safeValue = PBSafeTextValue(value);
+    if (originField != activeView.unbundleDestinationTextField) {
+        activeView.unbundleDestinationTextField.stringValue = safeValue;
+    }
+    activeView.toolsDestinationTextField.stringValue = safeValue;
+}
+
+- (void)applyToolsCompareAValue:(NSString *)value
+                         origin:(NSTextField *)originField {
+    HomeActiveModeContainerView *activeView = self.homeContainerViewController.homeActiveModeContainerView;
+    if (originField != activeView.toolsSourceTextField) {
+        activeView.toolsSourceTextField.stringValue = PBSafeTextValue(value);
+    }
+}
+
+- (void)applyToolsCompareBValue:(NSString *)value
+                         origin:(NSTextField *)originField {
+    HomeActiveModeContainerView *activeView = self.homeContainerViewController.homeActiveModeContainerView;
+    if (originField != activeView.toolsDestinationTextField) {
+        activeView.toolsDestinationTextField.stringValue = PBSafeTextValue(value);
+    }
+}
+
+- (void)persistHomeUiState {
     if (self.configStore == nil) {
         return;
     }
@@ -388,29 +502,25 @@
     NSInteger homeTab = self.homeContainerViewController.homeToolViewTop.modeToggle.selectedSegment;
     NSError *error = nil;
     activeView.activeHomeTabIndex = homeTab;
-    if (homeTab == 0) {
-        [self.configStore saveBundleUiStateWithHomeTab:homeTab
-                                                source:activeView.bundleSourceTextField.stringValue
-                                           destination:activeView.bundleDestinationTextField.stringValue
-                                            filePrefix:activeView.bundleFilePrefixTextField.stringValue
-                                          repairEnabled:(activeView.bundleRepairCheckbox.state == NSControlStateValueOn)
-                                            safeEnabled:YES
-                                      encryptionEnabled:(activeView.bundleEncryptCheckbox.state == NSControlStateValueOn)
-                                 includePreviewEnabled:(activeView.bundleIncludePreviewCheckbox.state == NSControlStateValueOn)
-                                         blockCountTitle:activeView.bundleBlockCountCombo.titleOfSelectedItem
-                                encryptionStrengthTitle:activeView.bundleEncryptionStrengthCombo.titleOfSelectedItem
-                                      tableStrengthTitle:activeView.bundleTableStrengthCombo.titleOfSelectedItem
-                                       repairSizeTitle:activeView.bundleRepairSizeCombo.titleOfSelectedItem
-                                               password:activeView.bundlePasswordTextField.stringValue
-                                                  error:&error];
-    } else {
-        [self.configStore saveUnbundleUiStateWithHomeTab:homeTab
-                                                  source:activeView.unbundleSourceTextField.stringValue
-                                             destination:activeView.unbundleDestinationTextField.stringValue
-                                          recoverEnabled:(activeView.unbundleRecoverCheckbox.state == NSControlStateValueOn)
-                                                password:activeView.unbundlePasswordTextField.stringValue
-                                                   error:&error];
-    }
+    [self.configStore saveHomeUiStateWithHomeTab:homeTab
+                                       inputText:activeView.bundleSourceTextField.stringValue
+                                    archivedText:activeView.bundleDestinationTextField.stringValue
+                                  unarchivedText:activeView.unbundleDestinationTextField.stringValue
+                                    compareAText:activeView.toolsSourceTextField.stringValue
+                                    compareBText:activeView.toolsDestinationTextField.stringValue
+                                      filePrefix:activeView.bundleFilePrefixTextField.stringValue
+                                   repairEnabled:(activeView.bundleRepairCheckbox.state == NSControlStateValueOn)
+                                     safeEnabled:YES
+                               encryptionEnabled:(activeView.bundleEncryptCheckbox.state == NSControlStateValueOn)
+                           includePreviewEnabled:(activeView.bundleIncludePreviewCheckbox.state == NSControlStateValueOn)
+                                 blockCountTitle:activeView.bundleBlockCountCombo.titleOfSelectedItem
+                        encryptionStrengthTitle:activeView.bundleEncryptionStrengthCombo.titleOfSelectedItem
+                              tableStrengthTitle:activeView.bundleTableStrengthCombo.titleOfSelectedItem
+                               repairSizeTitle:activeView.bundleRepairSizeCombo.titleOfSelectedItem
+                                       password:activeView.bundlePasswordTextField.stringValue
+                                recoverEnabled:(activeView.unbundleRecoverCheckbox.state == NSControlStateValueOn)
+                             unbundlePassword:activeView.unbundlePasswordTextField.stringValue
+                                          error:&error];
     (void)error;
 }
 

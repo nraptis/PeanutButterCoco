@@ -9,15 +9,23 @@ namespace peanutbutter {
 enum class HomeTabV2 {
   kBundle = 0,
   kUnbundle = 1,
-  kRepair = 2,
-  kSanity = 3,
+  kTools = 2,
 };
 
 struct AppConfigStateV2 {
   HomeTabV2 mHomeTab = HomeTabV2::kBundle;
 
-  std::string mBundleDirectorySource;
-  std::string mBundleDirectoryDestination;
+  double mWindowFrameX = 0.0;
+  double mWindowFrameY = 0.0;
+  double mWindowFrameWidth = 0.0;
+  double mWindowFrameHeight = 0.0;
+
+  std::string mTextFieldInputText;
+  std::string mTextFieldArchivedText;
+  std::string mTextFieldUnarchivedText;
+  std::string mTextFieldCompareAText;
+  std::string mTextFieldCompareBText;
+
   std::string mBundleFilePrefix = "archive";
   bool mBundleRepair = true;
   bool mBundleSafe = true;
@@ -29,19 +37,9 @@ struct AppConfigStateV2 {
   std::string mBundleRepairSize = "20%";
   std::string mBundlePassword;
 
-  std::string mUnbundleDirectorySource;
-  std::string mUnbundleDirectoryDestination;
   bool mUnbundleEncrypt = true;
   bool mUnbundleRecover = false;
   std::string mUnbundlePassword;
-
-  std::string mRepairDirectorySource;
-  std::string mRepairDirectoryDestination;
-  bool mRepairEncrypt = true;
-  std::string mRepairPassword;
-
-  std::string mSanityDirectorySource;
-  std::string mSanityDirectoryDestination;
 };
 
 }  // namespace peanutbutter

@@ -9,18 +9,6 @@
 #import "ToolBarTextFieldChunkView.hpp"
 #import "ToolPanelView.hpp"
 
-static NSStackView *MakeRowStackView(NSArray<NSView *> *chunks) {
-    NSStackView *stackView = [[NSStackView alloc] initWithFrame:NSZeroRect];
-    stackView.translatesAutoresizingMaskIntoConstraints = NO;
-    stackView.orientation = NSUserInterfaceLayoutOrientationHorizontal;
-    stackView.alignment = NSLayoutAttributeCenterY;
-    stackView.spacing = kUIToolBarChunkSpacing;
-    stackView.distribution = NSStackViewDistributionFill;
-    for (NSView *chunk in chunks) {
-        [stackView addArrangedSubview:chunk];
-    }
-    return stackView;
-}
 
 static NSStackView *MakeEqualWidthStackView(NSArray<NSView *> *chunks) {
     NSStackView *stackView = [[NSStackView alloc] initWithFrame:NSZeroRect];
@@ -50,15 +38,20 @@ static NSView *MakeRightSectionContainer(NSView *contentView) {
 
 static NSView *MakeTrailingAlignedRightSection(NSView *contentView,
                                                CGFloat contentWidth) {
+    (void)contentWidth;
     NSView *container = [[NSView alloc] initWithFrame:NSZeroRect];
     container.translatesAutoresizingMaskIntoConstraints = NO;
     [container addSubview:contentView];
     [NSLayoutConstraint activateConstraints:@[
+        [contentView.leadingAnchor constraintGreaterThanOrEqualToAnchor:container.leadingAnchor],
         [contentView.trailingAnchor constraintEqualToAnchor:container.trailingAnchor],
         [contentView.topAnchor constraintEqualToAnchor:container.topAnchor],
         [contentView.bottomAnchor constraintEqualToAnchor:container.bottomAnchor],
-        [contentView.widthAnchor constraintEqualToConstant:contentWidth],
     ]];
+    [container setContentHuggingPriority:NSLayoutPriorityDefaultLow
+                          forOrientation:NSLayoutConstraintOrientationHorizontal];
+    [container setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow
+                                        forOrientation:NSLayoutConstraintOrientationHorizontal];
     return container;
 }
 
@@ -88,12 +81,6 @@ static NSView *MakeTextInputRow(NSView *clearChunk,
         [rightSectionView.bottomAnchor constraintEqualToAnchor:row.bottomAnchor],
         [rightSectionView.widthAnchor constraintEqualToConstant:rightSectionWidth],
     ]];
-    return row;
-}
-
-static NSView *MakeBlankRow(void) {
-    NSView *row = [[NSView alloc] initWithFrame:NSZeroRect];
-    row.translatesAutoresizingMaskIntoConstraints = NO;
     return row;
 }
 
@@ -157,21 +144,31 @@ static CGFloat RequiredUnbundlePanelHeight(void) {
         + [ToolPanelView requiredHeightForRowCount:2];
 }
 
+static CGFloat RequiredToolsPanelHeight(void) {
+    return kUIActiveZonePaddingTop
+        + [ToolPanelView requiredHeightForRowCount:2]
+        + kUIPanelSpacingV
+        + [ToolPanelView requiredHeightForRowCount:1];
+}
+
 @implementation HomeActiveModeContainerView {
     NSView *_bundlePanelView;
     NSView *_unbundlePanelView;
+    NSView *_toolsPanelView;
     ProgressPanelView *_progressPanelView;
     ToolBarTextFieldChunkView *_bundleSourceChunkView;
     ToolBarTextFieldChunkView *_bundleDestinationChunkView;
     ToolBarTextFieldChunkView *_unbundleSourceChunkView;
     ToolBarTextFieldChunkView *_unbundleDestinationChunkView;
+    ToolBarTextFieldChunkView *_toolsSourceChunkView;
+    ToolBarTextFieldChunkView *_toolsDestinationChunkView;
     ToolBarButtonChunkView *_unbundleSourceBrowseFilesChunkView;
-    ToolBarButtonChunkView *_unbundleSourceBrowseFolderChunkView;
     ToolBarCheckBoxRightAlignedChunkView *_unbundleRecoverChunkView;
+    ToolBarCheckBoxRightAlignedChunkView *_toolsIgnoreHiddenChunkView;
     MainActionButton *_unbundleActionView;
+    MainActionButton *_toolsActionView;
     BOOL _unbundleRecoverEnabled;
-    BOOL _repairAggressiveEnabled;
-    BOOL _folderCompareIgnoreHiddenEnabled;
+    BOOL _toolsIgnoreHiddenEnabled;
 }
 
 @synthesize bundleSourceTextField = _bundleSourceTextField;
@@ -203,10 +200,19 @@ static CGFloat RequiredUnbundlePanelHeight(void) {
 @synthesize unbundleRecoverCheckbox = _unbundleRecoverCheckbox;
 @synthesize unbundleReadManifestButton = _unbundleReadManifestButton;
 @synthesize unbundleActionButton = _unbundleActionButton;
+@synthesize toolsSourceTextField = _toolsSourceTextField;
+@synthesize toolsDestinationTextField = _toolsDestinationTextField;
+@synthesize toolsSourceClearButton = _toolsSourceClearButton;
+@synthesize toolsDestinationClearButton = _toolsDestinationClearButton;
+@synthesize toolsSourceBrowseButton = _toolsSourceBrowseButton;
+@synthesize toolsDestinationBrowseButton = _toolsDestinationBrowseButton;
+@synthesize toolsIgnoreHiddenCheckbox = _toolsIgnoreHiddenCheckbox;
+@synthesize toolsActionButton = _toolsActionButton;
 @synthesize progressCancelButton = _progressCancelButton;
 
 + (CGFloat)requiredHeight {
-    return MAX(RequiredBundlePanelHeight(), RequiredUnbundlePanelHeight());
+    return MAX(MAX(RequiredBundlePanelHeight(), RequiredUnbundlePanelHeight()),
+               RequiredToolsPanelHeight());
 }
 
 - (instancetype)initWithFrame:(NSRect)frameRect {
@@ -223,6 +229,7 @@ static CGFloat RequiredUnbundlePanelHeight(void) {
     [self setShowsProgressPanel:NO];
     [self applyBundleDefaultsWithSource:nil destination:nil];
     [self applyUnbundleDefaultsWithSource:nil destination:nil];
+    [self applyToolsDefaultsWithSource:nil destination:nil];
     [self setActiveHomeTabIndex:0];
 
     return self;
@@ -231,10 +238,11 @@ static CGFloat RequiredUnbundlePanelHeight(void) {
 - (void)buildPanels {
     _bundlePanelView = [self buildMakeArchivePanel];
     _unbundlePanelView = [self buildUnbundlePanel];
+    _toolsPanelView = [self buildToolsPanel];
     _progressPanelView = [[ProgressPanelView alloc] initWithFrame:NSZeroRect];
     _progressCancelButton = _progressPanelView.cancelButton;
 
-    for (NSView *panel in @[_bundlePanelView, _unbundlePanelView, _progressPanelView]) {
+    for (NSView *panel in @[_bundlePanelView, _unbundlePanelView, _toolsPanelView, _progressPanelView]) {
         panel.translatesAutoresizingMaskIntoConstraints = NO;
         [self addSubview:panel];
         [NSLayoutConstraint activateConstraints:@[
@@ -257,20 +265,30 @@ static CGFloat RequiredUnbundlePanelHeight(void) {
         [[ToolBarButtonChunkView alloc] initWithTitle:@"Browse Files"];
     ToolBarButtonChunkView *sourceBrowseChunk =
         [[ToolBarButtonChunkView alloc] initWithTitle:@"Browse Folder"];
+    
+    [sourceBrowseFilesChunk setSmallPaddingRight];
+    [sourceBrowseChunk setSmallPaddingLeft];
+    
     ToolBarButtonChunkView *sourceClearChunk =
         [[ToolBarButtonChunkView alloc] initWithTitle:@"Clear"];
+    [sourceClearChunk setMediumPaddingRight];
+    
     ToolBarTextFieldChunkView *destinationChunk =
         [[ToolBarTextFieldChunkView alloc] initWithText:@""
-                                                placeholder:@"archive"];
+                                                placeholder:@"archived"];
     ToolBarButtonChunkView *destinationBrowseChunk =
         [[ToolBarButtonChunkView alloc] initWithTitle:@"Browse"];
     ToolBarButtonChunkView *destinationClearChunk =
         [[ToolBarButtonChunkView alloc] initWithTitle:@"Clear"];
+    [destinationClearChunk setMediumPaddingRight];
+    
     ToolBarTextFieldChunkView *prefixChunk =
         [[ToolBarTextFieldChunkView alloc] initWithText:@"archive"
                                            placeholder:@"archive"];
     ToolBarButtonChunkView *prefixClearChunk =
         [[ToolBarButtonChunkView alloc] initWithTitle:@"Clear"];
+    [prefixClearChunk setSmallPaddingRight];
+    
     ToolBarComboBoxChunkView *blockCountChunk =
         [[ToolBarComboBoxChunkView alloc] initWithItems:@[
             @"1 block",
@@ -302,9 +320,7 @@ static CGFloat RequiredUnbundlePanelHeight(void) {
         sourceBrowseFilesChunk,
         sourceBrowseChunk,
     ]);
-    sourceButtonsStack.wantsLayer = YES;
-    sourceButtonsStack.layer.backgroundColor =
-        [NSColor colorWithRed:1.0 green:0.0 blue:0.0 alpha:0.18].CGColor;
+    
     NSView *sourceButtonsRegion =
         MakeRightSectionContainer(sourceButtonsStack);
     NSView *sourceRow = MakeTextInputRow(sourceClearChunk,
@@ -358,20 +374,28 @@ static CGFloat RequiredUnbundlePanelHeight(void) {
 
     ToolBarTextFieldChunkView *sourceChunk =
         [[ToolBarTextFieldChunkView alloc] initWithText:@""
-                                           placeholder:@"input"];
+                                           placeholder:@"archived"];
     ToolBarButtonChunkView *sourceBrowseFilesChunk =
         [[ToolBarButtonChunkView alloc] initWithTitle:@"Browse Files"];
-    ToolBarButtonChunkView *sourceBrowseChunk =
+    ToolBarButtonChunkView *sourceBrowseFolderChunk =
         [[ToolBarButtonChunkView alloc] initWithTitle:@"Browse Folder"];
+    
+    [sourceBrowseFilesChunk setSmallPaddingRight];
+    [sourceBrowseFolderChunk setSmallPaddingLeft];
+    
     ToolBarButtonChunkView *sourceClearChunk =
         [[ToolBarButtonChunkView alloc] initWithTitle:@"Clear"];
+    [sourceClearChunk setMediumPaddingRight];
+    
     ToolBarTextFieldChunkView *destinationChunk =
         [[ToolBarTextFieldChunkView alloc] initWithText:@""
-                                           placeholder:@"unbundled"];
+                                           placeholder:@"unarchived"];
     ToolBarButtonChunkView *destinationBrowseChunk =
         [[ToolBarButtonChunkView alloc] initWithTitle:@"Browse"];
     ToolBarButtonChunkView *destinationClearChunk =
         [[ToolBarButtonChunkView alloc] initWithTitle:@"Clear"];
+    [destinationClearChunk setMediumPaddingRight];
+    
     ToolBarCheckBoxRightAlignedChunkView *recoverChunk =
         [[ToolBarCheckBoxRightAlignedChunkView alloc] initWithTitle:@"Recover" state:NO];
     ToolBarTextFieldChunkView *passwordChunk =
@@ -385,7 +409,6 @@ static CGFloat RequiredUnbundlePanelHeight(void) {
     _unbundleSourceChunkView = sourceChunk;
     _unbundleDestinationChunkView = destinationChunk;
     _unbundleSourceBrowseFilesChunkView = sourceBrowseFilesChunk;
-    _unbundleSourceBrowseFolderChunkView = sourceBrowseChunk;
     _unbundleRecoverChunkView = recoverChunk;
     _unbundleSourceTextField = sourceChunk.textField;
     _unbundleDestinationTextField = destinationChunk.textField;
@@ -393,7 +416,7 @@ static CGFloat RequiredUnbundlePanelHeight(void) {
     _unbundleSourceClearButton = sourceClearChunk.button;
     _unbundleDestinationClearButton = destinationClearChunk.button;
     _unbundleSourceBrowseFilesButton = sourceBrowseFilesChunk.button;
-    _unbundleSourceBrowseButton = sourceBrowseChunk.button;
+    _unbundleSourceBrowseButton = sourceBrowseFolderChunk.button;
     _unbundleDestinationBrowseButton = destinationBrowseChunk.button;
     _unbundleRecoverCheckbox = recoverChunk.checkBox;
     _unbundleReadManifestButton = readManifestActionView.button;
@@ -402,12 +425,9 @@ static CGFloat RequiredUnbundlePanelHeight(void) {
 
     NSStackView *sourceButtonsStack = MakeEqualWidthStackView(@[
         sourceBrowseFilesChunk,
-        sourceBrowseChunk,
+        sourceBrowseFolderChunk,
     ]);
-    sourceButtonsStack.wantsLayer = YES;
-    sourceButtonsStack.layer.backgroundColor =
-        [NSColor colorWithRed:1.0 green:0.0 blue:0.0 alpha:0.18].CGColor;
-
+    
     NSView *sourceRow = MakeTextInputRow(sourceClearChunk,
                                          sourceChunk,
                                          MakeRightSectionContainer(sourceButtonsStack),
@@ -427,7 +447,6 @@ static CGFloat RequiredUnbundlePanelHeight(void) {
     ToolPanelView *readManifestPanel =
         [[ToolPanelView alloc] initWithBackgroundColor:[NSColor colorWithRed:0.96 green:0.92 blue:0.82 alpha:1.0]];
     [readManifestPanel addSubview:readManifestActionView];
-    [readManifestPanel.widthAnchor constraintEqualToConstant:(kUIMenuSectionRightWidth + kUIPanelPaddingLeft + kUIPanelPaddingRight)].active = YES;
     [readManifestPanel.heightAnchor constraintEqualToConstant:[ToolPanelView requiredHeightForRowCount:2]].active = YES;
     [NSLayoutConstraint activateConstraints:@[
         [readManifestActionView.leadingAnchor constraintEqualToAnchor:readManifestPanel.leadingAnchor constant:kUIPanelPaddingLeft],
@@ -444,7 +463,6 @@ static CGFloat RequiredUnbundlePanelHeight(void) {
     ToolPanelView *actionPanel =
         [[ToolPanelView alloc] initWithBackgroundColor:[NSColor colorWithRed:0.90 green:0.95 blue:0.87 alpha:1.0]];
     [actionPanel addSubview:unbundleActionView];
-    [actionPanel.widthAnchor constraintEqualToConstant:(kUIMenuSectionRightWidth + kUIPanelPaddingLeft + kUIPanelPaddingRight)].active = YES;
     [actionPanel.heightAnchor constraintEqualToConstant:[ToolPanelView requiredHeightForRowCount:2]].active = YES;
     [NSLayoutConstraint activateConstraints:@[
         [unbundleActionView.leadingAnchor constraintEqualToAnchor:actionPanel.leadingAnchor constant:kUIPanelPaddingLeft],
@@ -461,6 +479,112 @@ static CGFloat RequiredUnbundlePanelHeight(void) {
     panelsRow.spacing = kUIPanelSpacingH;
     [panelsRow addArrangedSubview:readManifestPanel];
     [panelsRow addArrangedSubview:passwordPanel];
+    [panelsRow addArrangedSubview:actionPanel];
+
+    [toolbar addSubview:panelsRow];
+    [NSLayoutConstraint activateConstraints:@[
+        [panelsRow.leadingAnchor constraintEqualToAnchor:toolbar.leadingAnchor],
+        [panelsRow.trailingAnchor constraintEqualToAnchor:toolbar.trailingAnchor],
+        [panelsRow.topAnchor constraintEqualToAnchor:toolbar.topAnchor],
+        [panelsRow.bottomAnchor constraintEqualToAnchor:toolbar.bottomAnchor],
+    ]];
+
+    [panel addSubview:sourceDestinationPanel];
+    [panel addSubview:toolbar];
+    [NSLayoutConstraint activateConstraints:@[
+        [sourceDestinationPanel.leadingAnchor constraintEqualToAnchor:panel.leadingAnchor constant:kUIActiveZonePaddingLeft],
+        [sourceDestinationPanel.trailingAnchor constraintEqualToAnchor:panel.trailingAnchor constant:-kUIActiveZonePaddingRight],
+        [sourceDestinationPanel.topAnchor constraintEqualToAnchor:panel.topAnchor constant:kUIActiveZonePaddingTop],
+        [sourceDestinationPanel.heightAnchor constraintEqualToConstant:[ToolPanelView requiredHeightForRowCount:2]],
+
+        [toolbar.leadingAnchor constraintEqualToAnchor:sourceDestinationPanel.leadingAnchor],
+        [toolbar.trailingAnchor constraintEqualToAnchor:sourceDestinationPanel.trailingAnchor],
+        [toolbar.topAnchor constraintEqualToAnchor:sourceDestinationPanel.bottomAnchor constant:kUIPanelSpacingV],
+        [toolbar.bottomAnchor constraintLessThanOrEqualToAnchor:panel.bottomAnchor],
+    ]];
+
+    return panel;
+}
+
+- (NSView *)buildToolsPanel {
+    NSView *panel = [[NSView alloc] initWithFrame:NSZeroRect];
+    panel.translatesAutoresizingMaskIntoConstraints = NO;
+
+    ToolBarTextFieldChunkView *sourceChunk =
+        [[ToolBarTextFieldChunkView alloc] initWithText:@""
+                                           placeholder:@"source"];
+    ToolBarButtonChunkView *sourceBrowseChunk =
+        [[ToolBarButtonChunkView alloc] initWithTitle:@"Browse"];
+    ToolBarButtonChunkView *sourceClearChunk =
+        [[ToolBarButtonChunkView alloc] initWithTitle:@"Clear"];
+    [sourceClearChunk setMediumPaddingRight];
+
+    ToolBarTextFieldChunkView *destinationChunk =
+        [[ToolBarTextFieldChunkView alloc] initWithText:@""
+                                           placeholder:@"unarchived"];
+    ToolBarButtonChunkView *destinationBrowseChunk =
+        [[ToolBarButtonChunkView alloc] initWithTitle:@"Browse"];
+    ToolBarButtonChunkView *destinationClearChunk =
+        [[ToolBarButtonChunkView alloc] initWithTitle:@"Clear"];
+    [destinationClearChunk setMediumPaddingRight];
+
+    ToolBarCheckBoxRightAlignedChunkView *ignoreHiddenChunk =
+        [[ToolBarCheckBoxRightAlignedChunkView alloc] initWithTitle:@"Ignore hidden" state:NO];
+    MainActionButton *toolsActionView =
+        [[MainActionButton alloc] initWithTitle:@"Tools"];
+
+    _toolsSourceChunkView = sourceChunk;
+    _toolsDestinationChunkView = destinationChunk;
+    _toolsIgnoreHiddenChunkView = ignoreHiddenChunk;
+    _toolsActionView = toolsActionView;
+    _toolsSourceTextField = sourceChunk.textField;
+    _toolsDestinationTextField = destinationChunk.textField;
+    _toolsSourceClearButton = sourceClearChunk.button;
+    _toolsDestinationClearButton = destinationClearChunk.button;
+    _toolsSourceBrowseButton = sourceBrowseChunk.button;
+    _toolsDestinationBrowseButton = destinationBrowseChunk.button;
+    _toolsIgnoreHiddenCheckbox = ignoreHiddenChunk.checkBox;
+    _toolsActionButton = toolsActionView.button;
+
+    NSView *sourceRow = MakeTextInputRow(sourceClearChunk,
+                                         sourceChunk,
+                                         MakeRightSectionContainer(sourceBrowseChunk),
+                                         kUIMenuSectionRightWidth);
+    NSView *destinationRow = MakeTextInputRow(destinationClearChunk,
+                                              destinationChunk,
+                                              MakeRightSectionContainer(destinationBrowseChunk),
+                                              kUIMenuSectionRightWidth);
+
+    ToolPanelView *sourceDestinationPanel =
+        [[ToolPanelView alloc] initWithBackgroundColor:[NSColor colorWithRed:0.92 green:0.96 blue:0.95 alpha:1.0]];
+    [sourceDestinationPanel addRowViews:@[sourceRow, destinationRow]];
+
+    NSView *toolbar = [[NSView alloc] initWithFrame:NSZeroRect];
+    toolbar.translatesAutoresizingMaskIntoConstraints = NO;
+
+    ToolPanelView *optionsPanel =
+        [[ToolPanelView alloc] initWithBackgroundColor:[NSColor colorWithRed:0.96 green:0.92 blue:0.82 alpha:1.0]];
+    [optionsPanel addRowViews:@[MakeTrailingAlignedRightSection(ignoreHiddenChunk, kUICheckBoxChunkWidth)]];
+    [optionsPanel.heightAnchor constraintEqualToConstant:[ToolPanelView requiredHeightForRowCount:1]].active = YES;
+
+    ToolPanelView *actionPanel =
+        [[ToolPanelView alloc] initWithBackgroundColor:[NSColor colorWithRed:0.90 green:0.95 blue:0.87 alpha:1.0]];
+    [actionPanel addSubview:toolsActionView];
+    [actionPanel.heightAnchor constraintEqualToConstant:[ToolPanelView requiredHeightForRowCount:1]].active = YES;
+    [NSLayoutConstraint activateConstraints:@[
+        [toolsActionView.leadingAnchor constraintEqualToAnchor:actionPanel.leadingAnchor constant:kUIPanelPaddingLeft],
+        [toolsActionView.trailingAnchor constraintEqualToAnchor:actionPanel.trailingAnchor constant:-kUIPanelPaddingRight],
+        [toolsActionView.topAnchor constraintEqualToAnchor:actionPanel.topAnchor constant:kUIPanelPaddingTop],
+        [toolsActionView.bottomAnchor constraintEqualToAnchor:actionPanel.bottomAnchor constant:-kUIPanelPaddingBottom],
+    ]];
+
+    NSStackView *panelsRow = [[NSStackView alloc] initWithFrame:NSZeroRect];
+    panelsRow.translatesAutoresizingMaskIntoConstraints = NO;
+    panelsRow.orientation = NSUserInterfaceLayoutOrientationHorizontal;
+    panelsRow.alignment = NSLayoutAttributeTop;
+    panelsRow.distribution = NSStackViewDistributionFill;
+    panelsRow.spacing = kUIPanelSpacingH;
+    [panelsRow addArrangedSubview:optionsPanel];
     [panelsRow addArrangedSubview:actionPanel];
 
     [toolbar addSubview:panelsRow];
@@ -508,14 +632,17 @@ static CGFloat RequiredUnbundlePanelHeight(void) {
     ToolPanelView *resiliencePanel =
         [[ToolPanelView alloc] initWithBackgroundColor:[NSColor colorWithRed:0.96 green:0.92 blue:0.82 alpha:1.0]];
     [resiliencePanel addRowViews:@[resilienceRowOne, resilienceRowTwo]];
-    [resiliencePanel.widthAnchor constraintEqualToConstant:kUIResilienceBoxWidth].active = YES;
 
     ToolBarCheckBoxChunkView *encryptChunk =
         [[ToolBarCheckBoxChunkView alloc] initWithTitle:@"Encrypt" state:YES];
     ToolBarComboBoxChunkView *encryptionChunk =
         [[ToolBarComboBoxChunkView alloc] initWithItems:@[@"Encryption: Low", @"Encryption: Medium", @"Encryption: High"]];
+    [encryptionChunk setSmallPaddingRight];
+    
     ToolBarComboBoxChunkView *tableChunk =
         [[ToolBarComboBoxChunkView alloc] initWithItems:@[@"Tables: Low", @"Tables: Medium", @"Tables: High"]];
+    [tableChunk setSmallPaddingLeft];
+    
     ToolBarTextFieldChunkView *passwordChunk =
         [[ToolBarTextFieldChunkView alloc] initWithText:@""
                                            placeholder:@"Password"];
@@ -523,6 +650,7 @@ static CGFloat RequiredUnbundlePanelHeight(void) {
     _bundleEncryptCheckbox = encryptChunk.checkBox;
     _bundleEncryptionStrengthCombo = encryptionChunk.comboBox;
     _bundleTableStrengthCombo = tableChunk.comboBox;
+    
     _bundlePasswordTextField = passwordChunk.textField;
     NSView *encryptionRowOne = MakeEncryptionControlsRow(encryptChunk, encryptionChunk, tableChunk);
     NSView *encryptionRowTwo = MakeSingleFillRow(passwordChunk);
@@ -535,7 +663,6 @@ static CGFloat RequiredUnbundlePanelHeight(void) {
     ToolPanelView *bundleActionPanel =
         [[ToolPanelView alloc] initWithBackgroundColor:[NSColor colorWithRed:0.90 green:0.95 blue:0.87 alpha:1.0]];
     [bundleActionPanel addSubview:bundleActionView];
-    [bundleActionPanel.widthAnchor constraintEqualToConstant:(kUIMenuSectionRightWidth + kUIPanelPaddingLeft + kUIPanelPaddingRight)].active = YES;
     [bundleActionPanel.heightAnchor constraintEqualToConstant:[ToolPanelView requiredHeightForRowCount:2]].active = YES;
     [NSLayoutConstraint activateConstraints:@[
         [bundleActionView.leadingAnchor constraintEqualToAnchor:bundleActionPanel.leadingAnchor constant:kUIPanelPaddingLeft],
@@ -572,15 +699,23 @@ static CGFloat RequiredUnbundlePanelHeight(void) {
     self.bundleSourceTextField.stringValue =
         (source.length > 0) ? source : @"input";
     self.bundleDestinationTextField.stringValue =
-        (destination.length > 0) ? destination : @"archive";
+        (destination.length > 0) ? destination : @"archived";
 }
 
 - (void)applyUnbundleDefaultsWithSource:(NSString *)source
                             destination:(NSString *)destination {
     self.unbundleSourceTextField.stringValue =
-        (source.length > 0) ? source : @"archive";
+        (source.length > 0) ? source : @"archived";
     self.unbundleDestinationTextField.stringValue =
-        (destination.length > 0) ? destination : @"unbundled";
+        (destination.length > 0) ? destination : @"unarchived";
+}
+
+- (void)applyToolsDefaultsWithSource:(NSString *)source
+                         destination:(NSString *)destination {
+    self.toolsSourceTextField.stringValue =
+        (source.length > 0) ? source : @"source";
+    self.toolsDestinationTextField.stringValue =
+        (destination.length > 0) ? destination : @"unarchived";
 }
 
 - (void)applyUnbundleRecoverDefaultEnabled:(BOOL)recoverEnabled {
@@ -607,54 +742,42 @@ static CGFloat RequiredUnbundlePanelHeight(void) {
     _unbundleDestinationChunkView.pathDropHandler = handler;
 }
 
+- (void)setToolsSourcePathDropHandler:(void (^)(NSString *path))handler {
+    _toolsSourceChunkView.pathDropHandler = handler;
+}
+
+- (void)setToolsDestinationPathDropHandler:(void (^)(NSString *path))handler {
+    _toolsDestinationChunkView.pathDropHandler = handler;
+}
+
 - (void)setActiveHomeTabIndex:(NSInteger)activeHomeTabIndex {
     if (_activeHomeTabIndex == 1) {
         _unbundleRecoverEnabled =
             (self.unbundleRecoverCheckbox.state == NSControlStateValueOn);
     } else if (_activeHomeTabIndex == 2) {
-        _repairAggressiveEnabled =
-            (self.unbundleRecoverCheckbox.state == NSControlStateValueOn);
-    } else if (_activeHomeTabIndex == 3) {
-        _folderCompareIgnoreHiddenEnabled =
-            (self.unbundleRecoverCheckbox.state == NSControlStateValueOn);
+        _toolsIgnoreHiddenEnabled =
+            (self.toolsIgnoreHiddenCheckbox.state == NSControlStateValueOn);
     }
 
     _activeHomeTabIndex = activeHomeTabIndex;
     BOOL showsBundlePanel = (activeHomeTabIndex == 0);
-    BOOL showsUnbundlePanel = (activeHomeTabIndex == 1 || activeHomeTabIndex == 2 || activeHomeTabIndex == 3);
-    BOOL showsOptionControls = (activeHomeTabIndex == 1 || activeHomeTabIndex == 2 || activeHomeTabIndex == 3);
-    BOOL showsSourceBrowseFiles = (activeHomeTabIndex == 1);
+    BOOL showsUnbundlePanel = (activeHomeTabIndex == 1);
+    BOOL showsToolsPanel = (activeHomeTabIndex == 2);
 
     _bundlePanelView.hidden = !showsBundlePanel || self.showsProgressPanel;
     _unbundlePanelView.hidden = !showsUnbundlePanel || self.showsProgressPanel;
-    _unbundleSourceBrowseFilesChunkView.hidden = !showsSourceBrowseFiles;
-    _unbundleRecoverChunkView.hidden = !showsOptionControls;
-    if (activeHomeTabIndex == 3) {
-        [self.unbundleRecoverCheckbox setTitle:@"Ignore hidden"];
-        self.unbundleRecoverCheckbox.state =
-            _folderCompareIgnoreHiddenEnabled ? NSControlStateValueOn : NSControlStateValueOff;
-    } else if (activeHomeTabIndex == 2) {
-        [self.unbundleRecoverCheckbox setTitle:@"Aggressive"];
-        self.unbundleRecoverCheckbox.state =
-            _repairAggressiveEnabled ? NSControlStateValueOn : NSControlStateValueOff;
-    } else {
-        [self.unbundleRecoverCheckbox setTitle:@"Recover"];
-        self.unbundleRecoverCheckbox.state =
-            _unbundleRecoverEnabled ? NSControlStateValueOn : NSControlStateValueOff;
-    }
-    if (activeHomeTabIndex == 2) {
-        [_unbundleActionButton setTitle:@"Repair"];
-    } else if (activeHomeTabIndex == 3) {
-        [_unbundleActionButton setTitle:@"Folder Compare"];
-    } else {
-        [_unbundleActionButton setTitle:@"Unbundle"];
-    }
+    _toolsPanelView.hidden = !showsToolsPanel || self.showsProgressPanel;
+    self.unbundleRecoverCheckbox.state =
+        _unbundleRecoverEnabled ? NSControlStateValueOn : NSControlStateValueOff;
+    self.toolsIgnoreHiddenCheckbox.state =
+        _toolsIgnoreHiddenEnabled ? NSControlStateValueOn : NSControlStateValueOff;
 }
 
 - (void)setShowsProgressPanel:(BOOL)showsProgressPanel {
     _showsProgressPanel = showsProgressPanel;
     _bundlePanelView.hidden = showsProgressPanel || (self.activeHomeTabIndex != 0);
-    _unbundlePanelView.hidden = showsProgressPanel || !(self.activeHomeTabIndex == 1 || self.activeHomeTabIndex == 2 || self.activeHomeTabIndex == 3);
+    _unbundlePanelView.hidden = showsProgressPanel || (self.activeHomeTabIndex != 1);
+    _toolsPanelView.hidden = showsProgressPanel || (self.activeHomeTabIndex != 2);
     _progressPanelView.hidden = !showsProgressPanel;
 }
 
@@ -688,7 +811,15 @@ static CGFloat RequiredUnbundlePanelHeight(void) {
             self.unbundleDestinationBrowseButton,
             self.unbundleRecoverCheckbox,
             self.unbundleReadManifestButton,
-            self.unbundleActionButton
+            self.unbundleActionButton,
+            self.toolsSourceTextField,
+            self.toolsDestinationTextField,
+            self.toolsSourceClearButton,
+            self.toolsDestinationClearButton,
+            self.toolsSourceBrowseButton,
+            self.toolsDestinationBrowseButton,
+            self.toolsIgnoreHiddenCheckbox,
+            self.toolsActionButton
          ]) {
         control.enabled = enabled;
     }

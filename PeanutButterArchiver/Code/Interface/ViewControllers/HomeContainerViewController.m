@@ -2,10 +2,10 @@
 
 #import "../UIConstants.hpp"
 #import "../Views/HomeActiveModeContainerView.hpp"
-#import "../Views/HomeFooterView.hpp"
 #import "../Views/HomeHeaderView.hpp"
+#import "../Views/HomeLogControlView.hpp"
 #import "../Views/HomeLogContainerView.hpp"
-#import "../Views/HomeToolViewSplitter.hpp"
+#import "../Views/HomeLogSeparatorView.hpp"
 #import "../Views/HomeToolViewTop.hpp"
 
 @implementation HomeContainerViewController
@@ -17,28 +17,26 @@
 - (void)loadView {
     NSView *rootView = [[NSView alloc] initWithFrame:NSMakeRect(0.0, 0.0, kUIWindowWidth, kUIWindowHeight)];
     rootView.translatesAutoresizingMaskIntoConstraints = NO;
-    rootView.wantsLayer = YES;
-    rootView.layer.backgroundColor = [NSColor colorWithRed:0.95 green:0.94 blue:0.90 alpha:1.0].CGColor;
     self.view = rootView;
 }
 
 - (void)viewDidLoad {
     [super viewDidLoad];
 
-    self.homeHeaderView = [[HomeHeaderView alloc] initWithFrame:NSZeroRect];
+    //self.homeHeaderView = [[HomeHeaderView alloc] initWithFrame:NSZeroRect];
     self.homeToolViewTop = [[HomeToolViewTop alloc] initWithFrame:NSZeroRect];
     self.homeActiveModeContainerView = [[HomeActiveModeContainerView alloc] initWithFrame:NSZeroRect];
-    self.homeToolViewSplitter = [[HomeToolViewSplitter alloc] initWithFrame:NSZeroRect];
+    self.homeLogSeparatorView = [[HomeLogSeparatorView alloc] initWithFrame:NSZeroRect];
     self.homeLogContainerView = [[HomeLogContainerView alloc] initWithFrame:NSZeroRect];
-    self.homeFooterView = [[HomeFooterView alloc] initWithFrame:NSZeroRect];
+    self.homeLogControlView = [[HomeLogControlView alloc] initWithFrame:NSZeroRect];
 
     NSArray<NSView *> *views = @[
-        self.homeHeaderView,
+        //self.homeHeaderView,
         self.homeToolViewTop,
         self.homeActiveModeContainerView,
-        self.homeToolViewSplitter,
+        self.homeLogSeparatorView,
         self.homeLogContainerView,
-        self.homeFooterView
+        self.homeLogControlView
     ];
 
     for (NSView *view in views) {
@@ -47,35 +45,32 @@
     }
 
     [NSLayoutConstraint activateConstraints:@[
-        [self.homeHeaderView.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:kUIGlobalPaddingLeft],
-        [self.homeHeaderView.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-kUIGlobalPaddingRight],
-        [self.homeHeaderView.topAnchor constraintEqualToAnchor:self.view.topAnchor constant:kUIGlobalPaddingTop],
-        [self.homeHeaderView.heightAnchor constraintEqualToConstant:kUIHeaderHeight],
-
-        [self.homeToolViewTop.leadingAnchor constraintEqualToAnchor:self.homeHeaderView.leadingAnchor],
-        [self.homeToolViewTop.trailingAnchor constraintEqualToAnchor:self.homeHeaderView.trailingAnchor],
-        [self.homeToolViewTop.topAnchor constraintEqualToAnchor:self.homeHeaderView.bottomAnchor constant:kUITopToolbarActiveContentSpacing],
+        
+        [self.homeToolViewTop.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:kUIGlobalPaddingLeft],
+        [self.homeToolViewTop.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-kUIGlobalPaddingRight],
+        [self.homeToolViewTop.topAnchor constraintEqualToAnchor:self.view.topAnchor constant:kUIGlobalPaddingTop],
         [self.homeToolViewTop.heightAnchor constraintEqualToConstant:kUIToolbarHeight],
 
-        [self.homeActiveModeContainerView.leadingAnchor constraintEqualToAnchor:self.homeHeaderView.leadingAnchor constant:kActiveAreaPaddingLeft],
-        [self.homeActiveModeContainerView.trailingAnchor constraintEqualToAnchor:self.homeHeaderView.trailingAnchor constant:-kActiveAreaPaddingRight],
+        [self.homeActiveModeContainerView.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:kUIGlobalPaddingLeft],
+        [self.homeActiveModeContainerView.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-kUIGlobalPaddingRight],
         [self.homeActiveModeContainerView.topAnchor constraintEqualToAnchor:self.homeToolViewTop.bottomAnchor constant:kActiveAreaPaddingTop],
         [self.homeActiveModeContainerView.heightAnchor constraintEqualToConstant:[HomeActiveModeContainerView requiredHeight]],
 
-        [self.homeToolViewSplitter.leadingAnchor constraintEqualToAnchor:self.homeHeaderView.leadingAnchor],
-        [self.homeToolViewSplitter.trailingAnchor constraintEqualToAnchor:self.homeHeaderView.trailingAnchor],
-        [self.homeToolViewSplitter.topAnchor constraintEqualToAnchor:self.homeActiveModeContainerView.bottomAnchor constant:(kActiveAreaPaddingBottom + kActiveAreaSpacingV)],
-        [self.homeToolViewSplitter.heightAnchor constraintEqualToConstant:kUIToolViewSplitterHeight],
+        [self.homeLogSeparatorView.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:kUIGlobalPaddingLeft],
+        [self.homeLogSeparatorView.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-kUIGlobalPaddingRight],
+        [self.homeLogSeparatorView.topAnchor constraintEqualToAnchor:self.homeActiveModeContainerView.bottomAnchor constant:(kActiveAreaPaddingBottom + kActiveAreaSpacingV)],
+        [self.homeLogSeparatorView.heightAnchor constraintEqualToConstant:kUILogSeparatorHeight],
 
-        [self.homeLogContainerView.leadingAnchor constraintEqualToAnchor:self.homeHeaderView.leadingAnchor],
-        [self.homeLogContainerView.trailingAnchor constraintEqualToAnchor:self.homeHeaderView.trailingAnchor],
-        [self.homeLogContainerView.topAnchor constraintEqualToAnchor:self.homeToolViewSplitter.bottomAnchor constant:kUIMiddleToolbarDebugContainerSpacing],
-        [self.homeLogContainerView.bottomAnchor constraintEqualToAnchor:self.homeFooterView.topAnchor constant:-kUIDebugContainerFooterSpacing],
-
-        [self.homeFooterView.leadingAnchor constraintEqualToAnchor:self.homeHeaderView.leadingAnchor],
-        [self.homeFooterView.trailingAnchor constraintEqualToAnchor:self.homeHeaderView.trailingAnchor],
-        [self.homeFooterView.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor constant:-kUIFooterPaddingBottom],
-        [self.homeFooterView.heightAnchor constraintEqualToConstant:kUIFooterHeight],
+        
+        [self.homeLogContainerView.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:kUIGlobalPaddingLeft],
+        [self.homeLogContainerView.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-kUIGlobalPaddingRight],
+        [self.homeLogContainerView.topAnchor constraintEqualToAnchor:self.homeLogSeparatorView.bottomAnchor constant:kUIMiddleToolbarDebugContainerSpacing],
+        [self.homeLogContainerView.bottomAnchor constraintEqualToAnchor:self.homeLogControlView.topAnchor constant:-kUIDebugContainerFooterSpacing],
+        
+        [self.homeLogControlView.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:kUIGlobalPaddingLeft],
+        [self.homeLogControlView.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor constant:-kUIGlobalPaddingRight],
+        [self.homeLogControlView.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor constant:-kUIFooterPaddingBottom],
+        [self.homeLogControlView.heightAnchor constraintEqualToConstant:kUIFooterHeight],
     ]];
 
     [self transitionToHomeState];
@@ -90,7 +85,6 @@
                                                  fraction:0.0];
     self.homeActiveModeContainerView.progressCancelButton.hidden = YES;
     self.homeActiveModeContainerView.progressCancelButton.enabled = NO;
-    [self.homeHeaderView setButtonsEnabled:YES];
     self.homeToolViewTop.modeToggle.enabled = YES;
     [self.homeActiveModeContainerView setBundleControlsEnabled:YES];
 }
@@ -107,7 +101,6 @@
                                                  fraction:0.0];
     self.homeActiveModeContainerView.progressCancelButton.hidden = YES;
     self.homeActiveModeContainerView.progressCancelButton.enabled = NO;
-    [self.homeHeaderView setButtonsEnabled:NO];
     self.homeToolViewTop.modeToggle.enabled = NO;
     [self.homeActiveModeContainerView setBundleControlsEnabled:NO];
 }
@@ -125,7 +118,6 @@
         updateProgressTitle:(title.length > 0 ? title : @"Working")
                       detail:(detail.length > 0 ? detail : @"")
                     fraction:fraction];
-    [self.homeHeaderView setButtonsEnabled:NO];
     self.homeToolViewTop.modeToggle.enabled = YES;
     [self.homeActiveModeContainerView setBundleControlsEnabled:NO];
 }

@@ -319,7 +319,7 @@ static NSString *PBActionTitleFromPrimaryAction(peanutbutter::EnginePrimaryActio
         case peanutbutter::EnginePrimaryActionV2::kRepair:
             return @"Repair";
         case peanutbutter::EnginePrimaryActionV2::kSanity:
-            return @"Folder Compare";
+            return @"Tools";
         case peanutbutter::EnginePrimaryActionV2::kNone:
         default:
             return PBCurrentActionTitle(controller);
@@ -698,7 +698,6 @@ private:
     }
 
     BOOL isUiEnabled = !event.mSnapshot.mIsUiLocked;
-    [_homeContainerViewController.homeHeaderView setButtonsEnabled:isUiEnabled];
     [_homeContainerViewController.homeActiveModeContainerView setBundleControlsEnabled:isUiEnabled];
     _homeContainerViewController.homeActiveModeContainerView.progressCancelButton.enabled =
         event.mSnapshot.mCurrentPrimaryAction != peanutbutter::EnginePrimaryActionV2::kNone &&

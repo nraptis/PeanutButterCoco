@@ -57,8 +57,6 @@ bool TestUnbundle::ExecuteConsecutive(vector<FakeArchiveBlock> *pConsecutiveBloc
         FakeArchiveBlock *aCurrentBlock = &((*pConsecutiveBlockList)[aBlockIndex]);
         
         if (aCurrentBlock->mHeader.mSectionType != ((unsigned char)SectionTypeV2::kArchiveData)) {
-            printf("FATAL: This should not happen on consecutive groomed block\n");
-            printf("Non-archive data block %d.\n", aBlockIndex);
             break;
         }
             
@@ -67,14 +65,11 @@ bool TestUnbundle::ExecuteConsecutive(vector<FakeArchiveBlock> *pConsecutiveBloc
             int aCurrentFlatIndex = FlattenedMainIndex(aCurrentBlock, pBlocksPerArchive);
             
             if ((aCurrentFlatIndex - aPreviousFlatIndex) != 1) {
-                printf("FATAL: This should not happen on consecutive groomed block\n");
-                printf("Non-consecutive flat indices %d to %d.\n", aPreviousFlatIndex, aCurrentFlatIndex);
                 break;
             }
         }
         
         aPayload.Append(aCurrentBlock->mPayload);
-        
         aPreviousBlock = aCurrentBlock;
     }
     
@@ -295,7 +290,6 @@ bool TestUnbundle::PerformMock(JobBundle &pJob,
                     if (aItemIndex == aPreviewBlockCount) {
                         int aFirstBlockIndex = FlattenedMainIndex(&aBlock, pJob.mBlocksPerArchive);
                         if (aFirstBlockIndex != aPreviewBlockCount) {
-                            printf("the first block was out of order, whole 'regular unbundle' is broken.\n");
                             return true;
                         }
                     }
@@ -309,7 +303,6 @@ bool TestUnbundle::PerformMock(JobBundle &pJob,
             break;
         }
     }
-    
     
     ByteMap aNameMap;
     return ExecuteConsecutive(&aBlockListFlat,

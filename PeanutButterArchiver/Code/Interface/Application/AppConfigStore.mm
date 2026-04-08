@@ -36,10 +36,8 @@ NSInteger IntegerFromHomeTab(HomeTabV2 tab) {
             return 0;
         case HomeTabV2::kUnbundle:
             return 1;
-        case HomeTabV2::kRepair:
+        case HomeTabV2::kTools:
             return 2;
-        case HomeTabV2::kSanity:
-            return 3;
     }
     return 0;
 }
@@ -49,20 +47,59 @@ HomeTabV2 HomeTabFromInteger(NSInteger value) {
         case 1:
             return HomeTabV2::kUnbundle;
         case 2:
-            return HomeTabV2::kRepair;
         case 3:
-            return HomeTabV2::kSanity;
+            return HomeTabV2::kTools;
         default:
             return HomeTabV2::kBundle;
     }
 }
 
+BOOL DictionaryNeedsRewrite(NSDictionary *dictionary) {
+    if (dictionary == nil) {
+        return NO;
+    }
+
+    if (dictionary[@"text_field_input_text"] == nil ||
+        dictionary[@"text_field_archived_text"] == nil ||
+        dictionary[@"text_field_unarchived_text"] == nil ||
+        dictionary[@"text_field_compare_a_text"] == nil ||
+        dictionary[@"text_field_compare_b_text"] == nil ||
+        dictionary[@"window_frame_x"] == nil ||
+        dictionary[@"window_frame_y"] == nil ||
+        dictionary[@"window_frame_width"] == nil ||
+        dictionary[@"window_frame_height"] == nil) {
+        return YES;
+    }
+
+    if (dictionary[@"bundle_directory_source"] != nil ||
+        dictionary[@"bundle_directory_destination"] != nil ||
+        dictionary[@"unbundle_directory_source"] != nil ||
+        dictionary[@"unbundle_directory_destination"] != nil ||
+        dictionary[@"repair_directory_source"] != nil ||
+        dictionary[@"repair_directory_destination"] != nil ||
+        dictionary[@"sanity_directory_source"] != nil ||
+        dictionary[@"sanity_directory_destination"] != nil) {
+        return YES;
+    }
+
+    NSInteger homeTab = [dictionary[@"home_tab"] integerValue];
+    return (homeTab < 0 || homeTab > 2);
+}
+
 NSDictionary *DictionaryFromConfig(const AppConfigStateV2& configState) {
     return @{
         @"home_tab": @(IntegerFromHomeTab(configState.mHomeTab)),
+        @"window_frame_x": @(configState.mWindowFrameX),
+        @"window_frame_y": @(configState.mWindowFrameY),
+        @"window_frame_width": @(configState.mWindowFrameWidth),
+        @"window_frame_height": @(configState.mWindowFrameHeight),
 
-        @"bundle_directory_source": StringFromStd(configState.mBundleDirectorySource),
-        @"bundle_directory_destination": StringFromStd(configState.mBundleDirectoryDestination),
+        @"text_field_input_text": StringFromStd(configState.mTextFieldInputText),
+        @"text_field_archived_text": StringFromStd(configState.mTextFieldArchivedText),
+        @"text_field_unarchived_text": StringFromStd(configState.mTextFieldUnarchivedText),
+        @"text_field_compare_a_text": StringFromStd(configState.mTextFieldCompareAText),
+        @"text_field_compare_b_text": StringFromStd(configState.mTextFieldCompareBText),
+
         @"bundle_file_prefix": StringFromStd(configState.mBundleFilePrefix),
         @"bundle_repair": @(configState.mBundleRepair),
         @"bundle_safe": @(configState.mBundleSafe),
@@ -74,19 +111,9 @@ NSDictionary *DictionaryFromConfig(const AppConfigStateV2& configState) {
         @"bundle_repair_size": StringFromStd(configState.mBundleRepairSize),
         @"bundle_password": StringFromStd(configState.mBundlePassword),
 
-        @"unbundle_directory_source": StringFromStd(configState.mUnbundleDirectorySource),
-        @"unbundle_directory_destination": StringFromStd(configState.mUnbundleDirectoryDestination),
         @"unbundle_encrypt": @(configState.mUnbundleEncrypt),
         @"unbundle_recover": @(configState.mUnbundleRecover),
         @"unbundle_password": StringFromStd(configState.mUnbundlePassword),
-
-        @"repair_directory_source": StringFromStd(configState.mRepairDirectorySource),
-        @"repair_directory_destination": StringFromStd(configState.mRepairDirectoryDestination),
-        @"repair_encrypt": @(configState.mRepairEncrypt),
-        @"repair_password": StringFromStd(configState.mRepairPassword),
-
-        @"sanity_directory_source": StringFromStd(configState.mSanityDirectorySource),
-        @"sanity_directory_destination": StringFromStd(configState.mSanityDirectoryDestination),
     };
 }
 
@@ -97,9 +124,53 @@ AppConfigStateV2 ConfigFromDictionary(NSDictionary *dictionary) {
     }
 
     configState.mHomeTab = HomeTabFromInteger([dictionary[@"home_tab"] integerValue]);
+    configState.mWindowFrameX = [dictionary[@"window_frame_x"] doubleValue];
+    configState.mWindowFrameY = [dictionary[@"window_frame_y"] doubleValue];
+    configState.mWindowFrameWidth = [dictionary[@"window_frame_width"] doubleValue];
+    configState.mWindowFrameHeight = [dictionary[@"window_frame_height"] doubleValue];
 
-    configState.mBundleDirectorySource = StdFromString(dictionary[@"bundle_directory_source"]);
-    configState.mBundleDirectoryDestination = StdFromString(dictionary[@"bundle_directory_destination"]);
+    configState.mTextFieldInputText = StdFromString(dictionary[@"text_field_input_text"]);
+    if (configState.mTextFieldInputText.empty()) {
+        configState.mTextFieldInputText = StdFromString(dictionary[@"bundle_directory_source"]);
+    }
+
+    configState.mTextFieldArchivedText = StdFromString(dictionary[@"text_field_archived_text"]);
+    if (configState.mTextFieldArchivedText.empty()) {
+        configState.mTextFieldArchivedText =
+            StdFromString(dictionary[@"unbundle_directory_source"]);
+    }
+    if (configState.mTextFieldArchivedText.empty()) {
+        configState.mTextFieldArchivedText =
+            StdFromString(dictionary[@"bundle_directory_destination"]);
+    }
+
+    configState.mTextFieldUnarchivedText =
+        StdFromString(dictionary[@"text_field_unarchived_text"]);
+    if (configState.mTextFieldUnarchivedText.empty()) {
+        configState.mTextFieldUnarchivedText =
+            StdFromString(dictionary[@"unbundle_directory_destination"]);
+    }
+
+    configState.mTextFieldCompareAText =
+        StdFromString(dictionary[@"text_field_compare_a_text"]);
+    if (configState.mTextFieldCompareAText.empty()) {
+        configState.mTextFieldCompareAText =
+            StdFromString(dictionary[@"sanity_directory_source"]);
+    }
+    if (configState.mTextFieldCompareAText.empty()) {
+        configState.mTextFieldCompareAText = configState.mTextFieldInputText;
+    }
+
+    configState.mTextFieldCompareBText =
+        StdFromString(dictionary[@"text_field_compare_b_text"]);
+    if (configState.mTextFieldCompareBText.empty()) {
+        configState.mTextFieldCompareBText =
+            StdFromString(dictionary[@"sanity_directory_destination"]);
+    }
+    if (configState.mTextFieldCompareBText.empty()) {
+        configState.mTextFieldCompareBText = configState.mTextFieldUnarchivedText;
+    }
+
     configState.mBundleFilePrefix = StdFromString(dictionary[@"bundle_file_prefix"]);
     configState.mBundleRepair = [dictionary[@"bundle_repair"] boolValue];
     configState.mBundleSafe = [dictionary[@"bundle_safe"] boolValue];
@@ -112,20 +183,11 @@ AppConfigStateV2 ConfigFromDictionary(NSDictionary *dictionary) {
     configState.mBundleRepairSize = StdFromString(dictionary[@"bundle_repair_size"]);
     configState.mBundlePassword = StdFromString(dictionary[@"bundle_password"]);
 
-    configState.mUnbundleDirectorySource = StdFromString(dictionary[@"unbundle_directory_source"]);
-    configState.mUnbundleDirectoryDestination = StdFromString(dictionary[@"unbundle_directory_destination"]);
-    configState.mUnbundleEncrypt = [dictionary[@"unbundle_encrypt"] boolValue];
+    configState.mUnbundleEncrypt =
+        dictionary[@"unbundle_encrypt"] == nil ? YES : [dictionary[@"unbundle_encrypt"] boolValue];
     configState.mUnbundleRecover =
         dictionary[@"unbundle_recover"] == nil ? NO : [dictionary[@"unbundle_recover"] boolValue];
     configState.mUnbundlePassword = StdFromString(dictionary[@"unbundle_password"]);
-
-    configState.mRepairDirectorySource = StdFromString(dictionary[@"repair_directory_source"]);
-    configState.mRepairDirectoryDestination = StdFromString(dictionary[@"repair_directory_destination"]);
-    configState.mRepairEncrypt = [dictionary[@"repair_encrypt"] boolValue];
-    configState.mRepairPassword = StdFromString(dictionary[@"repair_password"]);
-
-    configState.mSanityDirectorySource = StdFromString(dictionary[@"sanity_directory_source"]);
-    configState.mSanityDirectoryDestination = StdFromString(dictionary[@"sanity_directory_destination"]);
 
     return configState;
 }
@@ -167,7 +229,12 @@ AppConfigStateV2 ConfigFromDictionary(NSDictionary *dictionary) {
         return configState;
     }
 
-    return ConfigFromDictionary((NSDictionary *)jsonObject);
+    NSDictionary *dictionary = (NSDictionary *)jsonObject;
+    AppConfigStateV2 configState = ConfigFromDictionary(dictionary);
+    if (DictionaryNeedsRewrite(dictionary)) {
+        [self saveConfig:configState error:nil];
+    }
+    return configState;
 }
 
 - (BOOL)saveConfig:(const peanutbutter::AppConfigStateV2&)configState
@@ -191,24 +258,32 @@ AppConfigStateV2 ConfigFromDictionary(NSDictionary *dictionary) {
     return [data writeToURL:[self configFileURL] options:NSDataWritingAtomic error:error];
 }
 
-- (BOOL)saveBundleUiStateWithHomeTab:(NSInteger)homeTab
-                             source:(NSString *)source
-                        destination:(NSString *)destination
-                         filePrefix:(NSString *)filePrefix
-                       repairEnabled:(BOOL)repairEnabled
-                         safeEnabled:(BOOL)safeEnabled
-                   encryptionEnabled:(BOOL)encryptionEnabled
-               includePreviewEnabled:(BOOL)includePreviewEnabled
-                      blockCountTitle:(NSString *)blockCountTitle
-             encryptionStrengthTitle:(NSString *)encryptionStrengthTitle
-                   tableStrengthTitle:(NSString *)tableStrengthTitle
-                    repairSizeTitle:(NSString *)repairSizeTitle
-                            password:(NSString *)password
-                               error:(NSError * _Nullable * _Nullable)error {
+- (BOOL)saveHomeUiStateWithHomeTab:(NSInteger)homeTab
+                         inputText:(NSString *)inputText
+                      archivedText:(NSString *)archivedText
+                    unarchivedText:(NSString *)unarchivedText
+                      compareAText:(NSString *)compareAText
+                      compareBText:(NSString *)compareBText
+                        filePrefix:(NSString *)filePrefix
+                     repairEnabled:(BOOL)repairEnabled
+                       safeEnabled:(BOOL)safeEnabled
+                 encryptionEnabled:(BOOL)encryptionEnabled
+             includePreviewEnabled:(BOOL)includePreviewEnabled
+                   blockCountTitle:(NSString *)blockCountTitle
+          encryptionStrengthTitle:(NSString *)encryptionStrengthTitle
+                tableStrengthTitle:(NSString *)tableStrengthTitle
+                 repairSizeTitle:(NSString *)repairSizeTitle
+                         password:(NSString *)password
+                  recoverEnabled:(BOOL)recoverEnabled
+               unbundlePassword:(NSString *)unbundlePassword
+                            error:(NSError * _Nullable * _Nullable)error {
     AppConfigStateV2 configState = [self loadOrCreateConfig];
     configState.mHomeTab = HomeTabFromInteger(homeTab);
-    configState.mBundleDirectorySource = StdFromString(source);
-    configState.mBundleDirectoryDestination = StdFromString(destination);
+    configState.mTextFieldInputText = StdFromString(inputText);
+    configState.mTextFieldArchivedText = StdFromString(archivedText);
+    configState.mTextFieldUnarchivedText = StdFromString(unarchivedText);
+    configState.mTextFieldCompareAText = StdFromString(compareAText);
+    configState.mTextFieldCompareBText = StdFromString(compareBText);
     configState.mBundleFilePrefix = StdFromString(filePrefix);
     configState.mBundleRepair = repairEnabled;
     configState.mBundleSafe = safeEnabled;
@@ -219,23 +294,8 @@ AppConfigStateV2 ConfigFromDictionary(NSDictionary *dictionary) {
     configState.mBundleTableStrength = StdFromString(tableStrengthTitle);
     configState.mBundleRepairSize = StdFromString(repairSizeTitle);
     configState.mBundlePassword = StdFromString(password);
-    return [self saveConfig:configState error:error];
-}
-
-- (BOOL)saveUnbundleUiStateWithHomeTab:(NSInteger)homeTab
-                                source:(NSString *)source
-                           destination:(NSString *)destination
-                         recoverEnabled:(BOOL)recoverEnabled
-                              password:(NSString *)password
-                                 error:(NSError * _Nullable * _Nullable)error {
-    AppConfigStateV2 configState = [self loadOrCreateConfig];
-    configState.mHomeTab = HomeTabFromInteger(homeTab);
-    configState.mUnbundleDirectorySource = StdFromString(source);
-    configState.mUnbundleDirectoryDestination = StdFromString(destination);
-    if (configState.mHomeTab == HomeTabV2::kUnbundle) {
-        configState.mUnbundleRecover = recoverEnabled;
-    }
-    configState.mUnbundlePassword = StdFromString(password);
+    configState.mUnbundleRecover = recoverEnabled;
+    configState.mUnbundlePassword = StdFromString(unbundlePassword);
     return [self saveConfig:configState error:error];
 }
 

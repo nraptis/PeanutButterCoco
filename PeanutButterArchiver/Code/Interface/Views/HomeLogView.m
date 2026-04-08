@@ -20,9 +20,9 @@ static const NSUInteger kLogCharacterSoftLimit = 180000;
 
     self.translatesAutoresizingMaskIntoConstraints = NO;
     self.wantsLayer = YES;
-    self.layer.backgroundColor = [NSColor colorWithRed:0.96 green:0.88 blue:0.38 alpha:1.0].CGColor;
-    self.layer.cornerRadius = kUISubcardCornerRadius;
-
+    self.layer.backgroundColor = [NSColor colorWithRed:0.075 green:0.075 blue:0.09125 alpha:1.0].CGColor;
+    self.layer.cornerRadius = kUILogViewCornerRadius;
+    
     _scrollView = [[NSScrollView alloc] initWithFrame:NSZeroRect];
     _scrollView.translatesAutoresizingMaskIntoConstraints = NO;
     _scrollView.hasVerticalScroller = YES;
@@ -58,7 +58,7 @@ static const NSUInteger kLogCharacterSoftLimit = 180000;
     _textView.maxSize = NSMakeSize(CGFLOAT_MAX, CGFLOAT_MAX);
     _textView.textContainerInset = NSMakeSize(10.0, 10.0);
     _textView.font = [NSFont monospacedSystemFontOfSize:13.0 weight:NSFontWeightMedium];
-    _textView.textColor = [NSColor colorWithRed:0.05 green:0.21 blue:0.76 alpha:1.0];
+    _textView.textColor = [NSColor colorWithRed:0.05 green:0.78 blue:0.15 alpha:1.0];
     _textView.string = @"";
 
     _scrollView.documentView = _textView;

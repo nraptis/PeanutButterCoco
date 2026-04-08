@@ -35,6 +35,14 @@
 @property (strong, nonatomic, readonly) NSButton *unbundleRecoverCheckbox;
 @property (strong, nonatomic, readonly) NSButton *unbundleReadManifestButton;
 @property (strong, nonatomic, readonly) NSButton *unbundleActionButton;
+@property (strong, nonatomic, readonly) NSTextField *toolsSourceTextField;
+@property (strong, nonatomic, readonly) NSTextField *toolsDestinationTextField;
+@property (strong, nonatomic, readonly) NSButton *toolsSourceClearButton;
+@property (strong, nonatomic, readonly) NSButton *toolsDestinationClearButton;
+@property (strong, nonatomic, readonly) NSButton *toolsSourceBrowseButton;
+@property (strong, nonatomic, readonly) NSButton *toolsDestinationBrowseButton;
+@property (strong, nonatomic, readonly) NSButton *toolsIgnoreHiddenCheckbox;
+@property (strong, nonatomic, readonly) NSButton *toolsActionButton;
 @property (strong, nonatomic, readonly) NSButton *progressCancelButton;
 
 + (CGFloat)requiredHeight;
@@ -42,11 +50,15 @@
                           destination:(NSString *)destination;
 - (void)applyUnbundleDefaultsWithSource:(NSString *)source
                             destination:(NSString *)destination;
+- (void)applyToolsDefaultsWithSource:(NSString *)source
+                         destination:(NSString *)destination;
 - (void)applyUnbundleRecoverDefaultEnabled:(BOOL)recoverEnabled;
 - (void)setBundleSourcePathDropHandler:(void (^)(NSString *path))handler;
 - (void)setBundleDestinationPathDropHandler:(void (^)(NSString *path))handler;
 - (void)setUnbundleSourcePathDropHandler:(void (^)(NSString *path))handler;
 - (void)setUnbundleDestinationPathDropHandler:(void (^)(NSString *path))handler;
+- (void)setToolsSourcePathDropHandler:(void (^)(NSString *path))handler;
+- (void)setToolsDestinationPathDropHandler:(void (^)(NSString *path))handler;
 - (void)setShowsProgressPanel:(BOOL)showsProgressPanel;
 - (void)setBundleControlsEnabled:(BOOL)enabled;
 - (void)updateProgressTitle:(NSString *)title

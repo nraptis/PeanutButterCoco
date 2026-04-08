@@ -14,6 +14,8 @@
 @property (copy, nonatomic) NSString *bundleDestinationDefault;
 @property (copy, nonatomic) NSString *unbundleSourceDefault;
 @property (copy, nonatomic) NSString *unbundleDestinationDefault;
+@property (copy, nonatomic) NSString *toolsSourceDefault;
+@property (copy, nonatomic) NSString *toolsDestinationDefault;
 @property (copy, nonatomic) NSString *bundleFilePrefixDefault;
 @property (copy, nonatomic) NSString *bundlePasswordDefault;
 @property (copy, nonatomic) NSString *unbundlePasswordDefault;

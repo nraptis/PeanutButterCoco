@@ -11,23 +11,37 @@
     }
 
     self.translatesAutoresizingMaskIntoConstraints = NO;
-    self.wantsLayer = YES;
-    self.layer.backgroundColor = [NSColor colorWithRed:1.0 green:0.0 blue:1.0 alpha:0.25].CGColor;
-    self.layer.cornerRadius = 8.0;
+
     _button = [NSButton buttonWithTitle:(title ?: @"Button") target:nil action:nil];
     _button.translatesAutoresizingMaskIntoConstraints = NO;
-    _button.bezelStyle = NSBezelStyleShadowlessSquare;
+    _button.bezelStyle = NSBezelStyleRounded;
+    _button.controlSize = NSControlSizeRegular;
     [self addSubview:_button];
 
+    self.constraintLeft = [_button.leadingAnchor constraintEqualToAnchor:self.leadingAnchor constant:6.0];
+    self.constraintRight = [_button.trailingAnchor constraintEqualToAnchor:self.trailingAnchor constant:-6.0];
+
     [NSLayoutConstraint activateConstraints:@[
-        [_button.leadingAnchor constraintEqualToAnchor:self.leadingAnchor constant:0.0],
-        [_button.trailingAnchor constraintEqualToAnchor:self.trailingAnchor constant:0.0],
+        self.constraintLeft,
+        self.constraintRight,
         [_button.centerYAnchor constraintEqualToAnchor:self.centerYAnchor],
-        [_button.heightAnchor constraintEqualToConstant:kUIToolRowElementHeight],
+        [_button.heightAnchor constraintEqualToConstant:32.0],
         [self.heightAnchor constraintEqualToConstant:kUIToolRowHeight],
     ]];
 
     return self;
+}
+
+- (void)setSmallPaddingLeft {
+    self.constraintLeft.constant = 0.0;
+}
+
+- (void)setSmallPaddingRight {
+    self.constraintRight.constant = 0.0;
+}
+
+- (void)setMediumPaddingRight {
+    self.constraintRight.constant = -3.0;
 }
 
 @end

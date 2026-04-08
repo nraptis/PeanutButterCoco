@@ -2,19 +2,6 @@
 
 #import "../UIConstants.hpp"
 
-@interface PBStretchPopUpButton : NSPopUpButton
-@end
-
-@implementation PBStretchPopUpButton
-
-- (NSSize)intrinsicContentSize {
-    NSSize size = [super intrinsicContentSize];
-    size.width = NSViewNoIntrinsicMetric;
-    return size;
-}
-
-@end
-
 @implementation ToolBarComboBoxChunkView
 
 - (instancetype)initWithItems:(NSArray<NSString *> *)items {
@@ -24,26 +11,37 @@
     }
 
     self.translatesAutoresizingMaskIntoConstraints = NO;
-    self.wantsLayer = YES;
-    self.layer.backgroundColor = [NSColor colorWithRed:1.0 green:0.0 blue:0.0 alpha:0.25].CGColor;
-    self.layer.cornerRadius = 8.0;
-    _comboBox = [[PBStretchPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
+
+    _comboBox = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
     _comboBox.translatesAutoresizingMaskIntoConstraints = NO;
-    if ([_comboBox.cell respondsToSelector:@selector(setBezelStyle:)]) {
-        [(NSPopUpButtonCell *)_comboBox.cell setBezelStyle:NSBezelStyleSmallSquare];
-    }
+    _comboBox.font = [NSFont systemFontOfSize:12.0];
     [_comboBox addItemsWithTitles:(items ?: @[])];
     [self addSubview:_comboBox];
 
+    self.constraintLeft = [_comboBox.leadingAnchor constraintEqualToAnchor:self.leadingAnchor];
+    self.constraintRight = [_comboBox.trailingAnchor constraintEqualToAnchor:self.trailingAnchor];
+
     [NSLayoutConstraint activateConstraints:@[
-        [_comboBox.leadingAnchor constraintEqualToAnchor:self.leadingAnchor constant:0.0],
-        [_comboBox.trailingAnchor constraintEqualToAnchor:self.trailingAnchor constant:0.0],
+        self.constraintLeft,
+        self.constraintRight,
         [_comboBox.centerYAnchor constraintEqualToAnchor:self.centerYAnchor],
-        [_comboBox.heightAnchor constraintEqualToConstant:kUIToolRowElementHeight],
+        [_comboBox.heightAnchor constraintEqualToConstant:30.0],
         [self.heightAnchor constraintEqualToConstant:kUIToolRowHeight],
     ]];
 
     return self;
+}
+
+- (void)setSmallPaddingLeft {
+    self.constraintLeft.constant = 0.0;
+}
+
+- (void)setSmallPaddingRight {
+    self.constraintRight.constant = 0.0;
+}
+
+- (void)setMediumPaddingRight {
+    self.constraintRight.constant = 0.0;
 }
 
 @end

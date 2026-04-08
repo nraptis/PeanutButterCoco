@@ -1,11 +1,11 @@
 #import <Cocoa/Cocoa.h>
 
-@class HomeHeaderView;
+//@class HomeHeaderView;
 @class HomeToolViewTop;
 @class HomeActiveModeContainerView;
-@class HomeToolViewSplitter;
+@class HomeLogSeparatorView;
 @class HomeLogContainerView;
-@class HomeFooterView;
+@class HomeLogControlView;
 
 typedef NS_ENUM(NSInteger, HomeUiStateV2) {
     HomeUiStateV2Home = 0,
@@ -15,12 +15,12 @@ typedef NS_ENUM(NSInteger, HomeUiStateV2) {
 
 @interface HomeContainerViewController : NSViewController
 
-@property (strong, nonatomic) HomeHeaderView *homeHeaderView;
+//@property (strong, nonatomic) HomeHeaderView *homeHeaderView;
 @property (strong, nonatomic) HomeToolViewTop *homeToolViewTop;
 @property (strong, nonatomic) HomeActiveModeContainerView *homeActiveModeContainerView;
-@property (strong, nonatomic) HomeToolViewSplitter *homeToolViewSplitter;
+@property (strong, nonatomic) HomeLogSeparatorView *homeLogSeparatorView;
 @property (strong, nonatomic) HomeLogContainerView *homeLogContainerView;
-@property (strong, nonatomic) HomeFooterView *homeFooterView;
+@property (strong, nonatomic) HomeLogControlView *homeLogControlView;
 @property (assign, nonatomic, readonly) HomeUiStateV2 uiState;
 
 - (BOOL)canStartPrimaryAction;

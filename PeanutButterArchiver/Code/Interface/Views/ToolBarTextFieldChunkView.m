@@ -14,6 +14,11 @@
     self = [super initWithFrame:frameRect];
     if (self != nil) {
         [self registerForDraggedTypes:@[NSPasteboardTypeFileURL]];
+        self.font = [NSFont systemFontOfSize:13.0];
+        self.focusRingType = NSFocusRingTypeDefault;
+        self.bordered = YES;
+        self.bezeled = YES;
+        self.drawsBackground = YES;
     }
     return self;
 }
@@ -35,8 +40,6 @@
         return NO;
     }
 
-    [self abortEditing];
-    [self.window makeFirstResponder:nil];
     NSString *path = firstURL.path ?: @"";
     self.stringValue = path;
     if (self.pathDropHandler != nil) {
@@ -61,9 +64,7 @@
     }
 
     self.translatesAutoresizingMaskIntoConstraints = NO;
-    self.wantsLayer = YES;
-    self.layer.backgroundColor = [NSColor colorWithWhite:1.0 alpha:0.18].CGColor;
-    self.layer.cornerRadius = 8.0;
+
     PBPathDroppingTextField *textField = [[PBPathDroppingTextField alloc] initWithFrame:NSZeroRect];
     _textField = textField;
     _textField.translatesAutoresizingMaskIntoConstraints = NO;
@@ -72,10 +73,10 @@
     [self addSubview:_textField];
 
     [NSLayoutConstraint activateConstraints:@[
-        [_textField.leadingAnchor constraintEqualToAnchor:self.leadingAnchor constant:0.0],
-        [_textField.trailingAnchor constraintEqualToAnchor:self.trailingAnchor constant:0.0],
+        [_textField.leadingAnchor constraintEqualToAnchor:self.leadingAnchor],
+        [_textField.trailingAnchor constraintEqualToAnchor:self.trailingAnchor],
         [_textField.centerYAnchor constraintEqualToAnchor:self.centerYAnchor],
-        [_textField.heightAnchor constraintEqualToConstant:kUIToolRowElementHeight],
+        [_textField.heightAnchor constraintEqualToConstant:30.0],
         [self.heightAnchor constraintEqualToConstant:kUIToolRowHeight],
     ]];
 

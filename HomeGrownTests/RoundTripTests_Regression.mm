@@ -246,9 +246,7 @@
         XCTFail(@"Round trip regression selected archive has no blocks.");
         return;
     }
-    int aBlockIndex = 0;
-    string aArchiveName = aMockArchives[aArchiveIndex].mFilePath.ToString();
-
+    
     vector<FakeMutation> aMutations;
     {
         FakeMutation aMutation;
@@ -282,22 +280,8 @@
         XCTFail(@"Round trip regression failed on happy flow.");
         return;
     }
-
-    if (aMockArchives.size() <= 0) {
-        XCTFail(@"Round trip regression produced no archives.");
-        return;
-    }
-
-    int aArchiveIndex = 0;
-    if (aMockArchives[aArchiveIndex].mBlocks.size() <= 0) {
-        XCTFail(@"Round trip regression selected archive has no blocks.");
-        return;
-    }
     
-    string aArchiveName = aMockArchives[aArchiveIndex].mFilePath.ToString();
-
     vector<FakeMutation> aMutations;
-
     if (![RoundTripTests run_CorruptUnbundle:aJob withMutations:&aMutations]) {
         XCTFail(@"Round trip regression failed on corrupt unbundle.");
         return;
@@ -326,19 +310,7 @@
         XCTFail(@"Round trip regression failed on happy flow.");
         return;
     }
-
-    if (aMockArchives.size() <= 0) {
-        XCTFail(@"Round trip regression produced no archives.");
-        return;
-    }
-
-    int aArchiveIndex = 0;
-    if (aMockArchives[aArchiveIndex].mBlocks.size() <= 0) {
-        XCTFail(@"Round trip regression selected archive has no blocks.");
-        return;
-    }
-    string aArchiveName = aMockArchives[aArchiveIndex].mFilePath.ToString();
-
+    
     vector<FakeMutation> aMutations;
     {
         FakeMutation aMutation;
@@ -378,20 +350,7 @@
         XCTFail(@"Round trip regression failed on happy flow.");
         return;
     }
-
-    if (aMockArchives.size() <= 0) {
-        XCTFail(@"Round trip regression produced no archives.");
-        return;
-    }
-
-    int aArchiveIndex = 0;
-    if (aMockArchives[aArchiveIndex].mBlocks.size() <= 0) {
-        XCTFail(@"Round trip regression selected archive has no blocks.");
-        return;
-    }
-    int aBlockIndex = 0;
-    string aArchiveName = aMockArchives[aArchiveIndex].mFilePath.ToString();
-
+    
     vector<FakeMutation> aMutations;
     {
         FakeMutation aMutation;
@@ -427,19 +386,7 @@
         XCTFail(@"Round trip regression failed on happy flow.");
         return;
     }
-
-    if (aMockArchives.size() <= 0) {
-        XCTFail(@"Round trip regression produced no archives.");
-        return;
-    }
-
-    int aArchiveIndex = 0;
-    if (aMockArchives[aArchiveIndex].mBlocks.size() <= 0) {
-        XCTFail(@"Round trip regression selected archive has no blocks.");
-        return;
-    }
     
-    string aArchiveName = aMockArchives[aArchiveIndex].mFilePath.ToString();
     vector<FakeMutation> aMutations;
     {
         FakeMutation aMutation;
