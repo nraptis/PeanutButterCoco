@@ -1,6 +1,5 @@
 #include "Decode_LogicalRecordDecoder.hpp"
 
-#include <algorithm>
 #include <cctype>
 #include <cstdlib>
 #include <cstring>
@@ -636,6 +635,7 @@ void DecodeLogicalRecordDecoderV2::ResetRecordState() {
   std::memset(mPathLengthLe, 0, sizeof(mPathLengthLe));
   std::memset(mReferenceTargetLengthLe, 0, sizeof(mReferenceTargetLengthLe));
   std::memset(mFileSizeLe, 0, sizeof(mFileSizeLe));
+    
   mCurrentPath.clear();
   mCurrentReferenceTargetPath.clear();
   mCurrentOutputPath.clear();
@@ -1115,7 +1115,7 @@ bool DecodeLogicalRecordDecoderV2::PromoteCurrentOutputToPartial() {
   }
 
   if (!mCurrentPartialPath.empty() &&
-      !mFileSystem.Exists(mCurrentPartialPath) && //FIX'D
+      !mFileSystem.Exists(mCurrentPartialPath) &&
       mFileSystem.RenamePath(mCurrentOutputPath, mCurrentPartialPath)) {
     return true;
   }

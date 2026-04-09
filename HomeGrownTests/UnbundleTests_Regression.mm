@@ -310,4 +310,33 @@
     }
 }
 
+- (void)test_unbundle_regression_rejects_same_source_and_destination_without_deleting_archives {
+    JobBundle aJob;
+    aJob.mPayloadBytesPerBlock = 4;
+    aJob.mBlocksPerArchive = 4;
+    aJob.mPreviewEnabled = false;
+    aJob.mRepairCoverage = 0;
+    aJob.AddFile("keep.txt", "payload");
+    aJob.mUnarchived = aJob.mArchived;
+
+    MockHardDrive aHardDrive;
+    MockFileSystem aFileSystem(&aHardDrive);
+    ByteString aErrorString;
+
+    const BOOL aBundleSucceeded = TestBundleWithHooks::PerformReal(aJob, aFileSystem, &aErrorString);
+    XCTAssertTrue(aBundleSucceeded);
+
+    const std::vector<std::string> aArchiveFiles =
+        aHardDrive.ListFilesRecursive(aJob.mArchived.ToString());
+    XCTAssertFalse(aArchiveFiles.empty());
+
+    const BOOL aUnbundleSucceeded =
+        TestUnbundleWithHooks::PerformRealUnbundle(aJob, aFileSystem, &aErrorString);
+    XCTAssertFalse(aUnbundleSucceeded);
+
+    for (const std::string& aArchivePath : aArchiveFiles) {
+        XCTAssertTrue(aFileSystem.IsFile(aArchivePath));
+    }
+}
+
 @end

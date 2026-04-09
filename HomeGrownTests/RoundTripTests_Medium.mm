@@ -169,7 +169,7 @@
 
 - (void)test_100_full_spectrum {
     
-    for (int aTestIndex=0;aTestIndex<10;aTestIndex++) {
+    for (int aTestIndex=0;aTestIndex<50000000;aTestIndex++) {
         
         int aPayloadBytesPerBlock = Random::Get(1, 256);
         int aBlocksPerArchive = Random::Get(1, 256);
@@ -177,22 +177,22 @@
         vector<FakeFile> aFiles;
         if (Random::Get(2) == 0) {
             
-            int aNameLo = Random::Get(1, 128);
-            int aLameHi = aNameLo + Random::Get(0, 128);
+            int aNameLo = Random::Get(1, 72);
+            int aLameHi = aNameLo + Random::Get(0, 116);
             if (aPayloadBytesPerBlock < 8) {
-                aNameLo = Random::Get(1, 16);
-                aLameHi = aNameLo + Random::Get(0, 16);
+                aNameLo = Random::Get(1, 8);
+                aLameHi = aNameLo + Random::Get(0, 8);
             }
             
             vector <ByteString> aNames;
             if (aPayloadBytesPerBlock < 8) {
-                aNames = Words::GetRandomFolderNames(Random::Get(1, 16), aNameLo, aLameHi);
+                aNames = Words::GetRandomFolderNames(Random::Get(1, 8), aNameLo, aLameHi);
             } else {
-                aNames = Words::GetRandomFolderNames(Random::Get(1, 32), aNameLo, aLameHi);
+                aNames = Words::GetRandomFolderNames(Random::Get(1, 22), aNameLo, aLameHi);
             }
             
             for (auto aName: aNames) {
-                int aDupeCount = Random::Get(1, 12);
+                int aDupeCount = Random::Get(1, 8);
                 if (aPayloadBytesPerBlock < 8) {
                     aDupeCount = Random::Get(1, 4);
                 }
@@ -218,7 +218,13 @@
                     } else {
                         FakeFile aFile;
                         aFile.mName.Set(aModifiedName);
-                        aFile.mContent.Set(Words::GetRandomFileContent(0, 40));
+                        
+                        if (aPayloadBytesPerBlock < 8) {
+                            aFile.mContent.Set(Words::GetRandomFileContent(0, 12));
+                        } else {
+                            aFile.mContent.Set(Words::GetRandomFileContent(0, 96));
+                        }
+                        
                         aFile.mIsFolder = false;
                         aFiles.push_back(aFile);
                     }
@@ -227,8 +233,12 @@
             
         } else {
             
-            int aFileCount = Random::Get(0, 16);
-            int aFolderCount = Random::Get(0, 16);
+            int aFileCount = Random::Get(0, 24);
+            int aFolderCount = Random::Get(0, 24);
+            if (aPayloadBytesPerBlock < 8) {
+                aFileCount = Random::Get(0, 6);
+                aFolderCount = Random::Get(0, 6);
+            }
             
             if ((aFileCount == 0) && (aFolderCount == 0)) {
                 if (Random::Get(2) == 0) {
@@ -238,24 +248,24 @@
                 }
             }
             
-            int aFileNameLo = Random::Get(1, 128);
-            int aFileNameHi = aFileNameLo + Random::Get(0, 128);
+            int aFileNameLo = Random::Get(1, 26);
+            int aFileNameHi = aFileNameLo + Random::Get(0, 90);
             
             int aFileContentLo = Random::Get(0, 128);
-            int aFileContentHi = aFileContentLo + Random::Get(0, 128);
+            int aFileContentHi = aFileContentLo + Random::Get(0, 180);
             
-            int aFolderNameLo = Random::Get(1, 128);
-            int aFolderNameHi = aFolderNameLo + Random::Get(0, 128);
+            int aFolderNameLo = Random::Get(1, 24);
+            int aFolderNameHi = aFolderNameLo + Random::Get(0, 110);
             
             if (aPayloadBytesPerBlock < 8) {
-                aFileNameLo = Random::Get(1, 8);
-                aFileNameHi = aFileNameLo + Random::Get(0, 4);
+                aFileNameLo = Random::Get(1, 4);
+                aFileNameHi = aFileNameLo + Random::Get(0, 12);
                 
-                aFileContentLo = Random::Get(0, 8);
-                aFileContentHi = aFileContentLo + Random::Get(0, 4);
+                aFileContentLo = Random::Get(0, 4);
+                aFileContentHi = aFileContentLo + Random::Get(0, 16);
                 
-                aFolderNameLo = Random::Get(1, 4);
-                aFolderNameHi = aFolderNameLo + Random::Get(0, 4);
+                aFolderNameLo = Random::Get(1, 6);
+                aFolderNameHi = aFolderNameLo + Random::Get(0, 10);
             }
             
             aFiles = Words::GetRandomFilesAndFolders(aFileCount, aFileNameLo, aFileNameHi,
@@ -307,7 +317,7 @@
             FakeMutation::AttemptGenerateRandomBlockSwaps(Random::Get(8), &aMockArchives, &aMutations);
         }
         
-        if ((aTestIndex % 10000) == 0) {
+        if ((aTestIndex % 1000) == 0) {
             printf("Test #%d, (%d|%d)\n", aTestIndex, aPayloadBytesPerBlock, aBlocksPerArchive);
         }
         
@@ -322,6 +332,130 @@
             XCTFail(@"Round trip medium failed on corrupt recover.");
             return;
         }
+    }
+}
+
+- (void)test_regression_medium_recover_preserves_partial_outputs_a {
+    JobBundle aJob;
+    aJob.mPayloadBytesPerBlock = 51;
+    aJob.mBlocksPerArchive = 91;
+    aJob.mRepairCoverage = 40;
+    aJob.AddFolder("$PARTIAL_GDrVUw");
+    aJob.AddFile("$PARTIAL_GDrVUw_1", "Hjl永电JgxfHM永🚀ب电ov人キI永l");
+    aJob.AddFile("$PARTIAL_QeاMy", "Xsth");
+    aJob.AddFile("$PARTIAL_аBWb", "av🌈ب🚀uaIث⚙️e永MتSA");
+    aJob.AddFolder("$PARTIAL_аBWb_1");
+    aJob.AddFolder("$PARTIAL_аBWb_2");
+    aJob.AddFolder("$PARTIAL_のedm");
+    aJob.AddFolder("$PARTIAL_のedm_1");
+    aJob.AddFile("$PARTIAL_のedm_2", "力人sثあبぽY明jHRUNRnS⭐jg");
+    aJob.AddFolder("$PARTIAL_キgi");
+    aJob.AddFolder("GDrVUw");
+    aJob.AddFile("QeاMy", "chnD🧬めzjI");
+    aJob.AddFile("xキK", "和x🚀wg💡rCキΨبRNLm电Edv");
+    aJob.AddFolder("аBWb");
+    aJob.AddFile("のedm", "X⭐🤖💡ECΦqA");
+    aJob.AddFolder("キgi");
+
+    vector<FakeArchive> aMockArchives;
+    if (![RoundTripTests run_HappyFlow:aJob withArchives:&aMockArchives]) {
+        XCTFail(@"Round trip regression failed on happy flow.");
+        return;
+    }
+    vector<FakeMutation> aMutations;
+    {
+        FakeMutation aMutation;
+        aMutation.SetDeleteBlock("/root/archived/bdl_0.PBTR", 0, 2);
+        aMutations.push_back(aMutation);
+    }
+    {
+        FakeMutation aMutation;
+        aMutation.SetDeleteBlock("/root/archived/bdl_0.PBTR", 0, 11);
+        aMutations.push_back(aMutation);
+    }
+    {
+        FakeMutation aMutation;
+        aMutation.SetDeleteBlock("/root/archived/bdl_0.PBTR", 0, 0);
+        aMutations.push_back(aMutation);
+    }
+    {
+        FakeMutation aMutation;
+        aMutation.SetDeleteBlock("/root/archived/bdl_0.PBTR", 0, 3);
+        aMutations.push_back(aMutation);
+    }
+    {
+        FakeMutation aMutation;
+        aMutation.SetDeleteBlock("/root/archived/bdl_0.PBTR", 0, 4);
+        aMutations.push_back(aMutation);
+    }
+
+    if (![RoundTripTests run_CorruptUnbundle:aJob withMutations:&aMutations]) {
+        XCTFail(@"Round trip regression failed on corrupt unbundle.");
+        return;
+    }
+
+    if (![RoundTripTests run_CorruptRecover:aJob withMutations:&aMutations]) {
+        XCTFail(@"Round trip regression failed on corrupt recover.");
+        return;
+    }
+}
+
+- (void)test_regression_medium_recover_preserves_partial_outputs_b {
+    JobBundle aJob;
+    aJob.mPayloadBytesPerBlock = 1;
+    aJob.mBlocksPerArchive = 155;
+    aJob.mPreviewEnabled = true;
+    aJob.mRepairCoverage = 20;
+    aJob.AddFolder("$PARTIAL_aK🤖NjO🚀Xik");
+    aJob.AddFile("$PARTIAL_aK🤖NjO🚀Xik_1", "p山جHnOrΔ龙キzblTq");
+    aJob.AddFile("$PARTIAL_ySE力z⚙️山c", "MjبCвjΩ人UぽΦgHNz");
+    aJob.AddFile("$PARTIAL_ySE力z⚙️山c_1", "大ClN");
+    aJob.AddFile("$PARTIAL_yoabS🧬ΞCбYw山L", "дdゑ明山UTTZFeIhNбгxjW🚀ΦQZΞO");
+    aJob.AddFolder("$PARTIAL_yoabS🧬ΞCбYw山L_1");
+    aJob.AddFolder("aK🤖NjO🚀Xik");
+    aJob.AddFolder("ySE力z⚙️山c");
+    aJob.AddFile("yoabS🧬ΞCбYw山L", "电Yk力Pct🚀⚙️BMeゑa🏠v");
+
+    vector<FakeArchive> aMockArchives;
+    if (![RoundTripTests run_HappyFlow:aJob withArchives:&aMockArchives]) {
+        XCTFail(@"Round trip regression failed on happy flow.");
+        return;
+    }
+    vector<FakeMutation> aMutations;
+    {
+        FakeMutation aMutation;
+        aMutation.SetMangleArchive("/root/archived/bdl_1.PBTR", 1);
+        aMutations.push_back(aMutation);
+    }
+    {
+        FakeMutation aMutation;
+        aMutation.SetDeleteBlock("/root/archived/bdl_2.PBTR", 2, 138);
+        aMutations.push_back(aMutation);
+    }
+    {
+        FakeMutation aMutation;
+        aMutation.SetDeleteArchive("/root/archived/bdl_3.PBTR", 3);
+        aMutations.push_back(aMutation);
+    }
+    {
+        FakeMutation aMutation;
+        aMutation.SetDeleteBlock("/root/archived/bdl_2.PBTR", 2, 132);
+        aMutations.push_back(aMutation);
+    }
+    {
+        FakeMutation aMutation;
+        aMutation.SetDeleteArchive("/root/archived/bdl_2.PBTR", 2);
+        aMutations.push_back(aMutation);
+    }
+
+    if (![RoundTripTests run_CorruptUnbundle:aJob withMutations:&aMutations]) {
+        XCTFail(@"Round trip regression failed on corrupt unbundle.");
+        return;
+    }
+
+    if (![RoundTripTests run_CorruptRecover:aJob withMutations:&aMutations]) {
+        XCTFail(@"Round trip regression failed on corrupt recover.");
+        return;
     }
 }
 

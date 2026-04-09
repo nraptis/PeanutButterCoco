@@ -234,4 +234,120 @@
     }
 }
 
+- (void)test_regression_gladiator_e {
+    JobBundle aJob;
+    aJob.mPayloadBytesPerBlock = 48;
+    aJob.mBlocksPerArchive = 64;
+    aJob.mPreviewEnabled = true;
+    aJob.mRepairCoverage = 80;
+    aJob.AddFile("PあfΩJ.L", "🌈sвKجS🏠🌈n冰いぽ⚡Y🤖⚡A龙ぽBGCCΦت🌈ゑOiい🚀⚡гpndΦuおめΞ电siaΩв🧬Pاjd");
+    aJob.AddFile("vB.ZJぷZ", "め明DاBいXаZIΩ🚀bfKqΨぷб明дゑゑSبD⭐pjfAゐr电Nثаaい💡ぽキおv🌈v🧬ΩのsQlaいon");
+    aJob.AddFile("ぽG🛸.w", "O⭐Rv力UmIDSf龙🤖S🤖ゐ和力اWnثاE⚡cぽа电めCGDDΞΔ龙e和WRsv⚙️和力lGRyD和明p🌈kuU");
+
+    vector<FakeArchive> aMockArchives;
+    if (![RoundTripTests run_HappyFlow:aJob withArchives:&aMockArchives]) {
+        XCTFail(@"Round trip regression failed on happy flow.");
+        return;
+    }
+    vector<FakeMutation> aMutations;
+    {
+        FakeMutation aMutation;
+        aMutation.SetDeleteBlock("/root/archived/bdl_0.PBTR", 0, 14);
+        aMutations.push_back(aMutation);
+    }
+    {
+        FakeMutation aMutation;
+        aMutation.SetDeleteBlock("/root/archived/bdl_0.PBTR", 0, 9);
+        aMutations.push_back(aMutation);
+    }
+    {
+        FakeMutation aMutation;
+        aMutation.SetDeleteBlock("/root/archived/bdl_0.PBTR", 0, 13);
+        aMutations.push_back(aMutation);
+    }
+    {
+        FakeMutation aMutation;
+        aMutation.SetDeleteBlock("/root/archived/bdl_0.PBTR", 0, 6);
+        aMutations.push_back(aMutation);
+    }
+    {
+        FakeMutation aMutation;
+        aMutation.SetDeleteBlock("/root/archived/bdl_0.PBTR", 0, 6);
+        aMutations.push_back(aMutation);
+    }
+    {
+        FakeMutation aMutation;
+        aMutation.SetDeleteBlock("/root/archived/bdl_0.PBTR", 0, 11);
+        aMutations.push_back(aMutation);
+    }
+    {
+        FakeMutation aMutation;
+        aMutation.SetDeleteBlock("/root/archived/bdl_0.PBTR", 0, 11);
+        aMutations.push_back(aMutation);
+    }
+
+    if (![RoundTripTests run_CorruptUnbundle:aJob withMutations:&aMutations]) {
+        XCTFail(@"Round trip regression failed on corrupt unbundle.");
+        return;
+    }
+
+    if (![RoundTripTests run_CorruptRecover:aJob withMutations:&aMutations]) {
+        XCTFail(@"Round trip regression failed on corrupt recover.");
+        return;
+    }
+}
+
+- (void)test_regression_gladiator_f {
+    JobBundle aJob;
+    aJob.mPayloadBytesPerBlock = 231;
+    aJob.mBlocksPerArchive = 217;
+    aJob.mRepairCoverage = 60;
+    aJob.AddFolder("$PARTIAL_F力v");
+    aJob.AddFile("$PARTIAL_F力v_1", "iX");
+    aJob.AddFolder("$PARTIAL_F力v_2");
+    aJob.AddFile("$PARTIAL_F力v_3", "r");
+    aJob.AddFolder("$PARTIAL_ahh");
+    aJob.AddFolder("$PARTIAL_ahh_1");
+    aJob.AddFile("$PARTIAL_ahh_2", "s龙ΩゐHبUny");
+    aJob.AddFile("$PARTIAL_ahh_3", "lUd和K");
+    aJob.AddFolder("$PARTIAL_cub");
+    aJob.AddFolder("$PARTIAL_yaux");
+    aJob.AddFolder("$PARTIAL_yaux_1");
+    aJob.AddFolder("$PARTIAL_yaux_2");
+    aJob.AddFolder("$PARTIAL_гのZ");
+    aJob.AddFile("$PARTIAL_гのZ_1", "iгゐf大Y冰永ΩX龙kge");
+    aJob.AddFile("F力v", "Rr山おKqWRiぷのy🚀S");
+    aJob.AddFile("ahh", "ゐ永ip🛸U💡ゑRN");
+    aJob.AddFile("cub", "VIgぽmX🤖iWMmجTr🧬vV");
+    aJob.AddFile("yaux", "kΦtGP💡人明🏠ぽoSiAаhkrw");
+    aJob.AddFile("гのZ", "OبгZqCvqmrぽkI⭐S⭐xljвpdBnlRA");
+
+    vector<FakeArchive> aMockArchives;
+    if (![RoundTripTests run_HappyFlow:aJob withArchives:&aMockArchives]) {
+        XCTFail(@"Round trip regression failed on happy flow.");
+        return;
+    }
+    vector<FakeMutation> aMutations;
+    {
+        FakeMutation aMutation;
+        aMutation.SetDeleteBlock("/root/archived/bdl_0.PBTR", 0, 3);
+        aMutations.push_back(aMutation);
+    }
+    {
+        FakeMutation aMutation;
+        aMutation.SetDeleteBlock("/root/archived/bdl_0.PBTR", 0, 1);
+        aMutations.push_back(aMutation);
+    }
+
+    if (![RoundTripTests run_CorruptUnbundle:aJob withMutations:&aMutations]) {
+        XCTFail(@"Round trip regression failed on corrupt unbundle.");
+        return;
+    }
+
+    if (![RoundTripTests run_CorruptRecover:aJob withMutations:&aMutations]) {
+        XCTFail(@"Round trip regression failed on corrupt recover.");
+        return;
+    }
+}
+
 @end

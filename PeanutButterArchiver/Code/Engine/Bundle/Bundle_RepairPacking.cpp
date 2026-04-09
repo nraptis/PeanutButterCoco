@@ -19,6 +19,7 @@ namespace {
 using namespace memory_layout;
 
 constexpr std::size_t kInvalidCopyIndex = std::numeric_limits<std::size_t>::max();
+constexpr std::size_t kInvalidArchiveIndex = std::numeric_limits<std::size_t>::max();
 
 template <typename UInt>
 UInt RandomInclusive(UInt pMin, UInt pMax) {
@@ -119,32 +120,20 @@ std::vector<RepairCopyRefV2> BuildRepairCopyOrder(
     const std::vector<std::vector<std::uint32_t>>& pRepairCopySourceLocalBlocks) {
   std::vector<RepairCopyRefV2> aCopies;
   std::size_t aTotalCopies = 0u;
-  std::size_t aMaxLayer = 0u;
   for (const std::vector<std::uint32_t>& aSourceLocalBlocks :
        pRepairCopySourceLocalBlocks) {
     aTotalCopies += aSourceLocalBlocks.size();
-    aMaxLayer = std::max(aMaxLayer, aSourceLocalBlocks.size());
   }
   aCopies.reserve(aTotalCopies);
-  if (aMaxLayer == 0u) {
-    return aCopies;
-  }
-
-  std::vector<std::vector<RepairCopyRefV2>> aLayerBuckets(aMaxLayer);
   for (std::size_t aArchiveIndex = 0u;
        aArchiveIndex < pRepairCopySourceLocalBlocks.size();
        ++aArchiveIndex) {
     const std::vector<std::uint32_t>& aSourceLocalBlocks =
         pRepairCopySourceLocalBlocks[aArchiveIndex];
-    for (std::size_t aLayer = 0u; aLayer < aSourceLocalBlocks.size(); ++aLayer) {
-      aLayerBuckets[aLayer].push_back(
-          {aArchiveIndex, aSourceLocalBlocks[aLayer]});
+    for (std::uint32_t aSourceLocalBlock : aSourceLocalBlocks) {
+      aCopies.push_back({aArchiveIndex, aSourceLocalBlock});
     }
   }
-  for (const std::vector<RepairCopyRefV2>& aLayerCopies : aLayerBuckets) {
-    aCopies.insert(aCopies.end(), aLayerCopies.begin(), aLayerCopies.end());
-  }
-
   return aCopies;
 }
 
@@ -701,16 +690,87 @@ class BundleRepairPackingCursorV2 {
       : mRepairCopies(
             BuildRepairCopyOrder(pMemoryPlan.mRepairCopySourceLocalBlocks)),
         mRepairDestinations(BuildRepairDestinationOrder(pMemoryPlan)),
-        mZeroBlock(pContext.Layout().mArchiveBlockBytes),
         mSourceRebuild(pContext) {}
 
   std::vector<RepairCopyRefV2> mRepairCopies;
   std::vector<RepairDestinationRefV2> mRepairDestinations;
   std::vector<std::vector<std::size_t>> mCopyIndexBySource;
-  FixedBlockBufferV2 mZeroBlock;
   BundleRepairSourceRebuildCursorV2 mSourceRebuild;
+  std::unique_ptr<FileWriteStreamV2> mDestinationWrite;
+  std::size_t mDestinationWriteArchiveIndex = kInvalidArchiveIndex;
+  std::uint32_t mDestinationWriteNextLocalBlockIndex = 0u;
   std::uint64_t mNextBlockLog = 64u;
 };
+
+bool CloseRepairDestinationStream(BundleRepairPackingCursorV2& pCursor,
+                                  std::string& pOutFailureMessage) {
+  pOutFailureMessage.clear();
+  if (pCursor.mDestinationWrite == nullptr) {
+    pCursor.mDestinationWriteArchiveIndex = kInvalidArchiveIndex;
+    pCursor.mDestinationWriteNextLocalBlockIndex = 0u;
+    return true;
+  }
+  if (!pCursor.mDestinationWrite->Close()) {
+    pOutFailureMessage =
+        pCursor.mDestinationWrite->LastErrorMessage().empty()
+            ? "failed closing repair destination archive stream"
+            : pCursor.mDestinationWrite->LastErrorMessage();
+    return false;
+  }
+  pCursor.mDestinationWrite.reset();
+  pCursor.mDestinationWriteArchiveIndex = kInvalidArchiveIndex;
+  pCursor.mDestinationWriteNextLocalBlockIndex = 0u;
+  return true;
+}
+
+bool EnsureRepairDestinationStream(BundleStageContextV2& pContext,
+                                   const BundleMemoryPlanV2& pMemoryPlan,
+                                   const RepairDestinationRefV2& pDestination,
+                                   BundleRepairPackingCursorV2& pCursor,
+                                   std::string& pOutFailureMessage) {
+  pOutFailureMessage.clear();
+  if (pDestination.mArchiveIndex >= pMemoryPlan.mArchives.size()) {
+    pOutFailureMessage = "repair destination referenced an invalid archive";
+    return false;
+  }
+
+  if (pCursor.mDestinationWriteArchiveIndex != pDestination.mArchiveIndex) {
+    if (!CloseRepairDestinationStream(pCursor, pOutFailureMessage)) {
+      return false;
+    }
+    const PlannedArchiveFileV2& aArchive =
+        pMemoryPlan.mArchives[pDestination.mArchiveIndex];
+    pCursor.mDestinationWrite =
+        pContext.FileSystem().OpenAppendStream(aArchive.mPath);
+    if (pCursor.mDestinationWrite == nullptr ||
+        !pCursor.mDestinationWrite->IsReady()) {
+      const std::string aArchiveParent =
+          pContext.FileSystem().ParentPath(aArchive.mPath);
+      if (!aArchiveParent.empty()) {
+        (void)pContext.FileSystem().EnsureDirectory(aArchiveParent);
+        pCursor.mDestinationWrite =
+            pContext.FileSystem().OpenAppendStream(aArchive.mPath);
+      }
+    }
+    if (pCursor.mDestinationWrite == nullptr ||
+        !pCursor.mDestinationWrite->IsReady()) {
+      pOutFailureMessage = "failed opening repair destination archive for append";
+      return false;
+    }
+    pCursor.mDestinationWriteArchiveIndex = pDestination.mArchiveIndex;
+    pCursor.mDestinationWriteNextLocalBlockIndex =
+        pDestination.mArchiveIndex < pMemoryPlan.mSourceArchiveBlockCounts.size()
+            ? pMemoryPlan.mSourceArchiveBlockCounts[pDestination.mArchiveIndex]
+            : 0u;
+  }
+
+  if (pDestination.mLocalBlockIndex != pCursor.mDestinationWriteNextLocalBlockIndex) {
+    pOutFailureMessage =
+        "repair destination order was not sequential-append safe";
+    return false;
+  }
+  return true;
+}
 
 bool BundleRepairPackingV2::Run(BundleStageContextV2& pContext) {
   BundlePackingStateV2& aPacking = pContext.State().mPacking;
@@ -770,7 +830,7 @@ bool BundleRepairPackingV2::Run(BundleStageContextV2& pContext) {
       aCursorPtr.reset();
       return false;
     }
-    if (aCursorPtr->mZeroBlock.Empty() || aCursorPtr->mSourceRebuild.mBlockBytes.Empty()) {
+    if (aCursorPtr->mSourceRebuild.mBlockBytes.Empty()) {
       pContext.EmitLog(
           LogLevelV2::kError,
           LogPhaseFailedV2(LogActionV2::kBundle,
@@ -794,34 +854,6 @@ bool BundleRepairPackingV2::Run(BundleStageContextV2& pContext) {
       return false;
     }
 
-    for (std::size_t aArchiveIndex = 0u;
-         aArchiveIndex < aMemoryPlan.mArchives.size();
-         ++aArchiveIndex) {
-      const PlannedArchiveFileV2& aArchive = aMemoryPlan.mArchives[aArchiveIndex];
-      const std::uint32_t aSourceBlocksInArchive =
-          aArchiveIndex < aMemoryPlan.mSourceArchiveBlockCounts.size()
-              ? aMemoryPlan.mSourceArchiveBlockCounts[aArchiveIndex]
-              : 0u;
-      const std::uint32_t aRepairBlocksInArchive =
-          aArchive.mBlockCount > aSourceBlocksInArchive
-              ? (aArchive.mBlockCount - aSourceBlocksInArchive)
-              : 0u;
-      for (std::uint32_t aRepairIndex = 0u;
-           aRepairIndex < aRepairBlocksInArchive;
-           ++aRepairIndex) {
-        if (!pContext.FileSystem().AppendFile(aArchive.mPath,
-                                              aCursorPtr->mZeroBlock.Data(),
-                                              pContext.Layout().mArchiveBlockBytes)) {
-          pContext.EmitLog(
-              LogLevelV2::kError,
-              LogPhaseFailedV2(LogActionV2::kBundle,
-                               ProgressStageV2::kRepairPacking,
-                               "failed padding repair block space"));
-          aCursorPtr.reset();
-          return false;
-        }
-      }
-    }
   }
 
   BundleRepairPackingCursorV2& aCursor = *aCursorPtr;
@@ -933,33 +965,33 @@ bool BundleRepairPackingV2::Run(BundleStageContextV2& pContext) {
                                  aSourceLocalBlockIndex);
     }
 
-    const std::uint64_t aOffset64 =
-        static_cast<std::uint64_t>(kArchiveHeaderBytesV2) +
-        (static_cast<std::uint64_t>(aDestination.mLocalBlockIndex) *
-         static_cast<std::uint64_t>(pContext.Layout().mArchiveBlockBytes));
-    if (aOffset64 > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
+    std::string aDestinationError;
+    if (!EnsureRepairDestinationStream(
+            pContext, aMemoryPlan, aDestination, aCursor, aDestinationError)) {
       pContext.EmitLog(
           LogLevelV2::kError,
           LogPhaseFailedV2(LogActionV2::kBundle,
                            ProgressStageV2::kRepairPacking,
-                           "repair destination offset exceeded platform limits"));
+                           aDestinationError));
       aCursorPtr.reset();
       return false;
     }
 
-    if (!pContext.FileSystem().OverwriteFileRegion(
-            aDestinationArchive.mPath,
-            static_cast<std::size_t>(aOffset64),
-            aCursor.mSourceRebuild.mBlockBytes.Data(),
-            pContext.Layout().mArchiveBlockBytes)) {
+    if (!aCursor.mDestinationWrite->Write(aCursor.mSourceRebuild.mBlockBytes.Data(),
+                                          pContext.Layout().mArchiveBlockBytes)) {
+      const std::string aWriteFailure =
+          aCursor.mDestinationWrite->LastErrorMessage().empty()
+              ? "failed writing rebuilt repair block"
+              : aCursor.mDestinationWrite->LastErrorMessage();
       pContext.EmitLog(
           LogLevelV2::kError,
           LogPhaseFailedV2(LogActionV2::kBundle,
                            ProgressStageV2::kRepairPacking,
-                           "failed writing rebuilt repair block"));
+                           aWriteFailure));
       aCursorPtr.reset();
       return false;
     }
+    ++aCursor.mDestinationWriteNextLocalBlockIndex;
 
     ++aPacking.mRepairPackedBlockCount;
     if (pContext.WantsRuntimeEvent(RuntimeEventKindV2::kBundleRepairBlockFinished)) {
@@ -999,6 +1031,17 @@ bool BundleRepairPackingV2::Run(BundleStageContextV2& pContext) {
     return false;
   }
 
+  std::string aCloseFailure;
+  if (!CloseRepairDestinationStream(aCursor, aCloseFailure)) {
+    pContext.EmitLog(
+        LogLevelV2::kError,
+        LogPhaseFailedV2(LogActionV2::kBundle,
+                         ProgressStageV2::kRepairPacking,
+                         aCloseFailure));
+    aCursorPtr.reset();
+    return false;
+  }
+
   NormalizeArchiveWriteTimesAscending(pContext);
 
   aCursorPtr.reset();
@@ -1010,7 +1053,7 @@ bool BundleRepairPackingV2::Run(BundleStageContextV2& pContext) {
           std::to_string(
               static_cast<std::uint64_t>(
                   RepairCoveragePercentV2(pContext.Request().mRepairCoverage))) +
-          "% front-of-archive coverage).");
+          "% front-of-main coverage).");
   pContext.EmitLog(LogLevelV2::kInfo,
                    LogPhaseCompletedV2(LogActionV2::kBundle,
                                        ProgressStageV2::kRepairPacking));

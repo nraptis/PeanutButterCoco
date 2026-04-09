@@ -216,84 +216,40 @@ void Layout::PrintPackedMembership(JobBundle &pJob) {
     if (aTargetRepairBlockCount > 0) {
         
         int aFirstMainBlockIndex = (int)aPreviewPayloadBlocks.size();
-        int aPartialArchiveCount = (aNonRepairBlockCount + (pJob.mBlocksPerArchive - 1)) / pJob.mBlocksPerArchive;
-        vector<vector<FakeRepairRecord>> aRepairSearchStack;
-        vector<int> aRepairSearchIndex;
-        
-        for (int aArchiveIndex=0;aArchiveIndex<aPartialArchiveCount;aArchiveIndex++) {
-            vector<FakeRepairRecord> aList;
-            aRepairSearchStack.push_back(aList);
-            aRepairSearchIndex.push_back(0);
-        }
-        int aBlockIndex = 0;
-        for (int aArchiveIndex=0;aArchiveIndex<aPartialArchiveCount;aArchiveIndex++) {
-            int aBlockCount = (aNonRepairBlockCount - aBlockIndex);
-            if (aBlockCount > pJob.mBlocksPerArchive) {
-                aBlockCount = pJob.mBlocksPerArchive;
-            }
-            int aBlockCeiling = aBlockIndex + aBlockCount;
-            int aLoopBlockIndex = aBlockIndex;
-            while (aLoopBlockIndex < aBlockCeiling) {
-                if (aLoopBlockIndex >= aFirstMainBlockIndex) {
-                    int aRepairArchiveIndex = aLoopBlockIndex / pJob.mBlocksPerArchive;
-                    int aRepairBlockIndex = (aLoopBlockIndex - aRepairArchiveIndex * pJob.mBlocksPerArchive);
-                    FakeRepairRecord aRepairRecord;
-                    aRepairRecord.SetValid(aRepairArchiveIndex, aRepairBlockIndex);
-                    aRepairRecord.mMainBlockIndex = (aLoopBlockIndex - aFirstMainBlockIndex);
-                    aRepairSearchStack[aArchiveIndex].push_back(aRepairRecord);
-                }
-                aLoopBlockIndex++;
-            }
-            aBlockIndex += pJob.mBlocksPerArchive;
-        }
-        
         int aConsumedRepairBlockCount = 0;
-        while (true) {
-            
-            bool aFoundOne = false;
-            for (int aIndex=0; aIndex<((int)aRepairSearchStack.size()); aIndex++) {
-                if (aRepairSearchIndex[aIndex] < aRepairSearchStack[aIndex].size()) {
-                    
-                    FakeRepairRecord aRepairRecord = aRepairSearchStack[aIndex][aRepairSearchIndex[aIndex]];
-                    
-                    int aRepairFlatIndex = aNonRepairBlockCount + aConsumedRepairBlockCount;
-                    int aRepairArchiveIndex = (aRepairFlatIndex / pJob.mBlocksPerArchive);
-                    int aRepairBlockIndex = (aRepairFlatIndex - aRepairArchiveIndex * pJob.mBlocksPerArchive);
-                    
-                    for (int aScan=0;aScan<aBlockFiles.size();aScan++) {
-                        int aArchiveIndex = aBlockArchives[aScan];
-                        int aBlockIndex = aBlockBlocks[aScan];
-                        
-                        if ((aRepairRecord.mArchiveIndex == aArchiveIndex) && (aRepairRecord.mBlockIndex == aBlockIndex)) {
-                            FakeFile aFile = aBlockFiles[aScan];
-                            int aAmount = aBlockAmounts[aScan];
-                            
-                            printf("file {%s} repaired by [a: %d, b: %d] => [a: %d, b: %d] (%d / %d)\n",
-                                   aFile.mName.ToString().c_str(),
-                                   aRepairArchiveIndex,
-                                   aRepairBlockIndex,
-                                   aArchiveIndex,
-                                   aBlockIndex,
-                                   aAmount,
-                                   aBlockLength);
-                            
-                        }
-                    }
-                    
-                    aConsumedRepairBlockCount++;
-                    aRepairSearchIndex[aIndex] = aRepairSearchIndex[aIndex] + 1;
-                    aFoundOne = true;
-                }
-                if (aConsumedRepairBlockCount >= aTargetRepairBlockCount) {
-                    break;
+        for (int aFlatBlockIndex = aFirstMainBlockIndex;
+             aFlatBlockIndex < aNonRepairBlockCount &&
+             aConsumedRepairBlockCount < aTargetRepairBlockCount;
+             aFlatBlockIndex++) {
+            int aSourceArchiveIndex = aFlatBlockIndex / pJob.mBlocksPerArchive;
+            int aSourceBlockIndex =
+                (aFlatBlockIndex - aSourceArchiveIndex * pJob.mBlocksPerArchive);
+            int aRepairFlatIndex = aNonRepairBlockCount + aConsumedRepairBlockCount;
+            int aRepairArchiveIndex = (aRepairFlatIndex / pJob.mBlocksPerArchive);
+            int aRepairBlockIndex =
+                (aRepairFlatIndex - aRepairArchiveIndex * pJob.mBlocksPerArchive);
+
+            for (int aScan=0;aScan<aBlockFiles.size();aScan++) {
+                int aArchiveIndex = aBlockArchives[aScan];
+                int aBlockIndex = aBlockBlocks[aScan];
+
+                if ((aSourceArchiveIndex == aArchiveIndex) && (aSourceBlockIndex == aBlockIndex)) {
+                    FakeFile aFile = aBlockFiles[aScan];
+                    int aAmount = aBlockAmounts[aScan];
+
+                    printf("file {%s} repaired by [a: %d, b: %d] => [a: %d, b: %d] (%d / %d)\n",
+                           aFile.mName.ToString().c_str(),
+                           aRepairArchiveIndex,
+                           aRepairBlockIndex,
+                           aArchiveIndex,
+                           aBlockIndex,
+                           aAmount,
+                           aBlockLength);
+
                 }
             }
-            if (aFoundOne == false) {
-                break;
-            }
-            if (aConsumedRepairBlockCount >= aTargetRepairBlockCount) {
-                break;
-            }
+
+            aConsumedRepairBlockCount++;
         }
 
         

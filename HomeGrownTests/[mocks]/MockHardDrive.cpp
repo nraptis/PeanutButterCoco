@@ -286,6 +286,18 @@ bool MockHardDrive::OverwriteFileRegion(const std::string& pPath,
     return true;
 }
 
+bool MockHardDrive::ResizeFile(const std::string& pPath, std::uint64_t pLength) {
+    const std::string aPath = Normalize(pPath);
+    if (!HasFile(aPath)) {
+        return false;
+    }
+    if (pLength > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
+        return false;
+    }
+    mFiles[aPath].resize(static_cast<std::size_t>(pLength), 0);
+    return true;
+}
+
 std::string MockHardDrive::JoinPath(const std::string& pLeft,
                                     const std::string& pRight) const {
     if (pRight.empty()) {

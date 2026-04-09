@@ -57,10 +57,12 @@ private:
 
 class MockFileWriteStream : public FileWriteStreamV2 {
 public:
-    explicit MockFileWriteStream(MockHardDrive *pDrive, std::string pPath) {
+    MockFileWriteStream(MockHardDrive *pDrive, std::string pPath, bool pTruncateExisting) {
         mDrive = pDrive;
         mPath = mDrive->Normalize(std::move(pPath));
-        mReady = mDrive->ClearFileBytes(mPath);
+        mReady = pTruncateExisting
+            ? mDrive->ClearFileBytes(mPath)
+            : mDrive->AppendFileBytes(mPath, nullptr, 0);
     }
     
     ~MockFileWriteStream() {
@@ -138,6 +140,10 @@ public:
                                                      const std::string& pPath) const override;
     std::unique_ptr<FileWriteStreamV2> OpenWriteStream(
                                                        const std::string& pPath) override;
+    std::unique_ptr<FileWriteStreamV2> OpenAppendStream(
+                                                        const std::string& pPath) override;
+    bool ResizeFile(const std::string& pPath,
+                    std::uint64_t pLength) override;
     
     ByteString                        Load(const std::string& pPath);
     

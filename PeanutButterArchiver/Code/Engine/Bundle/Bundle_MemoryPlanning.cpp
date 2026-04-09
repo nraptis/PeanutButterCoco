@@ -189,62 +189,53 @@ bool BundleMemoryPlanningV2::Run(BundleStageContextV2& pContext) {
   aMemoryPlan.mRepairCopySourceLocalBlocks.clear();
   aMemoryPlan.mRepairSectorBlockCount = 0u;
   if (pContext.Request().mRepairEnabled) {
-    const std::uint64_t aPreviewStart = 0u;
-    const std::uint64_t aPreviewEnd =
-        aPreviewStart + aMemoryPlan.mBlockCountPreview;
+    const std::uint64_t aPreviewEnd = aMemoryPlan.mBlockCountPreview;
     std::uint64_t aSourceFamilyBlockCursor = 0u;
-    std::vector<std::vector<std::uint32_t>> aEligibleSourceLocalBlocksByArchive;
-    aEligibleSourceLocalBlocksByArchive.reserve(
+    std::vector<std::vector<std::uint32_t>> aSelectedSourceLocalBlocksByArchive;
+    aSelectedSourceLocalBlocksByArchive.reserve(
         aMemoryPlan.mSourceArchiveBlockCounts.size());
     std::uint64_t aTotalEligibleSourceBlockCount = 0u;
     for (std::uint32_t aSourceBlockCount : aMemoryPlan.mSourceArchiveBlockCounts) {
-      std::vector<std::uint32_t> aEligibleSourceLocalBlocks;
-      aEligibleSourceLocalBlocks.reserve(static_cast<std::size_t>(aSourceBlockCount));
       for (std::uint32_t aLocalBlockIndex = 0u;
            aLocalBlockIndex < aSourceBlockCount;
            ++aLocalBlockIndex) {
         const std::uint64_t aFamilyBlockIndex =
             aSourceFamilyBlockCursor + static_cast<std::uint64_t>(aLocalBlockIndex);
-        if (aFamilyBlockIndex >= aPreviewStart && aFamilyBlockIndex < aPreviewEnd) {
-          continue;
+        if (aFamilyBlockIndex >= aPreviewEnd) {
+          ++aTotalEligibleSourceBlockCount;
         }
-        aEligibleSourceLocalBlocks.push_back(aLocalBlockIndex);
       }
-      aTotalEligibleSourceBlockCount +=
-          static_cast<std::uint64_t>(aEligibleSourceLocalBlocks.size());
-      aEligibleSourceLocalBlocksByArchive.push_back(
-          std::move(aEligibleSourceLocalBlocks));
+      aSelectedSourceLocalBlocksByArchive.push_back({});
       aSourceFamilyBlockCursor += static_cast<std::uint64_t>(aSourceBlockCount);
     }
 
     const std::uint64_t aTargetRepairBlockCount = GetExpectedRepairBlockCount(
         aTotalEligibleSourceBlockCount, pContext.Request().mRepairCoverage);
-
-    std::vector<std::vector<std::uint32_t>> aSelectedSourceLocalBlocksByArchive(
-        aEligibleSourceLocalBlocksByArchive.size());
-    std::uint64_t aSelectedBlockCount = 0u;
-    std::size_t aLayer = 0u;
-    while (aSelectedBlockCount < aTargetRepairBlockCount) {
-      bool aPickedAnyInLayer = false;
-      for (std::size_t aArchiveIndex = 0u;
-           aArchiveIndex < aEligibleSourceLocalBlocksByArchive.size();
-           ++aArchiveIndex) {
-        const std::vector<std::uint32_t>& aEligible =
-            aEligibleSourceLocalBlocksByArchive[aArchiveIndex];
-        if (aLayer >= aEligible.size()) {
+    std::uint64_t aRemainingRepairSelections = aTargetRepairBlockCount;
+    aSourceFamilyBlockCursor = 0u;
+    for (std::size_t aArchiveIndex = 0u;
+         aArchiveIndex < aMemoryPlan.mSourceArchiveBlockCounts.size();
+         ++aArchiveIndex) {
+      const std::uint32_t aSourceBlockCount =
+          aMemoryPlan.mSourceArchiveBlockCounts[aArchiveIndex];
+      std::vector<std::uint32_t>& aSelected =
+          aSelectedSourceLocalBlocksByArchive[aArchiveIndex];
+      for (std::uint32_t aLocalBlockIndex = 0u;
+           aLocalBlockIndex < aSourceBlockCount &&
+           aRemainingRepairSelections > 0u;
+           ++aLocalBlockIndex) {
+        const std::uint64_t aFamilyBlockIndex =
+            aSourceFamilyBlockCursor + static_cast<std::uint64_t>(aLocalBlockIndex);
+        if (aFamilyBlockIndex < aPreviewEnd) {
           continue;
         }
-        aSelectedSourceLocalBlocksByArchive[aArchiveIndex].push_back(aEligible[aLayer]);
-        ++aSelectedBlockCount;
-        aPickedAnyInLayer = true;
-        if (aSelectedBlockCount >= aTargetRepairBlockCount) {
-          break;
-        }
+        aSelected.push_back(aLocalBlockIndex);
+        --aRemainingRepairSelections;
       }
-      if (!aPickedAnyInLayer) {
+      aSourceFamilyBlockCursor += static_cast<std::uint64_t>(aSourceBlockCount);
+      if (aRemainingRepairSelections == 0u) {
         break;
       }
-      ++aLayer;
     }
 
     aMemoryPlan.mRepairCopySourceLocalBlocks.reserve(

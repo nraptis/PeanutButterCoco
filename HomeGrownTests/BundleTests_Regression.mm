@@ -295,4 +295,48 @@
     }
 }
 
+- (void)test_bundle_regression_rejects_same_source_and_destination_without_deleting_source {
+    JobBundle aJob;
+    aJob.mPayloadBytesPerBlock = 4;
+    aJob.mBlocksPerArchive = 4;
+    aJob.mClearDestination = true;
+    aJob.mArchived = aJob.mInput;
+    aJob.AddFile("keep.txt", "payload");
+
+    MockHardDrive aHardDrive;
+    MockFileSystem aFileSystem(&aHardDrive);
+    ByteString aErrorString;
+
+    const BOOL aSucceeded = TestBundleWithHooks::PerformReal(aJob, aFileSystem, &aErrorString);
+    XCTAssertFalse(aSucceeded);
+
+    const std::string aSourceFilePath =
+        aFileSystem.JoinPath(aJob.mInput.ToString(), "keep.txt");
+    XCTAssertTrue(aFileSystem.IsFile(aSourceFilePath));
+    XCTAssertTrue(aFileSystem.Load(aSourceFilePath).ToString() == "payload");
+}
+
+- (void)test_bundle_regression_does_not_clear_existing_destination_contents {
+    JobBundle aJob;
+    aJob.mPayloadBytesPerBlock = 4;
+    aJob.mBlocksPerArchive = 4;
+    aJob.mClearDestination = true;
+    aJob.AddFile("a.txt", "A");
+
+    MockHardDrive aHardDrive;
+    MockFileSystem aFileSystem(&aHardDrive);
+    const std::string aSentinelPath =
+        aFileSystem.JoinPath(aJob.mArchived.ToString(), "sentinel.txt");
+    XCTAssertTrue(aFileSystem.WriteFile(
+        aSentinelPath,
+        reinterpret_cast<const unsigned char*>("sentinel"),
+        8u));
+
+    ByteString aErrorString;
+    const BOOL aSucceeded = TestBundleWithHooks::PerformReal(aJob, aFileSystem, &aErrorString);
+    XCTAssertTrue(aSucceeded);
+    XCTAssertTrue(aFileSystem.IsFile(aSentinelPath));
+    XCTAssertTrue(aFileSystem.Load(aSentinelPath).ToString() == "sentinel");
+}
+
 @end

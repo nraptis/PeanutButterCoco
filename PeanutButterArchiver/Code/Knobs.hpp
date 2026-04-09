@@ -38,22 +38,32 @@ constexpr std::uint32_t BatchBlocksFromBudgetBytesV2(
                    pPayloadBytesPerBlock);
 }
 
-inline constexpr std::uint32_t kDefaultBatchSizeBundleV2 =
-    BatchBlocksFromBudgetBytesV2(kBatchBudgetBytesBundleV2,
-                                 kDefaultSectionPayloadBytesV2);
-inline constexpr std::uint32_t kDefaultBatchSizeDecodeV2 =
-    BatchBlocksFromBudgetBytesV2(kBatchBudgetBytesDecodeV2,
-                                 kDefaultSectionPayloadBytesV2);
-inline constexpr std::uint32_t kDefaultBatchSizeBundleRepairV2 =
-    BatchBlocksFromBudgetBytesV2(kBatchBudgetBytesBundleRepairV2,
-                                 kDefaultSectionPayloadBytesV2);
-inline constexpr std::uint32_t kDefaultBatchSizeRepairV2 =
-    BatchBlocksFromBudgetBytesV2(kBatchBudgetBytesRepairV2,
-                                 kDefaultSectionPayloadBytesV2);
-inline constexpr std::uint32_t kDefaultBatchSizeSanityCompareV2 =
-    BatchBlocksFromBudgetBytesV2(kBatchBudgetBytesSanityCompareV2,
-                                 kDefaultArchiveBlockBytesV2);
+inline constexpr std::uint32_t kDefaultBatchSizeBundleV2 = 32;
+inline constexpr std::uint32_t kDefaultBatchSizeDecodeV2 = 32;
+inline constexpr std::uint32_t kDefaultBatchSizeBundleRepairV2 = 32;
+inline constexpr std::uint32_t kDefaultBatchSizeRepairV2 = 32;
+inline constexpr std::uint32_t kDefaultBatchSizeSanityCompareV2 = 32;
 inline constexpr std::uint32_t kDefaultBatchSizeSanityDiscoveryV2 = 512u;
+
+
+/*
+ inline constexpr std::uint32_t kDefaultBatchSizeBundleV2 =
+     BatchBlocksFromBudgetBytesV2(kBatchBudgetBytesBundleV2,
+                                  kDefaultSectionPayloadBytesV2);
+ inline constexpr std::uint32_t kDefaultBatchSizeDecodeV2 =
+     BatchBlocksFromBudgetBytesV2(kBatchBudgetBytesDecodeV2,
+                                  kDefaultSectionPayloadBytesV2);
+ inline constexpr std::uint32_t kDefaultBatchSizeBundleRepairV2 =
+     BatchBlocksFromBudgetBytesV2(kBatchBudgetBytesBundleRepairV2,
+                                  kDefaultSectionPayloadBytesV2);
+ inline constexpr std::uint32_t kDefaultBatchSizeRepairV2 =
+     BatchBlocksFromBudgetBytesV2(kBatchBudgetBytesRepairV2,
+                                  kDefaultSectionPayloadBytesV2);
+ inline constexpr std::uint32_t kDefaultBatchSizeSanityCompareV2 =
+     BatchBlocksFromBudgetBytesV2(kBatchBudgetBytesSanityCompareV2,
+                                  kDefaultArchiveBlockBytesV2);
+ inline constexpr std::uint32_t kDefaultBatchSizeSanityDiscoveryV2 = 512u;
+*/
 
 // Mutable batch sizes so tests can override pacing per run.
 inline std::uint32_t kBatchSizeBundleV2 = kDefaultBatchSizeBundleV2;

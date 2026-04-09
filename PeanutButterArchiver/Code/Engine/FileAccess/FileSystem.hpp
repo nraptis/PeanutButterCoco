@@ -217,6 +217,10 @@ public:
                                                              const std::string& pPath) const = 0;
     virtual std::unique_ptr<FileWriteStreamV2> OpenWriteStream(
                                                                const std::string& pPath) = 0;
+    virtual std::unique_ptr<FileWriteStreamV2> OpenAppendStream(
+                                                                 const std::string& pPath) = 0;
+    virtual bool ResizeFile(const std::string& pPath,
+                            std::uint64_t pLength) = 0;
     virtual bool AppendFile(const std::string& pPath,
                             const unsigned char* pContents,
                             std::size_t pLength) = 0;

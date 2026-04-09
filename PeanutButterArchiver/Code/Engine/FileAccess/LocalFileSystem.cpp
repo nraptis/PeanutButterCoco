@@ -260,10 +260,10 @@ class LocalFileReadStreamV2 final : public FileReadStreamV2 {
 
 class LocalFileWriteStreamV2 final : public FileWriteStreamV2 {
  public:
-  explicit LocalFileWriteStreamV2(std::string pPath)
+  LocalFileWriteStreamV2(std::string pPath, const char* pMode)
       : mPath(std::move(pPath)) {
     errno = 0;
-    mOutput = std::fopen(mPath.c_str(), "wb");
+    mOutput = std::fopen(mPath.c_str(), pMode);
     if (mOutput == nullptr) {
       mLastErrorMessage = FormatErrnoMessage(errno);
     }
@@ -272,6 +272,13 @@ class LocalFileWriteStreamV2 final : public FileWriteStreamV2 {
   LocalFileWriteStreamV2(std::string pPath, std::string pInitialError)
       : mPath(std::move(pPath)),
         mLastErrorMessage(std::move(pInitialError)) {}
+
+  ~LocalFileWriteStreamV2() override {
+    if (mOutput != nullptr) {
+      (void)std::fclose(mOutput);
+      mOutput = nullptr;
+    }
+  }
 
   bool IsReady() const override {
     return mOutput != nullptr;
@@ -605,7 +612,32 @@ std::unique_ptr<FileWriteStreamV2> LocalFileSystemV2::OpenWriteStream(
     return std::make_unique<LocalFileWriteStreamV2>(
         pPath, "failed creating parent directory for write stream");
   }
-  return std::make_unique<LocalFileWriteStreamV2>(pPath);
+  return std::make_unique<LocalFileWriteStreamV2>(pPath, "wb");
+}
+
+std::unique_ptr<FileWriteStreamV2> LocalFileSystemV2::OpenAppendStream(
+    const std::string& pPath) {
+  const std::string aParent = ParentLocalPath(pPath);
+  if (!aParent.empty() && !EnsureDirectory(aParent)) {
+    return std::make_unique<LocalFileWriteStreamV2>(
+        pPath, "failed creating parent directory for append stream");
+  }
+  return std::make_unique<LocalFileWriteStreamV2>(pPath, "ab");
+}
+
+bool LocalFileSystemV2::ResizeFile(const std::string& pPath,
+                                   std::uint64_t pLength) {
+  if (pLength >
+      static_cast<std::uint64_t>(std::numeric_limits<std::uintmax_t>::max())) {
+    return false;
+  }
+
+  std::error_code aError;
+  std::filesystem::resize_file(
+      std::filesystem::path(pPath),
+      static_cast<std::uintmax_t>(pLength),
+      aError);
+  return !aError;
 }
 
 bool LocalFileSystemV2::AppendFile(const std::string& pPath,

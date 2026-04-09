@@ -234,61 +234,20 @@ bool TestBundle::PerformMock(JobBundle &pJob, vector<FakeArchive> *pResult, Byte
     if (aTargetRepairBlockCount > 0) {
         
         vector<FakeRepairRecord> aNewRepairRecords;
-        
-        
         int aFirstMainBlockIndex = (int)aPreviewPayloadBlocks.size();
-        int aPartialArchiveCount = (aNonRepairBlockCount + (pJob.mBlocksPerArchive - 1)) / pJob.mBlocksPerArchive;
-        vector<vector<FakeRepairRecord>> aRepairSearchStack;
-        vector<int> aRepairSearchIndex;
-        
-        for (int aArchiveIndex=0;aArchiveIndex<aPartialArchiveCount;aArchiveIndex++) {
-            vector<FakeRepairRecord> aList;
-            aRepairSearchStack.push_back(aList);
-            aRepairSearchIndex.push_back(0);
+        for (int aFlatBlockIndex = aFirstMainBlockIndex;
+             aFlatBlockIndex < aNonRepairBlockCount &&
+             ((int)aNewRepairRecords.size()) < aTargetRepairBlockCount;
+             aFlatBlockIndex++) {
+            int aRepairArchiveIndex = aFlatBlockIndex / pJob.mBlocksPerArchive;
+            int aRepairBlockIndex =
+                (aFlatBlockIndex - aRepairArchiveIndex * pJob.mBlocksPerArchive);
+            FakeRepairRecord aRepairRecord;
+            aRepairRecord.SetValid(aRepairArchiveIndex, aRepairBlockIndex);
+            aRepairRecord.mMainBlockIndex = (aFlatBlockIndex - aFirstMainBlockIndex);
+            aNewRepairRecords.push_back(aRepairRecord);
         }
-        int aBlockIndex = 0;
-        for (int aArchiveIndex=0;aArchiveIndex<aPartialArchiveCount;aArchiveIndex++) {
-            int aBlockCount = (aNonRepairBlockCount - aBlockIndex);
-            if (aBlockCount > pJob.mBlocksPerArchive) {
-                aBlockCount = pJob.mBlocksPerArchive;
-            }
-            int aBlockCeiling = aBlockIndex + aBlockCount;
-            int aLoopBlockIndex = aBlockIndex;
-            while (aLoopBlockIndex < aBlockCeiling) {
-                if (aLoopBlockIndex >= aFirstMainBlockIndex) {
-                    int aRepairArchiveIndex = aLoopBlockIndex / pJob.mBlocksPerArchive;
-                    int aRepairBlockIndex = (aLoopBlockIndex - aRepairArchiveIndex * pJob.mBlocksPerArchive);
-                    FakeRepairRecord aRepairRecord;
-                    aRepairRecord.SetValid(aRepairArchiveIndex, aRepairBlockIndex);
-                    aRepairRecord.mMainBlockIndex = (aLoopBlockIndex - aFirstMainBlockIndex);
-                    aRepairSearchStack[aArchiveIndex].push_back(aRepairRecord);
-                }
-                aLoopBlockIndex++;
-            }
-            aBlockIndex += pJob.mBlocksPerArchive;
-        }
-        
-        while (true) {
-            bool aFoundOne = false;
-            for (int aIndex=0; aIndex<((int)aRepairSearchStack.size()); aIndex++) {
-                if (aRepairSearchIndex[aIndex] < aRepairSearchStack[aIndex].size()) {
-                    aNewRepairRecords.push_back(aRepairSearchStack[aIndex][aRepairSearchIndex[aIndex]]);
-                    aRepairSearchIndex[aIndex] = aRepairSearchIndex[aIndex] + 1;
-                    aFoundOne = true;
-                }
-                if (((int)aNewRepairRecords.size()) == aTargetRepairBlockCount) {
-                    break;
-                }
-            }
-            if (aFoundOne == false) {
-                break;
-            }
-            if (((int)aNewRepairRecords.size()) == aTargetRepairBlockCount) {
-                break;
-            }
-        }
-        
-        //aRepairRecords.push_back(aRepairSearchStack[aIndex][aRepairSearchIndex[aIndex]]);
+
         vector<ByteString> aRepairPayloadList;
         int aMainPayloadCount = (int)aMainPayloadList.size();
         if (aMainPayloadCount <= 0) {
@@ -482,4 +441,3 @@ bool TestBundle::PerformMock(JobBundle &pJob, vector<FakeArchive> *pResult, Byte
     
     return true;
 }
-

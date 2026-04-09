@@ -1323,7 +1323,6 @@ bool DecodeRepairApplyV2::Run(DecodeStageContextV2& pContext) {
       aCursorPtr.reset();
       return false;
     }
-    std::memset(aCursorPtr->mZeroBuffer.Data(), 0, aCursorPtr->mZeroBuffer.Size());
 
     aRepair.mArchivesTotal = aExpectedArchiveCount;
     pContext.EmitLog(
@@ -1619,27 +1618,20 @@ bool DecodeRepairApplyV2::Run(DecodeStageContextV2& pContext) {
 
     if (aCursor.mStage == DecodeRepairApplyCursorV2::StageV2::kZeroFill) {
       if (aCursor.mZeroBytesRemaining > 0u) {
-        const std::size_t aChunkBytes = static_cast<std::size_t>(
-            std::min<std::uint64_t>(aCursor.mZeroBuffer.Size(),
-                                    aCursor.mZeroBytesRemaining));
-        if (!pContext.FileSystem().AppendFile(
-                aPlan.mOutputPath, aCursor.mZeroBuffer.Data(), aChunkBytes)) {
+        if (!pContext.FileSystem().ResizeFile(
+                aPlan.mOutputPath, aPlan.mExpectedFileBytes)) {
           pContext.EmitLog(LogLevelV2::kError,
                            LogPhaseFailedV2(LogActionV2::kRepair,
                                             ProgressStageV2::kRepairApply,
-                                            "failed appending zero bytes for " +
+                                            "failed resizing archive to expected size for " +
                                                 aPlan.mOutputName));
           aCursorPtr.reset();
           return false;
         }
-        aCursor.mZeroBytesRemaining -= static_cast<std::uint64_t>(aChunkBytes);
-        aCursor.mBytesCopied += static_cast<std::uint64_t>(aChunkBytes);
+        aCursor.mZeroBytesRemaining = 0u;
+        aCursor.mBytesCopied = aPlan.mExpectedFileBytes;
         ObserveRepairApplyCancel(pContext, aCursor, aPlan);
         EmitRepairApplyProgress(pContext, aCursor);
-        if (aCursor.mZeroBytesRemaining > 0u) {
-          pContext.ContinuePhaseOnNextHeartbeat();
-          return true;
-        }
       }
 
       if (aCursor.mResizeEventPending &&

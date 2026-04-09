@@ -45,6 +45,7 @@ public:
                                                 std::size_t pOffset,
                                                 const unsigned char* pContents,
                                              std::size_t pLength);
+    bool ResizeFile(const std::string& pPath, std::uint64_t pLength);
     
     bool HasPath(const std::string& pPath) const;
     bool HasDirectory(const std::string& pPath) const;

@@ -96,7 +96,16 @@ std::unique_ptr<FileReadStreamV2> MockFileSystem::OpenReadStream(const std::stri
 }
 
 std::unique_ptr<FileWriteStreamV2> MockFileSystem::OpenWriteStream(const std::string& pPath) {
-    return std::make_unique<MockFileWriteStream>(mDrive, pPath);
+    return std::make_unique<MockFileWriteStream>(mDrive, pPath, true);
+}
+
+std::unique_ptr<FileWriteStreamV2> MockFileSystem::OpenAppendStream(const std::string& pPath) {
+    return std::make_unique<MockFileWriteStream>(mDrive, pPath, false);
+}
+
+bool MockFileSystem::ResizeFile(const std::string& pPath,
+                                std::uint64_t pLength) {
+    return mDrive->ResizeFile(pPath, pLength);
 }
 
 ByteString MockFileSystem::Load(const std::string& pPath) {
