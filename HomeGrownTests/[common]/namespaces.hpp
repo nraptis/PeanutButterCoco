@@ -2,7 +2,7 @@
 //  namespaces.hpp
 //  PeanutButterArchiver
 //
-//  Created by Magneto on 4/2/26.
+//  Created by Lucky Squirrel on 4/2/26.
 //
 
 #ifndef namespaces_h

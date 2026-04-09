@@ -2,7 +2,7 @@
 //  MockHardDrive.hpp
 //  PeanutButterArchiver
 //
-//  Created by Magneto on 3/23/26.
+//  Created by Lucky Squirrel on 3/23/26.
 //
 
 #pragma once

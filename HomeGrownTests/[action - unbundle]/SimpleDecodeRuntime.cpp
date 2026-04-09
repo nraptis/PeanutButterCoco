@@ -2,7 +2,7 @@
 //  SimpleDecodeRuntime.cpp
 //  HomeGrownTests
 //
-//  Created by Magneto on 4/5/26.
+//  Created by Lucky Squirrel on 4/5/26.
 //
 
 #include "SimpleDecodeRuntime.hpp"

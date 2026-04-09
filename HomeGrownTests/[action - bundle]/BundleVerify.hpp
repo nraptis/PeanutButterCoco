@@ -2,7 +2,7 @@
 //  BundleVerify.hpp
 //  HomeGrownTests
 //
-//  Created by Magneto on 4/4/26.
+//  Created by Lucky Squirrel on 4/4/26.
 //
 
 #ifndef BundleVerify_hpp

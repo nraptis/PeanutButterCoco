@@ -2,7 +2,7 @@
 //  Random.cpp
 //  HomeGrownTests
 //
-//  Created by Magneto on 4/3/26.
+//  Created by Lucky Squirrel on 4/3/26.
 //
 
 #include "Random.hpp"

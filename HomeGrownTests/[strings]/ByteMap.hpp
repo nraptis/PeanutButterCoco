@@ -2,7 +2,7 @@
 //  ByteMap.hpp
 //  HomeGrownTests
 //
-//  Created by Magneto on 4/3/26.
+//  Created by Lucky Squirrel on 4/3/26.
 //
 
 #ifndef BYTE_MAP_H
