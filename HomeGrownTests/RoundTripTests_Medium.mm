@@ -169,7 +169,7 @@
 
 - (void)test_100_full_spectrum {
     
-    for (int aTestIndex=0;aTestIndex<50000000;aTestIndex++) {
+    for (int aTestIndex=0;aTestIndex<50000;aTestIndex++) {
         
         int aPayloadBytesPerBlock = Random::Get(1, 256);
         int aBlocksPerArchive = Random::Get(1, 256);

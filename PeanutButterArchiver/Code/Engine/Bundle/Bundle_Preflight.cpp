@@ -133,6 +133,16 @@ bool BundlePreflightV2::Run(BundleStageContextV2& pContext) {
     return false;
   }
 
+  if (pContext.Request().mClearDestinationBeforeWrite &&
+      aDestinationExists && aDestinationIsDirectory &&
+      !pContext.FileSystem().ClearDirectory(
+          pContext.Request().mDestinationDirectory)) {
+    pContext.EmitLog(LogLevelV2::kError,
+                     LogPhaseFailedV2(LogActionV2::kBundle, ProgressStageV2::kPreflight,
+                                      "destination directory could not be cleared"));
+    return false;
+  }
+
   if (!pContext.FileSystem().EnsureDirectory(
           pContext.Request().mDestinationDirectory)) {
     pContext.EmitLog(LogLevelV2::kError,

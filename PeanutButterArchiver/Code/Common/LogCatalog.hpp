@@ -70,9 +70,17 @@ std::string LogBundleDiscoverySliceV2(std::uint64_t pFileCount,
 std::string LogDecodeDiscoverySliceV2(LogActionV2 pAction,
                                       std::uint64_t pArchiveFilesScanned,
                                       std::uint64_t pNonArchiveFilesScanned);
-std::string LogSanitySummaryHealthyV2(const LoggingStatV2& pStat);
+std::string LogSanitySummaryHealthyV2(const LoggingStatV2& pStat,
+                                      std::uint64_t pMatchedFileCount,
+                                      std::uint64_t pMatchedFolderCount);
+std::string LogSanitySummaryWarnV2(const LoggingStatV2& pStat,
+                                   std::uint64_t pMismatchCount,
+                                   std::uint64_t pMatchedFileCount,
+                                   std::uint64_t pMatchedFolderCount);
 std::string LogSanitySummaryMismatchV2(const LoggingStatV2& pStat,
-                                       std::uint64_t pMismatchCount);
+                                       std::uint64_t pMismatchCount,
+                                       std::uint64_t pMatchedFileCount,
+                                       std::uint64_t pMatchedFolderCount);
 std::string LogBundleDiscoverySummaryV2(std::uint64_t pFileCount,
                                         std::uint64_t pEmptyFolderCount);
 std::string LogBundleMemoryPlanSummaryV2(std::uint64_t pArchiveCount,

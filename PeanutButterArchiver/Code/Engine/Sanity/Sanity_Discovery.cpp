@@ -1,6 +1,8 @@
 #include "Sanity_Discovery.hpp"
 
 #include <algorithm>
+#include <cctype>
+#include <cstring>
 #include <filesystem>
 #include <memory>
 
@@ -87,8 +89,30 @@ SanityEntryV2 ToSanityEntry(const SanityDiscoveryFrameV2::ChildEntryV2& pEntry) 
   return aEntry;
 }
 
-bool LoadDirectoryChildren(const std::string& pRootPath,
-                           SanityDiscoveryFrameV2& pFrame) {
+bool IsShortcutLikeFilePath(const std::string& pPath) {
+  const std::filesystem::path aPath(pPath);
+  std::string aName = aPath.filename().generic_string();
+  std::transform(aName.begin(),
+                 aName.end(),
+                 aName.begin(),
+                 [](unsigned char pCharacter) {
+                   return static_cast<char>(std::tolower(pCharacter));
+                 });
+  const auto HasSuffix = [&](const char* pSuffix) {
+    const std::size_t aSuffixLength = std::strlen(pSuffix);
+    return aName.size() >= aSuffixLength &&
+           aName.compare(aName.size() - aSuffixLength, aSuffixLength, pSuffix) == 0;
+  };
+  return HasSuffix(".lnk") ||
+         HasSuffix(".url") ||
+         HasSuffix(".alias") ||
+         HasSuffix(".webloc");
+}
+
+bool LoadDirectoryChildren(FileSystemV2& pFileSystem,
+                           const std::string& pRootPath,
+                           SanityDiscoveryFrameV2& pFrame,
+                           std::uint64_t& pIgnoredReferenceCount) {
   pFrame.mChildren.clear();
   pFrame.mChildIndex = 0u;
   pFrame.mLoaded = true;
@@ -101,10 +125,24 @@ bool LoadDirectoryChildren(const std::string& pRootPath,
   std::filesystem::directory_iterator aEnd;
   while (!aIteratorError && aIterator != aEnd) {
     const std::filesystem::directory_entry aEntry = *aIterator;
+    const std::string aEntryPath =
+        aEntry.path().lexically_normal().generic_string();
+    if (pFileSystem.IsSymlink(aEntryPath)) {
+      ++pIgnoredReferenceCount;
+      aIterator.increment(aIteratorError);
+      continue;
+    }
+
     std::error_code aTypeError;
     const bool aIsDirectory = aEntry.is_directory(aTypeError);
     const bool aIsRegularFile = !aTypeError && aEntry.is_regular_file(aTypeError);
     if (!aTypeError && (aIsDirectory || aIsRegularFile)) {
+      if ((aIsRegularFile && pFileSystem.IsAlias(aEntryPath)) ||
+          (aIsRegularFile && IsShortcutLikeFilePath(aEntryPath))) {
+        ++pIgnoredReferenceCount;
+        aIterator.increment(aIteratorError);
+        continue;
+      }
       std::error_code aRelativeError;
       const std::filesystem::path aRelativePath =
           std::filesystem::relative(aEntry.path(),
@@ -112,7 +150,7 @@ bool LoadDirectoryChildren(const std::string& pRootPath,
                                     aRelativeError);
       if (!aRelativeError) {
         SanityDiscoveryFrameV2::ChildEntryV2 aChild;
-        aChild.mPath = aEntry.path().lexically_normal().generic_string();
+        aChild.mPath = aEntryPath;
         aChild.mRelativePath = aRelativePath.generic_string();
         aChild.mIsDirectory = aIsDirectory;
         if (!aIsDirectory) {
@@ -261,6 +299,25 @@ void EmitHiddenDiscoverySummary(SanityStageContextV2& pContext,
   }
 }
 
+void EmitIgnoredReferenceSummary(SanityStageContextV2& pContext,
+                                 const SanityDiscoveryStateV2& pDiscovery) {
+  const std::uint64_t aIgnoredReferenceCount =
+      pDiscovery.mIgnoredReferenceLeftCount +
+      pDiscovery.mIgnoredReferenceRightCount;
+  if (aIgnoredReferenceCount == 0u) {
+    return;
+  }
+
+  pContext.EmitLog(
+      LogLevelV2::kWarning,
+      "[Folder Compare][Discovery] Ignored " +
+          std::to_string(aIgnoredReferenceCount) +
+          " alias/symlink/shortcut entries. left=" +
+          std::to_string(pDiscovery.mIgnoredReferenceLeftCount) +
+          ", right=" +
+          std::to_string(pDiscovery.mIgnoredReferenceRightCount) + ".");
+}
+
 bool FinalizeSanityDiscovery(SanityStageContextV2& pContext) {
   SanityDiscoveryStateV2& aDiscovery = pContext.State().mDiscovery;
   SortDiscoveryEntries(aDiscovery.mLeftFiles);
@@ -268,6 +325,7 @@ bool FinalizeSanityDiscovery(SanityStageContextV2& pContext) {
   SortDiscoveryEntries(aDiscovery.mLeftFolders);
   SortDiscoveryEntries(aDiscovery.mRightFolders);
   EmitHiddenDiscoverySummary(pContext, aDiscovery);
+  EmitIgnoredReferenceSummary(pContext, aDiscovery);
   pContext.State().mCursor.mDiscovery.reset();
   pContext.EmitPhaseProgress(1.0, ProgressStageLabelV2(ProgressStageV2::kDiscovery));
   pContext.EmitLog(LogLevelV2::kInfo,
@@ -354,10 +412,16 @@ SideAdvanceResultV2 AdvanceDiscoverySide(SanityStageContextV2& pContext,
                                          SanityDiscoveryCursorV2& pCursor,
                                          SanityDiscoverySideCursorV2& pSide,
                                          bool pIsLeft) {
+  std::uint64_t& aIgnoredReferenceCount =
+      pIsLeft ? pDiscovery.mIgnoredReferenceLeftCount
+              : pDiscovery.mIgnoredReferenceRightCount;
   while (!pSide.mFrames.empty()) {
     SanityDiscoveryFrameV2& aFrame = pSide.mFrames.back();
     if (!aFrame.mLoaded) {
-      (void)LoadDirectoryChildren(pSide.mRootPath, aFrame);
+      (void)LoadDirectoryChildren(pContext.FileSystem(),
+                                  pSide.mRootPath,
+                                  aFrame,
+                                  aIgnoredReferenceCount);
       UpdateObservedEntryCount(pSide);
       if (aFrame.mChildren.empty()) {
         pSide.mFrames.pop_back();
@@ -381,7 +445,10 @@ SideAdvanceResultV2 AdvanceDiscoverySide(SanityStageContextV2& pContext,
       SanityDiscoveryFrameV2 aChildFrame;
       aChildFrame.mDirectoryPath = aEntry.mPath;
       aChildFrame.mRelativePath = aEntry.mRelativePath;
-      (void)LoadDirectoryChildren(pSide.mRootPath, aChildFrame);
+      (void)LoadDirectoryChildren(pContext.FileSystem(),
+                                  pSide.mRootPath,
+                                  aChildFrame,
+                                  aIgnoredReferenceCount);
       if (!aChildFrame.mChildren.empty()) {
         pSide.mFrames.push_back(std::move(aChildFrame));
       }

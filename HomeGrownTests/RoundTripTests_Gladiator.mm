@@ -27,6 +27,26 @@
 
 @implementation RoundTripTests_Gladiator
 
+- (void)test_str {
+    
+    for (int i=0;i<300;i++) {
+        
+        int aCount = Random::Get(8, 12);
+        
+        string aString = "";
+        for (int i=0;i<aCount;i++) {
+            auto aWord = Words::GetRandomFileContent(Random::Get(10, 12),
+                                                     Random::Get(4, 8));
+            aString += aWord.ToString();
+            if (i < (aCount - 1)) {
+                aString += " ";
+            }
+        }
+        printf("%s\n", aString.c_str());
+    }
+    
+}
+
 - (void)test_regression_gladiator_a {
     JobBundle aJob;
     aJob.mPayloadBytesPerBlock = 60;

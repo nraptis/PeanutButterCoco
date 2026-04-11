@@ -7,10 +7,13 @@
 
 #import <Foundation/Foundation.h>
 #import <XCTest/XCTest.h>
+#include <filesystem>
+#include <vector>
 #include "namespaces.hpp"
 #include "FakeFile.hpp"
 #include "Random.hpp"
 #include "Words.hpp"
+#include "../PeanutButterArchiver/Code/Engine/TaskCommon.hpp"
 #include "TestBundle.hpp"
 #include "TestBundleWithHooks.hpp"
 #include "TestUnbundleWithHooks.hpp"
@@ -18,6 +21,97 @@
 #include "WrappedArchiveAssembler.hpp"
 #include "BundleVerify.hpp"
 #include "UnbundleVerify.hpp"
+
+namespace {
+
+class CapturingSanityRuntime final : public peanutbutter::SanityRuntimeV2 {
+public:
+    bool IsCancelRequested() const override {
+        return false;
+    }
+    
+    void EmitLog(peanutbutter::LogLevelV2 pLevel, const std::string& pMessage) override {
+        peanutbutter::LogEntryV2 aEntry;
+        aEntry.mLevel = pLevel;
+        aEntry.mMessage = pMessage;
+        mLogs.push_back(std::move(aEntry));
+    }
+    
+    void EmitProgress(peanutbutter::ProgressStageV2 pStage,
+                      double pLocalFraction,
+                      double pOverallFraction,
+                      const std::string& pLabel) override {
+        (void)pStage;
+        (void)pLocalFraction;
+        (void)pOverallFraction;
+        (void)pLabel;
+    }
+    
+    std::vector<peanutbutter::LogEntryV2> mLogs;
+};
+
+struct SanityRunResult {
+    peanutbutter::TaskDispositionV2 mDisposition = peanutbutter::TaskDispositionV2::kRunning;
+    std::string mFailureMessage;
+    std::vector<peanutbutter::LogEntryV2> mLogs;
+};
+
+std::filesystem::path CreateUniqueTempDirectory(NSString *pLabel) {
+    NSString *aBase = NSTemporaryDirectory();
+    NSString *aUniqueName = [NSString stringWithFormat:@"pb_sanity_%@_%@", pLabel, NSUUID.UUID.UUIDString];
+    std::filesystem::path aPath([[aBase stringByAppendingPathComponent:aUniqueName] UTF8String]);
+    std::filesystem::create_directories(aPath);
+    return aPath;
+}
+
+BOOL WriteTempFile(const std::filesystem::path &pPath, const std::string &pContents) {
+    std::filesystem::create_directories(pPath.parent_path());
+    NSData *aData = [NSData dataWithBytes:pContents.data() length:pContents.size()];
+    return [aData writeToFile:[NSString stringWithUTF8String:pPath.string().c_str()] atomically:YES];
+}
+
+SanityRunResult RunSanityCompare(const std::filesystem::path &pLeft,
+                                 const std::filesystem::path &pRight,
+                                 BOOL pIgnoreHidden = NO) {
+    peanutbutter::SanityRequestV2 aRequest;
+    aRequest.mLeftDirectory = pLeft.lexically_normal().generic_string();
+    aRequest.mRightDirectory = pRight.lexically_normal().generic_string();
+    aRequest.mIgnoreHidden = pIgnoreHidden;
+    
+    CapturingSanityRuntime aRuntime;
+    peanutbutter::SanityTaskV2 aTask(aRequest, &aRuntime);
+    while (aTask.Disposition() == peanutbutter::TaskDispositionV2::kRunning) {
+        (void)aTask.Heartbeat();
+    }
+    
+    SanityRunResult aResult;
+    aResult.mDisposition = aTask.Disposition();
+    aResult.mFailureMessage = aTask.FailureMessage();
+    aResult.mLogs = std::move(aRuntime.mLogs);
+    return aResult;
+}
+
+std::string FindFirstLogContaining(const std::vector<peanutbutter::LogEntryV2> &pLogs,
+                                   const std::string &pNeedle) {
+    for (const peanutbutter::LogEntryV2 &aLog : pLogs) {
+        if (aLog.mMessage.find(pNeedle) != std::string::npos) {
+            return aLog.mMessage;
+        }
+    }
+    return std::string();
+}
+
+std::string FindFinalMatchedSummary(const std::vector<peanutbutter::LogEntryV2> &pLogs) {
+    for (auto aIt = pLogs.rbegin(); aIt != pLogs.rend(); ++aIt) {
+        if (aIt->mMessage.find("[Folder Compare][Summary]") != std::string::npos &&
+            aIt->mMessage.find("Matched ") != std::string::npos) {
+            return aIt->mMessage;
+        }
+    }
+    return std::string();
+}
+
+}  // namespace
 
 @interface UnbundleTests_Regression : XCTestCase
 @end
@@ -337,6 +431,79 @@
     for (const std::string& aArchivePath : aArchiveFiles) {
         XCTAssertTrue(aFileSystem.IsFile(aArchivePath));
     }
+}
+
+- (void)test_unbundle_regression_sanity_warns_on_empty_folder_difference {
+    const std::filesystem::path aLeft = CreateUniqueTempDirectory(@"empty_folder_left");
+    const std::filesystem::path aRight = CreateUniqueTempDirectory(@"empty_folder_right");
+    const std::filesystem::path aSharedFileLeft = aLeft / "shared.txt";
+    const std::filesystem::path aSharedFileRight = aRight / "shared.txt";
+    const std::filesystem::path aEmptyFolderLeft = aLeft / "only_left_empty";
+    
+    XCTAssertTrue(WriteTempFile(aSharedFileLeft, "same"));
+    XCTAssertTrue(WriteTempFile(aSharedFileRight, "same"));
+    std::filesystem::create_directories(aEmptyFolderLeft);
+    
+    const SanityRunResult aResult = RunSanityCompare(aLeft, aRight);
+    XCTAssertTrue(aResult.mDisposition == peanutbutter::TaskDispositionV2::kCompleted);
+    XCTAssertTrue(aResult.mFailureMessage.empty());
+    
+    const std::string aSummary = FindFinalMatchedSummary(aResult.mLogs);
+    XCTAssertFalse(aSummary.empty());
+    XCTAssertTrue(aSummary.find("Warn:") != std::string::npos);
+    XCTAssertTrue(aSummary.find("Matched 1 files and 0 folders") != std::string::npos);
+    
+    std::filesystem::remove_all(aLeft);
+    std::filesystem::remove_all(aRight);
+}
+
+- (void)test_unbundle_regression_sanity_ignores_shortcuts_and_symlinks {
+    const std::filesystem::path aLeft = CreateUniqueTempDirectory(@"shortcut_left");
+    const std::filesystem::path aRight = CreateUniqueTempDirectory(@"shortcut_right");
+    const std::filesystem::path aSharedFileLeft = aLeft / "shared.txt";
+    const std::filesystem::path aSharedFileRight = aRight / "shared.txt";
+    const std::filesystem::path aSymlinkPath = aLeft / "left_only.symlink";
+    const std::filesystem::path aShortcutPath = aLeft / "left_only.webloc";
+    
+    XCTAssertTrue(WriteTempFile(aSharedFileLeft, "same"));
+    XCTAssertTrue(WriteTempFile(aSharedFileRight, "same"));
+    XCTAssertTrue(WriteTempFile(aShortcutPath, "shortcut"));
+    std::filesystem::create_symlink(aSharedFileLeft.filename(), aSymlinkPath);
+    
+    const SanityRunResult aResult = RunSanityCompare(aLeft, aRight);
+    XCTAssertTrue(aResult.mDisposition == peanutbutter::TaskDispositionV2::kCompleted);
+    XCTAssertTrue(aResult.mFailureMessage.empty());
+    
+    const std::string aIgnoredLog = FindFirstLogContaining(aResult.mLogs, "Ignored ");
+    XCTAssertFalse(aIgnoredLog.empty());
+    const std::string aSummary = FindFinalMatchedSummary(aResult.mLogs);
+    XCTAssertFalse(aSummary.empty());
+    XCTAssertTrue(aSummary.find("Good:") != std::string::npos);
+    XCTAssertTrue(aSummary.find("Matched 1 files and 0 folders") != std::string::npos);
+    
+    std::filesystem::remove_all(aLeft);
+    std::filesystem::remove_all(aRight);
+}
+
+- (void)test_unbundle_regression_sanity_reports_matched_counts_on_file_failure {
+    const std::filesystem::path aLeft = CreateUniqueTempDirectory(@"mismatch_left");
+    const std::filesystem::path aRight = CreateUniqueTempDirectory(@"mismatch_right");
+    
+    XCTAssertTrue(WriteTempFile(aLeft / "same.txt", "same"));
+    XCTAssertTrue(WriteTempFile(aRight / "same.txt", "same"));
+    XCTAssertTrue(WriteTempFile(aLeft / "different.txt", "left"));
+    XCTAssertTrue(WriteTempFile(aRight / "different.txt", "right"));
+    
+    const SanityRunResult aResult = RunSanityCompare(aLeft, aRight);
+    XCTAssertTrue(aResult.mDisposition == peanutbutter::TaskDispositionV2::kFailed);
+    
+    const std::string aSummary = FindFinalMatchedSummary(aResult.mLogs);
+    XCTAssertFalse(aSummary.empty());
+    XCTAssertTrue(aSummary.find("Fail:") != std::string::npos);
+    XCTAssertTrue(aSummary.find("Matched 1 files and 0 folders") != std::string::npos);
+    
+    std::filesystem::remove_all(aLeft);
+    std::filesystem::remove_all(aRight);
 }
 
 @end

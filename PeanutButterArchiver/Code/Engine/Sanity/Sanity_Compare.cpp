@@ -133,11 +133,15 @@ void RecordMissingPath(SanityCompareStateV2& pState,
     aTarget->push_back(pRelativePath);
   }
   ++pState.mMismatchCount;
+  if (pIsDirectory) {
+    ++pState.mFolderMismatchCount;
+    return;
+  }
   if (pIsHidden) {
     ++pState.mHiddenMismatchCount;
-  } else {
-    ++pState.mNormalMismatchCount;
+    return;
   }
+  ++pState.mNormalMismatchCount;
 }
 
 void RecordInequalFile(SanityCompareStateV2& pState,
@@ -231,13 +235,13 @@ bool FinalizeSanityCompare(SanityStageContextV2& pContext) {
                  aState.mHiddenFilesMissingFromLeft, false,
                  "Warn: hidden file missing from source",
                  aRightRoot, aLeftRoot);
-  LogExampleList(pContext, LogLevelV2::kError,
+  LogExampleList(pContext, LogLevelV2::kWarning,
                  aState.mNormalFoldersMissingFromRight, true,
-                 "Fail: folder missing from destination",
+                 "Warn: folder missing from destination",
                  aLeftRoot, aRightRoot);
-  LogExampleList(pContext, LogLevelV2::kError,
+  LogExampleList(pContext, LogLevelV2::kWarning,
                  aState.mNormalFoldersMissingFromLeft, true,
-                 "Fail: folder missing from source",
+                 "Warn: folder missing from source",
                  aRightRoot, aLeftRoot);
   LogExampleList(pContext, LogLevelV2::kError,
                  aState.mNormalFilesMissingFromRight, false,
@@ -251,9 +255,9 @@ bool FinalizeSanityCompare(SanityStageContextV2& pContext) {
                  aState.mHiddenInequalFiles, false,
                  "Warn: hidden file contents differ",
                  aLeftRoot, aRightRoot);
-  LogExampleList(pContext, LogLevelV2::kWarning,
+  LogExampleList(pContext, LogLevelV2::kError,
                  aState.mNormalInequalFiles, false,
-                 "Warn: file contents differ",
+                 "Fail: file contents differ",
                  aLeftRoot, aRightRoot);
 
   pContext.EmitLog(LogLevelV2::kInfo, LogSanityCompareEndV2(aState.mStat));
@@ -262,22 +266,42 @@ bool FinalizeSanityCompare(SanityStageContextV2& pContext) {
         LogLevelV2::kWarning,
         "[Folder Compare][Summary] Warn: Found " +
             std::to_string(aState.mHiddenMismatchCount) +
-            " mismatches in hidden files and folders.");
+            " mismatches in hidden files.");
+  }
+  if (aState.mFolderMismatchCount > 0u) {
+    pContext.EmitLog(
+        LogLevelV2::kWarning,
+        "[Folder Compare][Summary] Warn: Found " +
+            std::to_string(aState.mFolderMismatchCount) +
+            " mismatches in folders.");
   }
   if (aState.mNormalMismatchCount > 0u) {
     pContext.EmitLog(
         LogLevelV2::kError,
         "[Folder Compare][Summary] Fail: Found " +
             std::to_string(aState.mNormalMismatchCount) +
-            " mismatches in normal files and folders.");
+            " mismatches in normal files.");
   }
 
-  if (aState.mNormalMismatchCount == 0u && aState.mHiddenMismatchCount == 0u) {
-    pContext.EmitLog(LogLevelV2::kInfo, LogSanitySummaryHealthyV2(aState.mStat));
+  if (aState.mNormalMismatchCount == 0u &&
+      aState.mHiddenMismatchCount == 0u &&
+      aState.mFolderMismatchCount == 0u) {
+    pContext.EmitLog(LogLevelV2::kInfo,
+                     LogSanitySummaryHealthyV2(aState.mStat,
+                                               aState.mMatchedFileCount,
+                                               aState.mMatchedFolderCount));
+  } else if (aState.mNormalMismatchCount == 0u) {
+    pContext.EmitLog(LogLevelV2::kWarning,
+                     LogSanitySummaryWarnV2(aState.mStat,
+                                           aState.mMismatchCount,
+                                           aState.mMatchedFileCount,
+                                           aState.mMatchedFolderCount));
   } else {
-    pContext.EmitLog(aState.mNormalMismatchCount == 0u ? LogLevelV2::kWarning
-                                                       : LogLevelV2::kError,
-                     LogSanitySummaryMismatchV2(aState.mStat, aState.mMismatchCount));
+    pContext.EmitLog(LogLevelV2::kError,
+                     LogSanitySummaryMismatchV2(aState.mStat,
+                                               aState.mMismatchCount,
+                                               aState.mMatchedFileCount,
+                                               aState.mMatchedFolderCount));
   }
   pContext.EmitPhaseProgress(1.0, ProgressStageLabelV2(ProgressStageV2::kCompare));
   pContext.EmitLog(LogLevelV2::kInfo,
@@ -415,6 +439,7 @@ bool SanityCompareV2::Run(SanityStageContextV2& pContext) {
         aState.mStat.mBytesCompleted += static_cast<std::uint64_t>(aChunk);
         aCursor.mResolvedFileBytes += static_cast<std::uint64_t>(aChunk);
         if (aCursor.mActiveOffset >= aCursor.mActiveLength) {
+          ++aState.mMatchedFileCount;
           ++aState.mStat.mFilesCompleted;
           ++aCursor.mResolvedStructuralEntries;
           ResetActiveFileCompare(aCursor);
@@ -467,6 +492,7 @@ bool SanityCompareV2::Run(SanityStageContextV2& pContext) {
       }
 
       if (aLeftLength == 0u) {
+        ++aState.mMatchedFileCount;
         ++aState.mStat.mFilesCompleted;
         ++aCursor.mResolvedStructuralEntries;
         ++aCursor.mLeftFileIndex;
@@ -521,6 +547,8 @@ bool SanityCompareV2::Run(SanityStageContextV2& pContext) {
                           IsHiddenRelativePath(aLeftFolder.mRelativePath),
                           true,
                           true);
+      } else {
+        ++aState.mMatchedFolderCount;
       }
       ++aState.mStat.mFoldersCompleted;
       ++aCursor.mResolvedStructuralEntries;

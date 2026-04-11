@@ -316,7 +316,7 @@
     XCTAssertTrue(aFileSystem.Load(aSourceFilePath).ToString() == "payload");
 }
 
-- (void)test_bundle_regression_does_not_clear_existing_destination_contents {
+- (void)test_bundle_regression_clears_existing_destination_contents_when_requested {
     JobBundle aJob;
     aJob.mPayloadBytesPerBlock = 4;
     aJob.mBlocksPerArchive = 4;
@@ -335,8 +335,7 @@
     ByteString aErrorString;
     const BOOL aSucceeded = TestBundleWithHooks::PerformReal(aJob, aFileSystem, &aErrorString);
     XCTAssertTrue(aSucceeded);
-    XCTAssertTrue(aFileSystem.IsFile(aSentinelPath));
-    XCTAssertTrue(aFileSystem.Load(aSentinelPath).ToString() == "sentinel");
+    XCTAssertFalse(aFileSystem.Exists(aSentinelPath));
 }
 
 @end

@@ -365,14 +365,35 @@ std::string LogDecodeDiscoverySliceV2(LogActionV2 pAction,
          std::to_string(pArchiveFilesScanned) + " archive files.";
 }
 
-std::string LogSanitySummaryHealthyV2(const LoggingStatV2& pStat) {
-  return "[Folder Compare][Summary] Good: " + BuildStatSummaryV2(pStat) + ".";
+std::string LogSanitySummaryHealthyV2(const LoggingStatV2& pStat,
+                                      std::uint64_t pMatchedFileCount,
+                                      std::uint64_t pMatchedFolderCount) {
+  return "[Folder Compare][Summary] Good: Matched " +
+         std::to_string(pMatchedFileCount) + " files and " +
+         std::to_string(pMatchedFolderCount) + " folders. " +
+         BuildStatSummaryV2(pStat) + ".";
+}
+
+std::string LogSanitySummaryWarnV2(const LoggingStatV2& pStat,
+                                   std::uint64_t pMismatchCount,
+                                   std::uint64_t pMatchedFileCount,
+                                   std::uint64_t pMatchedFolderCount) {
+  return "[Folder Compare][Summary] Warn: Matched " +
+         std::to_string(pMatchedFileCount) + " files and " +
+         std::to_string(pMatchedFolderCount) + " folders, with " +
+         std::to_string(pMismatchCount) + " mismatches. " +
+         BuildStatSummaryV2(pStat) + ".";
 }
 
 std::string LogSanitySummaryMismatchV2(const LoggingStatV2& pStat,
-                                       std::uint64_t pMismatchCount) {
-  return "[Folder Compare][Summary] Fail: " + std::to_string(pMismatchCount) +
-         " mismatches found. " + BuildStatSummaryV2(pStat) + ".";
+                                       std::uint64_t pMismatchCount,
+                                       std::uint64_t pMatchedFileCount,
+                                       std::uint64_t pMatchedFolderCount) {
+  return "[Folder Compare][Summary] Fail: Matched " +
+         std::to_string(pMatchedFileCount) + " files and " +
+         std::to_string(pMatchedFolderCount) + " folders, with " +
+         std::to_string(pMismatchCount) + " mismatches. " +
+         BuildStatSummaryV2(pStat) + ".";
 }
 
 std::string LogBundleDiscoverySummaryV2(std::uint64_t pFileCount,

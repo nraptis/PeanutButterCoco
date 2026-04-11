@@ -36,6 +36,8 @@ struct SanityDiscoveryStateV2 {
   std::uint64_t mSkippedHiddenRightFileCount = 0u;
   std::uint64_t mSkippedHiddenLeftFolderCount = 0u;
   std::uint64_t mSkippedHiddenRightFolderCount = 0u;
+  std::uint64_t mIgnoredReferenceLeftCount = 0u;
+  std::uint64_t mIgnoredReferenceRightCount = 0u;
 };
 
 struct SanityCompareStateV2 {
@@ -43,6 +45,9 @@ struct SanityCompareStateV2 {
   std::uint64_t mMismatchCount = 0u;
   std::uint64_t mHiddenMismatchCount = 0u;
   std::uint64_t mNormalMismatchCount = 0u;
+  std::uint64_t mFolderMismatchCount = 0u;
+  std::uint64_t mMatchedFileCount = 0u;
+  std::uint64_t mMatchedFolderCount = 0u;
   std::vector<std::string> mHiddenFoldersMissingFromRight;
   std::vector<std::string> mHiddenFilesMissingFromRight;
   std::vector<std::string> mNormalFoldersMissingFromRight;
