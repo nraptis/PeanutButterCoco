@@ -845,7 +845,9 @@ class DecodeArchiveDecodeCursorV2 {
               return pContext.EmitRuntimeEvent(pEvent);
             }),
         mBlockBytes(pContext.Layout().mArchiveBlockBytes),
-        mDeepDecodeBlockBytes(pContext.Layout().mArchiveBlockBytes) {
+        mDeepDecodeBlockBytes(pContext.Layout().mArchiveBlockBytes),
+        mDeepResumeProbeRawBytes(pContext.Layout().mArchiveBlockBytes),
+        mDeepResumeProbeDecodeBytes(pContext.Layout().mArchiveBlockBytes) {
     const std::vector<DiscoveredArchiveFileV2>& aArchives =
         pContext.State().mDiscovery.mArchives;
     mArchiveLostBlocksBySlot.assign(
@@ -915,6 +917,8 @@ class DecodeArchiveDecodeCursorV2 {
   DecodeLogicalRecordDecoderV2 mPreviewDecoder;
   FixedBlockBufferV2 mBlockBytes;
   FixedBlockBufferV2 mDeepDecodeBlockBytes;
+  FixedBlockBufferV2 mDeepResumeProbeRawBytes;
+  FixedBlockBufferV2 mDeepResumeProbeDecodeBytes;
   std::unique_ptr<FileReadStreamV2> mRead;
   std::unique_ptr<FileReadStreamV2> mDeepMappedRead;
   std::unique_ptr<FileReadStreamV2> mDeepScanRead;
@@ -1568,7 +1572,7 @@ bool ShouldDecodeBlockFromDeepTemp(const DecodeArchiveDecodeCursorV2& pCursor,
 
 bool CanResumeDecodeFromSealedHealingArchive(
     DecodeStageContextV2& pContext,
-    const DecodeArchiveDecodeCursorV2& pCursor,
+    DecodeArchiveDecodeCursorV2& pCursor,
     std::size_t pArchiveSlot,
     std::uint64_t pBlockIndex);
 
@@ -2451,7 +2455,7 @@ bool CanUseRecoverLocalSkipAnchorAtCurrentBlock(
 }
 
 bool CanFindRecoverResyncPointInSealedTemp(DecodeStageContextV2& pContext,
-                                           const DecodeArchiveDecodeCursorV2& pCursor,
+                                           DecodeArchiveDecodeCursorV2& pCursor,
                                            std::size_t pArchiveSlot,
                                            std::uint64_t pBlockIndex) {
   const std::vector<DiscoveredArchiveFileV2>& aArchives =
@@ -2460,9 +2464,8 @@ bool CanFindRecoverResyncPointInSealedTemp(DecodeStageContextV2& pContext,
     return false;
   }
 
-  FixedBlockBufferV2 aProbeRawBytes(pContext.Layout().mArchiveBlockBytes);
-  FixedBlockBufferV2 aProbeDecodeBytes(pContext.Layout().mArchiveBlockBytes);
-  if (aProbeRawBytes.Empty() || aProbeDecodeBytes.Empty()) {
+  if (pCursor.mDeepResumeProbeRawBytes.Empty() ||
+      pCursor.mDeepResumeProbeDecodeBytes.Empty()) {
     return false;
   }
 
@@ -2497,7 +2500,7 @@ bool CanFindRecoverResyncPointInSealedTemp(DecodeStageContextV2& pContext,
     if (!ReadBlock(*aProbeRead,
                    static_cast<std::uint64_t>(aPackedRef.mTempBlockIndex),
                    pContext.Layout().mArchiveBlockBytes,
-                   aProbeRawBytes)) {
+                   pCursor.mDeepResumeProbeRawBytes)) {
       return false;
     }
 
@@ -2505,8 +2508,8 @@ bool CanFindRecoverResyncPointInSealedTemp(DecodeStageContextV2& pContext,
     std::string aValidationError;
     if (!DecodeValidatedSectionHeaderFromRawBlockForDeepRecover(
             pContext,
-            aProbeRawBytes.Data(),
-            aProbeDecodeBytes,
+            pCursor.mDeepResumeProbeRawBytes.Data(),
+            pCursor.mDeepResumeProbeDecodeBytes,
             aSectionHeader,
             aValidationError)) {
       return false;
@@ -2541,7 +2544,7 @@ bool CanFindRecoverResyncPointInSealedTemp(DecodeStageContextV2& pContext,
 
 bool CanResumeDecodeFromSealedHealingArchive(
     DecodeStageContextV2& pContext,
-    const DecodeArchiveDecodeCursorV2& pCursor,
+    DecodeArchiveDecodeCursorV2& pCursor,
     std::size_t pArchiveSlot,
     std::uint64_t pBlockIndex) {
   return ShouldDecodeBlockFromDeepTemp(pCursor, pArchiveSlot, pBlockIndex) &&
@@ -3885,7 +3888,9 @@ bool DecodeArchiveDecodeV2::Run(DecodeStageContextV2& pContext) {
     pContext.State().mCancel = DecodeCancelStateV2{};
     aCursorPtr = std::make_shared<DecodeArchiveDecodeCursorV2>(pContext);
     if (aCursorPtr->mBlockBytes.Empty() ||
-        aCursorPtr->mDeepDecodeBlockBytes.Empty()) {
+        aCursorPtr->mDeepDecodeBlockBytes.Empty() ||
+        aCursorPtr->mDeepResumeProbeRawBytes.Empty() ||
+        aCursorPtr->mDeepResumeProbeDecodeBytes.Empty()) {
       pContext.EmitLog(LogLevelV2::kError,
                        "Archive decode failed: block buffers could not be allocated.");
       aCursorPtr.reset();
